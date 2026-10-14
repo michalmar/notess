@@ -289,32 +289,26 @@ final class AppModel {
     }
 
     private func rebuildBacklinks() {
-        guard let vault else {
-            backlinks = []
-            return
-        }
-        let index = backlinkIndex
-        let generation = backlinkGeneration
-        Task { [weak self] in
+        refreshBacklinks { index, vault in
             await index.rebuild(in: vault)
-            guard let self, self.backlinkGeneration == generation else { return }
-            await self.loadVisibleBacklinks(from: index, in: vault, generation: generation)
         }
     }
 
     private func updateBacklinks(for document: NoteDocument) {
         guard let vault, let relativePath = relativePath(for: document.fileURL, in: vault) else { return }
         let content = document.text
-        let index = backlinkIndex
-        let generation = backlinkGeneration
-        Task { [weak self] in
+        refreshBacklinks { index, vault in
             await index.update(relativePath: relativePath, content: content, in: vault)
-            guard let self, self.backlinkGeneration == generation else { return }
-            await self.loadVisibleBacklinks(from: index, in: vault, generation: generation)
         }
     }
 
     private func refreshVisibleBacklinks() {
+        refreshBacklinks { _, _ in }
+    }
+
+    private func refreshBacklinks(
+        after update: @escaping @Sendable (BacklinkIndex, Vault) async -> Void
+    ) {
         guard let vault else {
             backlinks = []
             return
@@ -322,7 +316,8 @@ final class AppModel {
         let index = backlinkIndex
         let generation = backlinkGeneration
         Task { [weak self] in
-            guard let self else { return }
+            await update(index, vault)
+            guard let self, self.backlinkGeneration == generation else { return }
             await self.loadVisibleBacklinks(from: index, in: vault, generation: generation)
         }
     }

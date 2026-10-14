@@ -52,11 +52,11 @@ extension AppModel {
         )
         guard let document = openNote(at: url) else { return }
 
-        guard let sectionTitle = backlink.sectionTitle,
-              let section = NoteSection.find(sectionTitle, in: document.text) else {
+        guard let headingRange = backlink.sectionHeadingRange,
+              NSMaxRange(headingRange) <= (document.text as NSString).length else {
             reveal = nil
             return
         }
-        reveal = EditorReveal(documentID: document.id, range: section.headingRange)
+        reveal = EditorReveal(documentID: document.id, range: headingRange)
     }
 }

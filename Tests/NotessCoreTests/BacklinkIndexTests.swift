@@ -76,4 +76,20 @@ struct BacklinkIndexTests {
         #expect(await index.backlinks(to: "Acme.md").count == 1)
         #expect(await index.backlinks(to: "Beta.md").count == 1)
     }
+
+    @Test("duplicate Section titles retain their exact source heading ranges")
+    func duplicateSectionTitles() async throws {
+        let temp = try TemporaryVault()
+        try temp.write("", to: "Acme.md")
+        let source = "## Stav\nprvní\n\n## Stav\ndruhý [[Acme]]"
+        try temp.write(source, to: "Zdroj.md")
+        let index = BacklinkIndex()
+
+        await index.rebuild(in: temp.vault)
+
+        let backlink = try #require(await index.backlinks(to: "Acme.md").first)
+        let range = try #require(backlink.sectionHeadingRange)
+        #expect((source as NSString).substring(with: range) == "## Stav")
+        #expect(range.location == 15)
+    }
 }
