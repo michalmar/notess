@@ -9,12 +9,18 @@ final class AppModel {
     private(set) var vault: Vault?
     private(set) var document: NoteDocument?
     var errorMessage: String?
+    let settings: AppSettings
 
     @ObservationIgnored private let vaultLocationStore: VaultLocationStore
     @ObservationIgnored private let now: () -> Date
 
-    init(vaultLocationStore: VaultLocationStore = VaultLocationStore(), now: @escaping () -> Date = Date.init) {
+    init(
+        vaultLocationStore: VaultLocationStore = VaultLocationStore(),
+        settings: AppSettings = AppSettings(),
+        now: @escaping () -> Date = Date.init
+    ) {
         self.vaultLocationStore = vaultLocationStore
+        self.settings = settings
         self.now = now
         if let saved = vaultLocationStore.savedVault() {
             open(saved)

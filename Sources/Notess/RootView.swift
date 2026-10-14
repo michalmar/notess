@@ -6,7 +6,7 @@ struct RootView: View {
     var body: some View {
         Group {
             if let document = model.document {
-                NoteEditorScreen(document: document)
+                NoteEditorScreen(document: document, settings: model.settings)
             } else if model.vault == nil {
                 VaultSetupView { url in model.chooseVault(at: url) }
             } else {
