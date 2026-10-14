@@ -103,7 +103,8 @@ extension Vault {
             let path = url.standardizedFileURL.resolvingSymlinksInPath().path
             guard path.hasPrefix(root) else { continue }
             let relativePath = String(path.dropFirst(root.count))
-            guard let kind = NoteKind.classify(relativePath: relativePath) else { continue }
+            guard relativePath.hasSuffix(".md") else { continue }
+            let kind = NoteKind.classify(relativePath: relativePath) ?? .freeNote
             files.append(QuickOpenFile(relativePath: relativePath, kind: kind))
         }
         return files.sorted { $0.relativePath.localizedStandardCompare($1.relativePath) == .orderedAscending }

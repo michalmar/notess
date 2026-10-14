@@ -152,6 +152,7 @@ final class AppModel {
         self.vault = vault
         tabSession = TabSession()
         selectedFolder = ""
+        isQuickOpenPresented = false
         refreshTree()
         do {
             if let state = try tabRestorationStore.savedState(for: vault) {
