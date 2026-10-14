@@ -40,7 +40,7 @@ private struct NoteTab: View {
                         .font(.system(size: 6))
                         .opacity(document.hasUnsavedChanges ? 1 : 0)
                         .accessibilityHidden(true)
-                    Text(document.fileURL.deletingPathExtension().lastPathComponent)
+                    Text(document.displayName)
                         .lineLimit(1)
                 }
                 .contentShape(Rectangle())
@@ -48,8 +48,8 @@ private struct NoteTab: View {
             .buttonStyle(.plain)
             .accessibilityLabel(
                 document.hasUnsavedChanges
-                    ? "\(document.fileURL.lastPathComponent), neuložené změny"
-                    : document.fileURL.lastPathComponent
+                    ? "\(document.displayName), neuložené změny"
+                    : document.displayName
             )
 
             Button(action: onClose) {
@@ -59,7 +59,7 @@ private struct NoteTab: View {
             }
             .buttonStyle(.plain)
             .foregroundStyle(.secondary)
-            .accessibilityLabel("Zavřít \(document.fileURL.lastPathComponent)")
+            .accessibilityLabel("Zavřít \(document.displayName)")
         }
         .padding(.horizontal, 9)
         .padding(.vertical, 5)

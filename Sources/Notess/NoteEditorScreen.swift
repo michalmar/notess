@@ -15,7 +15,7 @@ struct NoteEditorScreen: View {
             fontSize: CGFloat(settings.editorFont.size),
             onTextChange: { document.text = $0 }
         )
-        .navigationTitle(document.fileURL.deletingPathExtension().lastPathComponent)
+        .navigationTitle(document.displayName)
         .navigationSubtitle(document.hasUnsavedChanges ? "Neuloženo" : "")
         .toolbar {
             ToolbarItem(placement: .status) {

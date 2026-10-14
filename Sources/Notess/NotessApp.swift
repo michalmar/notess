@@ -93,7 +93,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         switch saveDecision(
             message: "Uložit změny?",
-            informativeText: "\(document.fileURL.lastPathComponent) obsahuje neuložené změny.",
+            informativeText: "\(document.displayName) obsahuje neuložené změny.",
             saveTitle: "Uložit",
             discardTitle: "Neukládat"
         ) {

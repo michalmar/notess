@@ -51,6 +51,21 @@ final class AppModel {
         openDailyEntry(DailyEntry(date: now()))
     }
 
+    /// Cmd+N: a new Free Note in the folder selected in the Notes section.
+    func newFreeNote() {
+        guard let vault else { return }
+        do {
+            let document = try vault.newFreeNote(
+                inFolder: selectedFolder,
+                on: Day(date: now())
+            )
+            tabSession.open(document)
+            persistTabs()
+        } catch {
+            errorMessage = "Poznámku se nepodařilo vytvořit: \(error.localizedDescription)"
+        }
+    }
+
     func openDailyEntry(_ entry: DailyEntry) {
         guard let vault else { return }
         openNote(
@@ -106,6 +121,7 @@ final class AppModel {
         do {
             try document.save()
             refreshTree()
+            persistTabs()
             return true
         } catch {
             errorMessage = "Uložení se nezdařilo: \(error.localizedDescription)"
