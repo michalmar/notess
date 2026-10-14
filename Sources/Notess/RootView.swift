@@ -47,6 +47,7 @@ struct RootView: View {
                 }
                 .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
                     model.reconcileWithDisk()
+                    model.synchronizeSearchIndex()
                 }
             } else {
                 VaultSetupView { url in model.chooseVault(at: url) }
@@ -69,6 +70,7 @@ struct RootView: View {
                 SearchView(
                     index: index,
                     isIndexing: model.isIndexing,
+                    revision: model.searchIndexRevision,
                     open: model.openSearchResult,
                     dismiss: { model.isSearchPresented = false }
                 )

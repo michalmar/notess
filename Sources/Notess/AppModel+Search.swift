@@ -41,14 +41,44 @@ extension AppModel {
 
     func updateSearchIndex(for change: VaultChange) {
         guard let index = searchIndex else { return }
-        let paths = change.requiresFullRescan ? [""] : change.relativePaths
-        Task { try? await index.update(relativePaths: paths) }
+        if change.requiresFullRescan {
+            updateSearchIndex(index) { try await index.synchronize() }
+        } else {
+            let paths = change.relativePaths
+            updateSearchIndex(index) { try await index.update(relativePaths: paths) }
+        }
     }
 
     func updateSearchIndex(forSaved document: NoteDocument) {
         guard let index = searchIndex else { return }
         let url = document.fileURL
-        Task { try? await index.update(fileAt: url) }
+        updateSearchIndex(index) { try await index.update(fileAt: url) }
+    }
+
+    /// Catches up with outside changes the watcher may have missed (it can
+    /// fail to start); unchanged files are skipped by their stamps.
+    func synchronizeSearchIndex() {
+        guard let index = searchIndex, !isIndexing else { return }
+        updateSearchIndex(index) { try await index.synchronize() }
+    }
+
+    private func updateSearchIndex(_ index: SearchIndex, _ work: @escaping @Sendable () async throws -> Void) {
+        Task { [weak self] in
+            let failure: Error?
+            do {
+                try await work()
+                failure = nil
+            } catch is CancellationError {
+                return
+            } catch {
+                failure = error
+            }
+            guard let self, self.searchIndex === index else { return }
+            self.searchIndexRevision += 1
+            if let failure {
+                self.errorMessage = "Index hledání se nepodařilo aktualizovat: \(failure.localizedDescription)"
+            }
+        }
     }
 
     private func runIndexing(
@@ -69,6 +99,7 @@ extension AppModel {
             }
             guard let self, self.searchIndex === index else { return }
             self.isIndexing = false
+            self.searchIndexRevision += 1
             if let failure {
                 self.errorMessage = "\(errorPrefix): \(failure.localizedDescription)"
             }

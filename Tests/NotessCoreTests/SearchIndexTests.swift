@@ -132,6 +132,20 @@ final class SearchIndexTests {
         #expect(try await index.search(SearchQuery("klient")).map(\.kind) == [.dailyEntry])
     }
 
+    @Test("an unreadable note is tried again on the next synchronisation, even with an unchanged stamp")
+    func unreadableNoteRetried() async throws {
+        let index = makeIndex()
+        let url = vault.vault.rootURL.appending(path: "Rozbitá.md")
+        try Data([0x23, 0x23, 0x20, 0xFF, 0xFE, 0x0A, 0x61]).write(to: url)
+        let modified = try #require(try FileManager.default.attributesOfItem(atPath: url.path)[.modificationDate] as? Date)
+        try await index.synchronize()
+
+        try Data("## Ok\nb".utf8).write(to: url)
+        try FileManager.default.setAttributes([.modificationDate: modified], ofItemAtPath: url.path)
+        try await index.synchronize()
+        #expect(try await index.search(SearchQuery("ok")).first?.results.first?.relativePath == "Rozbitá.md")
+    }
+
     @Test("a saved note is re-indexed by its file URL")
     func updateSavedFile() async throws {
         let index = makeIndex()

@@ -95,11 +95,13 @@ public actor SearchIndex {
     private func index(_ file: NoteFile, in db: SQLiteDatabase) throws {
         try removeSections(of: file.relativePath, in: db)
         let url = vault.rootURL.appending(path: file.relativePath, directoryHint: .notDirectory)
-        let text = ((try? String(contentsOf: url, encoding: .utf8)) ?? "").precomposedStringWithCanonicalMapping
+        // An unreadable file is left unrecorded so the next synchronisation tries it again.
+        guard let raw = try? String(contentsOf: url, encoding: .utf8) else { return }
+        let text = raw.precomposedStringWithCanonicalMapping
         for section in SearchSection.split(text) {
             try db.query(
                 "INSERT INTO sections (path, kind, ordinal, title) VALUES (?, ?, ?, ?)",
-                [.text(file.relativePath), .int(Int64(file.kind.code)), .int(Int64(section.ordinal)),
+                [.text(file.relativePath), .int(Int64(file.kind.searchIndexCode)), .int(Int64(section.ordinal)),
                  section.title.map { .text($0) } ?? .null]
             )
             let id = try db.query("SELECT last_insert_rowid()").first?.first ?? .null
@@ -156,7 +158,7 @@ public actor SearchIndex {
                     WHERE sections_fts MATCH ? AND s.kind = ?\(tagFilter)
                     ORDER BY bm25(sections_fts, 4.0, 1.0), s.path, s.ordinal
                     LIMIT ?
-                    """, [.text(expression), .int(Int64(kind.code))] + tagValues + [.int(Int64(limit))])
+                    """, [.text(expression), .int(Int64(kind.searchIndexCode))] + tagValues + [.int(Int64(limit))])
                 results = rows.map { row in
                     SearchResult(
                         relativePath: row[0].text ?? "",
@@ -175,7 +177,7 @@ public actor SearchIndex {
                     WHERE s.kind = ?\(tagFilter)
                     ORDER BY \(order), s.ordinal
                     LIMIT ?
-                    """, [.int(Int64(kind.code))] + tagValues + [.int(Int64(limit))])
+                    """, [.int(Int64(kind.searchIndexCode))] + tagValues + [.int(Int64(limit))])
                 results = rows.map { row in
                     let title = row[2].text
                     return SearchResult(
@@ -296,7 +298,7 @@ extension NoteKind {
     static let searchOrder: [NoteKind] = [.dailyEntry, .freeNote, .brainNote]
 
     /// Stable number stored in the search index.
-    var code: Int {
+    var searchIndexCode: Int {
         switch self {
         case .dailyEntry: 0
         case .freeNote: 1

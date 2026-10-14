@@ -60,7 +60,20 @@ struct SearchSectionTests {
         #expect(SearchSection.split("   \n").isEmpty)
     }
 
-    @Test("a first-level heading ends a Section and starts a new segment")
+    @Test("everything before the first second-level heading is one segment, titled by a leading first-level heading")
+    func preambleWithLevelOneHeadings() {
+        let titled = SearchSection.split("\n# Den\nx #ranní\n# Další\ny\n## S\nz")
+        #expect(titled.map(\.title) == ["Den", "S"])
+        #expect(titled.map(\.level) == [1, 2])
+        #expect(titled.first?.body == "x #ranní\n# Další\ny")
+        #expect(titled.first?.tags == ["ranní"])
+
+        let untitled = SearchSection.split("Úvod\n# Den\nx\n## S\nz")
+        #expect(untitled.map(\.title) == [nil, "S"])
+        #expect(untitled.first?.body == "Úvod\n# Den\nx")
+    }
+
+    @Test("after a Section, a first-level heading ends it and starts a new segment")
     func levelOneHeading() {
         let sections = SearchSection.split("## A\na\n# Nový díl\nb\n## B\nc")
         #expect(sections.map(\.title) == ["A", "Nový díl", "B"])

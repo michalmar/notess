@@ -6,6 +6,7 @@ import SwiftUI
 struct SearchView: View {
     let index: SearchIndex
     let isIndexing: Bool
+    let revision: Int
     let open: (SearchResult) -> Void
     let dismiss: () -> Void
 
@@ -13,6 +14,7 @@ struct SearchView: View {
     @State private var groups: [SearchResultGroup] = []
     @State private var selection: SearchResult.ID?
     @State private var searchTask: Task<Void, Never>?
+    @State private var searchError: String?
     @FocusState private var isSearchFocused: Bool
 
     private var results: [SearchResult] { groups.flatMap(\.results) }
@@ -45,7 +47,7 @@ struct SearchView: View {
         .shadow(radius: 16)
         .onAppear { isSearchFocused = true }
         .onChange(of: query) { _, _ in runSearch(debounce: true) }
-        .onChange(of: isIndexing) { _, _ in runSearch(debounce: false) }
+        .onChange(of: revision) { _, _ in runSearch(debounce: false) }
         .onMoveCommand(perform: moveSelection)
         .onExitCommand(perform: dismiss)
         .onDisappear { searchTask?.cancel() }
@@ -58,6 +60,12 @@ struct SearchView: View {
                 "Hledání v Sekcích",
                 systemImage: "text.magnifyingglass",
                 description: Text("Pište slova, která má Sekce obsahovat. `#tag` omezí výsledky na Sekce s Tagem.")
+            )
+        } else if let searchError {
+            ContentUnavailableView(
+                "Hledání selhalo",
+                systemImage: "exclamationmark.triangle",
+                description: Text(searchError)
             )
         } else if results.isEmpty {
             if isIndexing {
@@ -96,8 +104,14 @@ struct SearchView: View {
             if debounce {
                 do { try await Task.sleep(for: .milliseconds(120)) } catch { return }
             }
-            let found = (try? await index.search(query)) ?? []
+            let outcome = await Result { try await index.search(query) }
             guard !Task.isCancelled else { return }
+            let found = (try? outcome.get()) ?? []
+            if case .failure(let error) = outcome {
+                searchError = error.localizedDescription
+            } else {
+                searchError = nil
+            }
             groups = found
             if selection.map({ id in !found.contains { $0.results.contains { $0.id == id } } }) ?? true {
                 selection = found.first?.results.first?.id

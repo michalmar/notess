@@ -1,13 +1,14 @@
 import Foundation
 
-/// One searchable span of a note: a Section (see `GLOSSARY.md`), or the text
+/// One searchable span of a note: a Section (see `GLOSSARY.md`), the text
 /// before the first second-level heading, or the text after a first-level
-/// heading up to the next Section. This is the unit search returns and Tags mark.
+/// heading that ends a Section, up to the next Section. This is the unit search
+/// returns and Tags mark.
 public struct SearchSection: Hashable, Sendable {
     /// Position among the note's non-empty segments, starting at 0.
     public let ordinal: Int
     /// Text of the level 1 or 2 heading that starts the segment, or nil when it
-    /// starts without one (the beginning of a note).
+    /// starts without one (the beginning of a note that has no leading `#` title).
     public let title: String?
     /// Level of that heading (1 or 2), or nil.
     public let level: Int?
@@ -20,23 +21,33 @@ public struct SearchSection: Hashable, Sendable {
     /// Normalised names (`Tag.normalize`) of the Tags written in the segment.
     public let tags: Set<String>
 
-    /// Splits a note at every heading of level 1 or 2. Headings inside code are
-    /// not headings; deeper headings stay in their Section. Segments with only
-    /// whitespace are left out.
+    /// Splits a note at every second-level heading. Everything before the first
+    /// one is a single segment, titled by its first-level heading when the note
+    /// starts with one; after that a first-level heading ends the Section and
+    /// starts a new segment. Headings inside code are not headings; deeper
+    /// headings stay in their Section. Segments with only whitespace are left out.
     public static func split(_ text: String) -> [SearchSection] {
         let string = text as NSString
         let tokens = MarkdownSyntax.tokens(in: text)
-        let boundaries: [(level: Int, heading: NSRange)] = tokens.compactMap { token in
+        let headings: [(level: Int, heading: NSRange)] = tokens.compactMap { token in
             guard case .heading(let level) = token.kind, level <= 2 else { return nil }
             return (level, token.range)
         }
         let tagTokens = tokens.filter { $0.kind == .tag }
 
         var spans: [(level: Int?, heading: NSRange?, start: Int)] = [(nil, nil, 0)]
-        for boundary in boundaries {
-            let start = string.lineRange(for: NSRange(location: boundary.heading.location, length: 0)).location
-            if start == 0 { spans.removeAll() }
-            spans.append((boundary.level, boundary.heading, start))
+        var isInPreamble = true
+        for heading in headings {
+            let start = string.lineRange(for: NSRange(location: heading.heading.location, length: 0)).location
+            if heading.level == 1 && isInPreamble {
+                let before = string.substring(to: start).trimmingCharacters(in: .whitespacesAndNewlines)
+                if spans[0].heading == nil && before.isEmpty {
+                    spans[0] = (1, heading.heading, 0)
+                }
+                continue
+            }
+            isInPreamble = false
+            spans.append((heading.level, heading.heading, start))
         }
 
         var sections: [SearchSection] = []

@@ -14,6 +14,8 @@ final class AppModel {
     var isSearchPresented = false
     /// The search index is catching up with the Vault or being rebuilt.
     var isIndexing = false
+    /// Bumped whenever the search index has changed, so open results refresh.
+    var searchIndexRevision = 0
     /// Vault-relative folder chosen in the Notes section ("" is the Vault root); target for new Free Notes.
     var selectedFolder = ""
     var errorMessage: String?
