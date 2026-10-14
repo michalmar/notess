@@ -1,0 +1,77 @@
+import Foundation
+import NotessCore
+import NotessEditor
+
+extension AppModel {
+    /// Cmd+Shift+F: the Spotlight-style search over Sections.
+    func presentSearch() {
+        guard vault != nil else { return }
+        isQuickOpenPresented = false
+        isSearchPresented = true
+    }
+
+    /// Opens the note of a search result in a tab and scrolls to its Section.
+    func openSearchResult(_ result: SearchResult) {
+        isSearchPresented = false
+        guard let document = openExistingNote(relativePath: result.relativePath) else { return }
+        let section = SearchSection.locate(title: result.title, ordinal: result.ordinal, in: document.text)
+        let range = section?.headingRange ?? NSRange(location: section?.range.location ?? 0, length: 0)
+        reveal = EditorReveal(documentID: document.id, range: range)
+    }
+
+    /// Opens the Vault's index (a cache outside the Vault) and catches up with
+    /// changes made while the app was closed, in the background.
+    func startSearchIndex(for vault: Vault) {
+        searchIndexTask?.cancel()
+        let index = SearchIndex(vault: vault, databaseURL: SearchIndex.defaultDatabaseURL(for: vault))
+        searchIndex = index
+        runIndexing(index, errorPrefix: "Index hledání se nepodařilo aktualizovat") {
+            try await index.synchronize()
+        }
+    }
+
+    /// Throws the index away and builds it again from the files.
+    func rebuildSearchIndex() {
+        guard let index = searchIndex else { return }
+        searchIndexTask?.cancel()
+        runIndexing(index, errorPrefix: "Index hledání se nepodařilo přegenerovat") {
+            try await index.rebuild()
+        }
+    }
+
+    func updateSearchIndex(for change: VaultChange) {
+        guard let index = searchIndex else { return }
+        let paths = change.requiresFullRescan ? [""] : change.relativePaths
+        Task { try? await index.update(relativePaths: paths) }
+    }
+
+    func updateSearchIndex(forSaved document: NoteDocument) {
+        guard let index = searchIndex else { return }
+        let url = document.fileURL
+        Task { try? await index.update(fileAt: url) }
+    }
+
+    private func runIndexing(
+        _ index: SearchIndex,
+        errorPrefix: String,
+        _ work: @escaping @Sendable () async throws -> Void
+    ) {
+        isIndexing = true
+        searchIndexTask = Task { [weak self] in
+            let failure: Error?
+            do {
+                try await work()
+                failure = nil
+            } catch is CancellationError {
+                return
+            } catch {
+                failure = error
+            }
+            guard let self, self.searchIndex === index else { return }
+            self.isIndexing = false
+            if let failure {
+                self.errorMessage = "\(errorPrefix): \(failure.localizedDescription)"
+            }
+        }
+    }
+}

@@ -61,6 +61,18 @@ struct RootView: View {
                     dismiss: { model.isQuickOpenPresented = false }
                 )
             }
+
+            if model.isSearchPresented, let index = model.searchIndex {
+                Color.black.opacity(0.2)
+                    .ignoresSafeArea()
+                    .onTapGesture { model.isSearchPresented = false }
+                SearchView(
+                    index: index,
+                    isIndexing: model.isIndexing,
+                    open: model.openSearchResult,
+                    dismiss: { model.isSearchPresented = false }
+                )
+            }
         }
         .alert(
             "Chyba",

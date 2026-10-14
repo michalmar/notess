@@ -30,7 +30,8 @@ Package.swift
 Sources/
   NotessCore/     Domain logic, no UI: Vault, VaultWatcher (FSEvents), settings, Copilot CLI detection, DailyEntry,
                   Markdown/ (incremental MarkdownLexer, Tag, WikiLink),
-                  WikiLinkResolver (link target → note), NoteSection (heading lookup)
+                  WikiLinkResolver (link target → note), NoteSection (heading lookup),
+                  Search/ (Section splitting, SQLite FTS5 SearchIndex, SearchQuery)
   NotessEditor/   The editor: AppKit NSTextView on TextKit 2 with live Markdown formatting, wrapped for SwiftUI
   Notess/         SwiftUI app shell: window, Vault selection, tabs and menu commands
 Tests/
@@ -53,4 +54,5 @@ Dependencies point inwards: `Notess` → `NotessEditor` → `NotessCore`. `Notes
 - Open tabs, their order and the active tab are restored after restart. Missing files are skipped except for today's not-yet-saved Daily Entry.
 - The editor formats Markdown live (GFM headings, emphasis, strikethrough, code, quotes, lists, tables, links, `[[wiki-links]]` incl. `[[note#Section]]`, `#tags`). The markup stays visible, only dimmed. Clicking a task box `[ ]`/`[x]` toggles it like an edit (undoable, unsaved until Cmd+S). Only the edited lines are restyled while typing. Headings and code scale with the editor font from Settings; fonts and colours are a `MarkdownEditorStyle` built by `MarkdownEditor`.
 - Clicking a `[[wiki-link]]` (or Cmd-click) opens the note in a tab, or selects its existing tab; `[[note#Section]]` also scrolls to that heading (case-insensitive). Targets are matched by file name anywhere in the Vault (Journal, Free Notes, `_brain/`), ignoring case and `.md`; `[[Folder/Note]]` narrows to a folder. Duplicate names resolve deterministically (`WikiLinkResolver`): exact-case match, then Free Note over Daily Entry over Brain Note, then fewest folders, then alphabetical path. A missing note or Section shows a message and writes nothing.
+- **Cmd+Shift+F** searches the text of all notes and shows matching Sections (the text under a `#`/`##` heading) grouped Journal / Notes / Brain, ranked by relevance with the matched words highlighted. Search ignores case and diacritics and matches word prefixes; `#tag` words filter to Sections that carry the Tag (`#tag` alone lists them, newest Daily Entry first). Arrow keys pick a result, Enter or a click opens the note in a tab scrolled to the Section. The index is a SQLite FTS5 cache outside the Vault (`~/Library/Caches/Notess/SearchIndex/`), updated in the background on launch, on Cmd+S and on outside changes; **Přegenerovat index hledání** in the File menu rebuilds it from the files.
 - Pasting an image inserts `![](attachments/…)` and previews it inline below the still-visible Markdown. Image bytes are staged with the note and written to an `attachments/` folder beside it only on **Cmd+S**, including for a not-yet-saved Daily Entry.
