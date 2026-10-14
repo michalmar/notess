@@ -20,7 +20,7 @@ struct RootView: View {
                 .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
                     model.refreshTree()
                 }
-            } else if model.vault == nil {
+            } else {
                 VaultSetupView { url in model.chooseVault(at: url) }
             }
         }

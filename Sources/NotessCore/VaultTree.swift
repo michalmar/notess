@@ -81,10 +81,10 @@ extension Vault {
             options: [.skipsHiddenFiles]
         ) else { return [] }
 
-        let prefix = rootURL.path + "/"
+        let prefix = rootURL.standardizedFileURL.resolvingSymlinksInPath().path + "/"
         var days: [Day] = []
         for case let url as URL in enumerator {
-            let path = url.standardizedFileURL.path
+            let path = url.standardizedFileURL.resolvingSymlinksInPath().path
             guard path.hasPrefix(prefix) else { continue }
             let relative = String(path.dropFirst(prefix.count))
             if let day = DailyEntry.day(forRelativePath: relative) { days.append(day) }

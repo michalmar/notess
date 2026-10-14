@@ -16,6 +16,7 @@ struct SidebarView: View {
             Section("Journal") {
                 Button {
                     model.openToday()
+                    syncSelectionWithDocument()
                 } label: {
                     Label("Dnes", systemImage: "calendar")
                 }
@@ -41,13 +42,31 @@ struct SidebarView: View {
         .listStyle(.sidebar)
         .onChange(of: selection) { _, item in
             switch item {
-            case .day(let day): model.openDailyEntry(DailyEntry(day: day))
-            case .note(let path): model.openNote(relativePath: path)
+            case .day(let day):
+                model.openDailyEntry(DailyEntry(day: day))
+                syncSelectionWithDocument()
+            case .note(let path):
+                model.openNote(relativePath: path)
+                syncSelectionWithDocument()
             case .folder(let path): model.selectedFolder = path
             case nil: break
             }
         }
         .onAppear { selection = .folder(model.selectedFolder) }
+    }
+
+    /// Keeps the highlight on the file that is actually open, e.g. after a refused or failed open.
+    private func syncSelectionWithDocument() {
+        guard let vault = model.vault, let url = model.document?.fileURL else { return }
+        let root = vault.rootURL.resolvingSymlinksInPath().path + "/"
+        let path = url.standardizedFileURL.resolvingSymlinksInPath().path
+        guard path.hasPrefix(root) else { return }
+        let relative = String(path.dropFirst(root.count))
+        switch NoteKind.classify(relativePath: relative) {
+        case .dailyEntry: selection = DailyEntry.day(forRelativePath: relative).map(SidebarItem.day)
+        case .freeNote: selection = .note(relative)
+        default: break
+        }
     }
 
     private static func monthName(_ month: Int) -> String {
