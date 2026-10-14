@@ -13,7 +13,11 @@ let package = Package(
         // Platform-independent domain logic (no AppKit/SwiftUI). Unit-tested.
         .target(name: "NotessCore"),
         // AppKit NSTextView (TextKit 2) editor wrapped for SwiftUI.
-        .target(name: "NotessEditor"),
+        // Uses NotessCore's Markdown lexer for live formatting.
+        .target(
+            name: "NotessEditor",
+            dependencies: ["NotessCore"]
+        ),
         // SwiftUI app shell: window, Vault selection, commands.
         .executableTarget(
             name: "Notess",

@@ -28,17 +28,18 @@ Everything is a Swift package and runs from the command line; no Xcode project i
 ```
 Package.swift
 Sources/
-  NotessCore/     Domain logic, no UI: Vault, settings, Copilot CLI detection, DailyEntry
-  NotessEditor/   The editor: AppKit NSTextView on TextKit 2, wrapped for SwiftUI
+  NotessCore/     Domain logic, no UI: Vault, settings, Copilot CLI detection, DailyEntry,
+                  Markdown/ (incremental MarkdownLexer, Tag, WikiLink)
+  NotessEditor/   The editor: AppKit NSTextView on TextKit 2 with live Markdown formatting, wrapped for SwiftUI
   Notess/         SwiftUI app shell: window, Vault selection, tabs and menu commands
 Tests/
   NotessCoreTests/    Unit tests for the domain logic
-  NotessEditorTests/  Tests for the editor view configuration (e.g. TextKit 2)
+  NotessEditorTests/  Tests for the editor view (TextKit 2, formatting, tasks)
 Support/          Info.plist and entitlements for the .app bundle
 scripts/          build-app.sh
 ```
 
-Dependencies point inwards: `Notess` → `NotessEditor`, `NotessCore`. `NotessCore` must not import AppKit or SwiftUI so it stays fast to test; `NotessEditor` does not depend on `NotessCore`.
+Dependencies point inwards: `Notess` → `NotessEditor` → `NotessCore`. `NotessCore` must not import AppKit or SwiftUI so it stays fast to test; Markdown parsing (formatting, Tags, wiki-links) lives there so search and backlinks can reuse it, while `NotessEditor` only turns tokens into fonts and colours.
 
 ## Behaviour
 
@@ -48,3 +49,4 @@ Dependencies point inwards: `Notess` → `NotessEditor`, `NotessCore`. `NotessCo
 - Notes open in tabs with one tab per file; reopening a file selects its existing tab. **Cmd+T** opens today's Daily Entry, **Cmd+S** saves the active tab and **Cmd+W** closes it.
 - Unsaved tabs have a dot. Closing an unsaved tab asks whether to save it; quitting with any unsaved tabs asks once whether to save all, discard all or cancel.
 - Open tabs, their order and the active tab are restored after restart. Missing files are skipped except for today's not-yet-saved Daily Entry.
+- The editor formats Markdown live (GFM headings, emphasis, strikethrough, code, quotes, lists, tables, links, `[[wiki-links]]` incl. `[[note#Section]]`, `#tags`). The markup stays visible, only dimmed. Clicking a task box `[ ]`/`[x]` toggles it like an edit (undoable, unsaved until Cmd+S). Only the edited lines are restyled while typing. Headings and code scale with the editor font from Settings; fonts and colours are a `MarkdownEditorStyle` built by `MarkdownEditor`.

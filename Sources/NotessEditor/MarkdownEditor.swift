@@ -1,16 +1,18 @@
 import AppKit
 import SwiftUI
 
-/// Builds the editor's AppKit view hierarchy: an `NSTextView` on TextKit 2
-/// inside a scroll view, configured for plain-text Markdown.
+/// Builds the editor's AppKit view hierarchy: a `MarkdownTextView` on TextKit 2
+/// inside a scroll view, configured for plain-text Markdown with live formatting.
 ///
 /// Do not access `NSTextView.layoutManager` anywhere in the editor: AppKit
 /// then silently falls back to TextKit 1 for that view.
 @MainActor
 public enum MarkdownTextViewFactory {
-    public static func makeScrollView() -> NSScrollView {
-        let textView = NSTextView(usingTextLayoutManager: true)
+    public static func makeScrollView(style: MarkdownEditorStyle = .standard) -> NSScrollView {
+        let textView = MarkdownTextView(usingTextLayoutManager: true)
         configure(textView)
+        textView.attachHighlighter()
+        textView.markdownStyle = style
 
         let scrollView = NSScrollView()
         scrollView.hasVerticalScroller = true
@@ -28,8 +30,6 @@ public enum MarkdownTextViewFactory {
         textView.allowsUndo = true
         textView.usesFindBar = true
         textView.isIncrementalSearchingEnabled = true
-        textView.font = .systemFont(ofSize: 15)
-        textView.textColor = .textColor
         textView.backgroundColor = .textBackgroundColor
         textView.drawsBackground = true
         textView.textContainerInset = NSSize(width: 24, height: 20)
@@ -58,22 +58,24 @@ public enum MarkdownTextViewFactory {
 /// `documentID` changes, so keystrokes never round-trip through SwiftUI.
 public struct MarkdownEditor: NSViewRepresentable {
     private let documentID: AnyHashable
+    private let style: MarkdownEditorStyle
     private let initialText: () -> String
     private let onTextChange: (String) -> Void
-    private let fontName: String
-    private let fontSize: CGFloat
 
+    /// - Parameters:
+    ///   - fontName: The body font's PostScript name, or `"System"`.
+    ///   - colors: Formatting colours; the defaults follow light/dark mode.
     public init(
         documentID: AnyHashable,
         initialText: @escaping () -> String,
         fontName: String = "System",
         fontSize: CGFloat = 15,
+        colors: MarkdownEditorStyle.Colors = .init(),
         onTextChange: @escaping (String) -> Void
     ) {
         self.documentID = documentID
+        self.style = MarkdownEditorStyle(fontName: fontName, fontSize: fontSize, colors: colors)
         self.initialText = initialText
-        self.fontName = fontName
-        self.fontSize = fontSize
         self.onTextChange = onTextChange
     }
 
@@ -82,8 +84,8 @@ public struct MarkdownEditor: NSViewRepresentable {
     }
 
     public func makeNSView(context: Context) -> NSScrollView {
-        let scrollView = MarkdownTextViewFactory.makeScrollView()
-        let textView = scrollView.documentView as! NSTextView
+        let scrollView = MarkdownTextViewFactory.makeScrollView(style: style)
+        let textView = scrollView.documentView as! MarkdownTextView
         textView.delegate = context.coordinator
         context.coordinator.onTextChange = onTextChange
         load(into: textView, coordinator: context.coordinator)
@@ -92,8 +94,10 @@ public struct MarkdownEditor: NSViewRepresentable {
 
     public func updateNSView(_ scrollView: NSScrollView, context: Context) {
         context.coordinator.onTextChange = onTextChange
-        guard let textView = scrollView.documentView as? NSTextView else { return }
-        textView.font = resolvedFont()
+        guard let textView = scrollView.documentView as? MarkdownTextView else { return }
+        if textView.markdownStyle != style {
+            textView.markdownStyle = style
+        }
         guard context.coordinator.documentID != documentID else { return }
         load(into: textView, coordinator: context.coordinator)
     }
@@ -107,13 +111,6 @@ public struct MarkdownEditor: NSViewRepresentable {
             textView.window?.makeFirstResponder(textView)
             textView.scrollRangeToVisible(textView.selectedRange())
         }
-    }
-
-    private func resolvedFont() -> NSFont {
-        guard fontName != "System", let font = NSFont(name: fontName, size: fontSize) else {
-            return .systemFont(ofSize: fontSize)
-        }
-        return font
     }
 
     @MainActor
