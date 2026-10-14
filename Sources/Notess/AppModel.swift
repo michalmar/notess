@@ -1,5 +1,6 @@
 import Foundation
 import NotessCore
+import NotessEditor
 import Observation
 
 /// App-wide state: which Vault is open and which note tabs are open.
@@ -12,6 +13,8 @@ final class AppModel {
     /// Vault-relative folder chosen in the Notes section ("" is the Vault root); target for new Free Notes.
     var selectedFolder = ""
     var errorMessage: String?
+    /// Section to scroll the editor to after following a wiki-link.
+    var reveal: EditorReveal?
     let settings: AppSettings
 
     @ObservationIgnored private let vaultLocationStore: VaultLocationStore
@@ -98,11 +101,13 @@ final class AppModel {
     }
 
     func selectTab(documentID: NoteDocument.ID) {
+        reveal = nil
         tabSession.select(documentID: documentID)
         persistTabs()
     }
 
     func closeTab(documentID: NoteDocument.ID) {
+        reveal = nil
         tabSession.closeTab(documentID: documentID)
         persistTabs()
     }

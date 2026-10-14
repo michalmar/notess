@@ -1,10 +1,14 @@
 import AppKit
+import NotessCore
 
 /// The editor's `NSTextView`: live Markdown formatting and clickable task boxes.
 ///
 /// Do not access `layoutManager` here: it switches the view to TextKit 1.
 public final class MarkdownTextView: NSTextView {
     let highlighter = MarkdownHighlighter()
+
+    /// Called when the user clicks a `[[wiki-link]]`; the click then does not move the caret.
+    public var onWikiLinkClick: ((WikiLink) -> Void)?
 
     /// Fonts and colours; setting a different style restyles the whole note.
     public var markdownStyle: MarkdownEditorStyle {
@@ -31,7 +35,28 @@ public final class MarkdownTextView: NSTextView {
            toggleTask(atPoint: convert(event.locationInWindow, from: nil)) {
             return
         }
+        if event.clickCount == 1, modifiers.isEmpty || modifiers == .command,
+           let link = wikiLink(atPoint: convert(event.locationInWindow, from: nil)) {
+            onWikiLinkClick?(link)
+            return
+        }
         super.mouseDown(with: event)
+    }
+
+    /// The wiki-link whose text lies under `point` (view coordinates), if any.
+    func wikiLink(atPoint point: NSPoint) -> WikiLink? {
+        guard onWikiLinkClick != nil, textStorage != nil, string.contains("[[") else { return nil }
+        let index = characterIndexForInsertion(at: point)
+        let candidates = [index, index - 1].filter { $0 >= 0 && $0 < (string as NSString).length }
+        guard !candidates.isEmpty else { return nil }
+        let links = WikiLink.links(in: string)
+        for candidate in candidates {
+            guard let link = links.first(where: { NSLocationInRange(candidate, $0.range) }),
+                  boxRect(NSRange(location: candidate, length: 1)).insetBy(dx: -2, dy: -2).contains(point)
+            else { continue }
+            return link
+        }
+        return nil
     }
 
     /// Toggles the task box under `point` (view coordinates), if any.

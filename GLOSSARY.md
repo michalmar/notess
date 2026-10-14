@@ -23,7 +23,7 @@ A note the user creates in any folder of the Vault outside the Journal; it is no
 _Avoid_: Page, document
 
 **Section**:
-The span of a note from one second-level heading to the next; the unit that search returns, Tags apply to, and Brain Notes cite.
+The span of a note from one second-level heading to the next heading of level 1 or 2; the unit that search returns, Tags apply to, and Brain Notes cite.
 _Avoid_: Block, chunk, topic, chapter
 
 **Tag**:
@@ -31,7 +31,7 @@ A `#word` token (hash immediately followed by a word, no space) written anywhere
 _Avoid_: Label, category, topic
 
 **Wiki-link**:
-A `[[Note]]` reference to another note by its file name, optionally to one of its headings with `[[Note#Heading]]`.
+A `[[Note]]` reference to another note by its file name, optionally to one of its headings with `[[Note#Heading]]`. The note is found by file name anywhere in the Vault, ignoring case; duplicate names resolve by the rule documented on `WikiLinkResolver`.
 _Avoid_: Internal link, backlink (a backlink is a wiki-link seen from its target)
 
 ### Second brain

@@ -29,7 +29,8 @@ Everything is a Swift package and runs from the command line; no Xcode project i
 Package.swift
 Sources/
   NotessCore/     Domain logic, no UI: Vault, settings, Copilot CLI detection, DailyEntry,
-                  Markdown/ (incremental MarkdownLexer, Tag, WikiLink)
+                  Markdown/ (incremental MarkdownLexer, Tag, WikiLink),
+                  WikiLinkResolver (link target → note), NoteSection (heading lookup)
   NotessEditor/   The editor: AppKit NSTextView on TextKit 2 with live Markdown formatting, wrapped for SwiftUI
   Notess/         SwiftUI app shell: window, Vault selection, tabs and menu commands
 Tests/
@@ -50,3 +51,4 @@ Dependencies point inwards: `Notess` → `NotessEditor` → `NotessCore`. `Notes
 - Unsaved tabs have a dot. Closing an unsaved tab asks whether to save it; quitting with any unsaved tabs asks once whether to save all, discard all or cancel.
 - Open tabs, their order and the active tab are restored after restart. Missing files are skipped except for today's not-yet-saved Daily Entry.
 - The editor formats Markdown live (GFM headings, emphasis, strikethrough, code, quotes, lists, tables, links, `[[wiki-links]]` incl. `[[note#Section]]`, `#tags`). The markup stays visible, only dimmed. Clicking a task box `[ ]`/`[x]` toggles it like an edit (undoable, unsaved until Cmd+S). Only the edited lines are restyled while typing. Headings and code scale with the editor font from Settings; fonts and colours are a `MarkdownEditorStyle` built by `MarkdownEditor`.
+- Clicking a `[[wiki-link]]` (or Cmd-click) opens the note in a tab, or selects its existing tab; `[[note#Section]]` also scrolls to that heading (case-insensitive). Targets are matched by file name anywhere in the Vault (Journal, Free Notes, `_brain/`), ignoring case and `.md`; `[[Folder/Note]]` narrows to a folder. Duplicate names resolve deterministically (`WikiLinkResolver`): exact-case match, then Free Note over Daily Entry over Brain Note, then fewest folders, then alphabetical path. A missing note or Section shows a message and writes nothing.

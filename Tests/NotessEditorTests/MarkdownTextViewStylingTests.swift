@@ -1,4 +1,5 @@
 import AppKit
+import NotessCore
 import Testing
 @testable import NotessEditor
 
@@ -160,6 +161,29 @@ struct MarkdownTextViewStylingTests {
 
         #expect(textView.toggleTask(atPoint: try point(of: NSRange(location: 2, length: 3))))
         #expect(textView.string == "- [x] koupit mléko")
+    }
+
+    @Test("clicking a wiki-link reports it, clicking other text does not")
+    func clickWikiLink() throws {
+        let harness = Harness("Viz [[Acme#Plán]] a dál")
+        let textView = harness.textView
+        var opened: [WikiLink] = []
+        textView.onWikiLinkClick = { opened.append($0) }
+        func point(of range: NSRange) throws -> NSPoint {
+            let window = try #require(textView.window)
+            let rect = window.convertFromScreen(textView.firstRect(forCharacterRange: range, actualRange: nil))
+            let local = textView.convert(rect, from: nil)
+            return NSPoint(x: local.midX, y: local.midY)
+        }
+
+        #expect(textView.wikiLink(atPoint: try point(of: NSRange(location: 0, length: 3))) == nil)
+        #expect(textView.wikiLink(atPoint: try point(of: NSRange(location: 19, length: 3))) == nil)
+
+        let link = try #require(textView.wikiLink(atPoint: try point(of: NSRange(location: 8, length: 1))))
+        #expect(link.target == "Acme")
+        #expect(link.section == "Plán")
+        #expect(textView.wikiLink(atPoint: try point(of: NSRange(location: 4, length: 1)))?.target == "Acme")
+        #expect(textView.wikiLink(atPoint: try point(of: NSRange(location: 15, length: 1)))?.target == "Acme")
     }
 
     @Test("a new style restyles the note")
