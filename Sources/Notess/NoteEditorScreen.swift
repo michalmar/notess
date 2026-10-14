@@ -10,12 +10,18 @@ struct NoteEditorScreen: View {
     var onOpenWikiLink: (WikiLink) -> Void = { _ in }
 
     var body: some View {
+        // A new revision means the text was reloaded from disk, so the editor reloads too.
+        let contentID = EditorContentID(document: document.id, revision: document.revision)
         MarkdownEditor(
-            documentID: document.id,
+            documentID: contentID,
             initialText: { document.text },
             fontName: settings.editorFont.name,
             fontSize: CGFloat(settings.editorFont.size),
-            reveal: reveal,
+            reveal: reveal.flatMap { reveal in
+                reveal.documentID == AnyHashable(document.id)
+                    ? EditorReveal(id: reveal.id, documentID: contentID, range: reveal.range)
+                    : nil
+            },
             onOpenWikiLink: onOpenWikiLink,
             isEditable: !document.isReadOnly,
             onTextChange: { document.text = $0 }
@@ -29,6 +35,11 @@ struct NoteEditorScreen: View {
         }
         .background(WindowDocumentEditedMarker(isEdited: document.hasUnsavedChanges))
     }
+}
+
+private struct EditorContentID: Hashable {
+    let document: NoteDocument.ID
+    let revision: Int
 }
 
 /// A dot shown while the note has unsaved changes (ADR 0003).

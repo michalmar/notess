@@ -36,21 +36,25 @@ private struct NoteTab: View {
         HStack(spacing: 6) {
             Button(action: onSelect) {
                 HStack(spacing: 6) {
-                    Image(systemName: "circle.fill")
-                        .font(.system(size: 6))
-                        .opacity(document.hasUnsavedChanges ? 1 : 0)
-                        .accessibilityHidden(true)
+                    if document.externalChange != nil {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .font(.system(size: 9))
+                            .foregroundStyle(.yellow)
+                            .accessibilityHidden(true)
+                    } else {
+                        Image(systemName: "circle.fill")
+                            .font(.system(size: 6))
+                            .opacity(document.hasUnsavedChanges ? 1 : 0)
+                            .accessibilityHidden(true)
+                    }
                     Text(document.displayName)
+                        .strikethrough(document.externalChange == .deleted)
                         .lineLimit(1)
                 }
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .accessibilityLabel(
-                document.hasUnsavedChanges
-                    ? "\(document.displayName), neuložené změny"
-                    : document.displayName
-            )
+            .accessibilityLabel(accessibilityLabel)
 
             Button(action: onClose) {
                 Image(systemName: "xmark")
@@ -67,6 +71,26 @@ private struct NoteTab: View {
             RoundedRectangle(cornerRadius: 6)
                 .fill(isActive ? Color.accentColor.opacity(0.16) : Color.clear)
         )
-        .help(document.fileURL.path(percentEncoded: false))
+        .help(helpText)
+    }
+
+    private var accessibilityLabel: String {
+        var parts = [document.displayName]
+        if let status = statusText { parts.append(status) }
+        if document.hasUnsavedChanges { parts.append("neuložené změny") }
+        return parts.joined(separator: ", ")
+    }
+
+    private var helpText: String {
+        let path = document.fileURL.path(percentEncoded: false)
+        return statusText.map { "\(path)\n\($0)" } ?? path
+    }
+
+    private var statusText: String? {
+        switch document.externalChange {
+        case .deleted: "smazáno mimo Notess"
+        case .modified: "změněno mimo Notess"
+        case nil: nil
+        }
     }
 }

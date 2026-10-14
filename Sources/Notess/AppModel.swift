@@ -21,6 +21,7 @@ final class AppModel {
     @ObservationIgnored private let vaultLocationStore: VaultLocationStore
     @ObservationIgnored private let tabRestorationStore: TabRestorationStore
     @ObservationIgnored private let now: () -> Date
+    @ObservationIgnored private var watcher: VaultWatcher?
 
     init(
         vaultLocationStore: VaultLocationStore = VaultLocationStore(),
@@ -122,7 +123,31 @@ final class AppModel {
         isQuickOpenPresented = true
     }
 
-    /// Returns `false` if saving failed; the error is then in `errorMessage`.
+    /// Brings the sidebar and open tabs in line with the Vault on disk after
+    /// outside changes (git, other editors, the Agent).
+    func reconcileWithDisk() {
+        refreshTree()
+        tabSession.reconcileWithDisk()
+    }
+
+    /// Where every batch of outside Vault changes lands; features that react to
+    /// new files (e.g. Brain Notes after a Brain Run) hook in here.
+    func handleVaultChange(_ change: VaultChange) {
+        reconcileWithDisk()
+    }
+
+    /// "Načíst": replaces a tab's unsaved text with the file on disk.
+    func reloadFromDisk(documentID: NoteDocument.ID) {
+        guard let document = tabSession.documents.first(where: { $0.id == documentID }) else { return }
+        do {
+            try document.reloadFromDisk()
+        } catch {
+            errorMessage = "Soubor se nepodařilo načíst: \(error.localizedDescription)"
+        }
+    }
+
+    /// Returns `false` if saving failed; the error is then in `errorMessage`, except when the
+    /// file changed outside Notess: then the tab is selected and its bar asks what to do.
     @discardableResult
     func save(documentID: NoteDocument.ID? = nil) -> Bool {
         let document = documentID.flatMap { id in
@@ -134,6 +159,11 @@ final class AppModel {
             refreshTree()
             persistTabs()
             return true
+        } catch is NoteDocument.SaveError {
+            // The file changed or vanished outside Notess: the tab's bar asks what to do.
+            tabSession.select(documentID: document.id)
+            persistTabs()
+            return false
         } catch {
             errorMessage = "Uložení se nezdařilo: \(error.localizedDescription)"
             return false
@@ -153,6 +183,7 @@ final class AppModel {
         tabSession = TabSession()
         selectedFolder = ""
         isQuickOpenPresented = false
+        watch(vault)
         refreshTree()
         do {
             if let state = try tabRestorationStore.savedState(for: vault) {
@@ -164,6 +195,16 @@ final class AppModel {
             errorMessage = "Obnova otevřených tabů se nezdařila: \(error.localizedDescription)"
             openToday()
         }
+    }
+
+    private func watch(_ vault: Vault) {
+        watcher?.stop()
+        let watcher = VaultWatcher(rootURL: vault.rootURL, queue: .main) { [weak self] change in
+            MainActor.assumeIsolated { self?.handleVaultChange(change) }
+        }
+        // Without FSEvents, outside changes are still picked up when the app becomes active.
+        try? watcher.start()
+        self.watcher = watcher
     }
 
     @discardableResult
