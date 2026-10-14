@@ -61,5 +61,10 @@ struct NoteAttachmentTests {
         try document.save()
 
         #expect(FileManager.default.fileExists(atPath: attachment.fileURL.path) == false)
+
+        document.text += attachment.markdown
+        try document.save()
+
+        #expect(try Data(contentsOf: attachment.fileURL) == Data("image".utf8))
     }
 }

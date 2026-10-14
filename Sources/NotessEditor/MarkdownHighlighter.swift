@@ -16,7 +16,7 @@ final class MarkdownHighlighter: NSObject, NSTextStorageDelegate {
     let lexer = MarkdownLexer()
     private(set) var style: MarkdownEditorStyle
     private var fontCache: [FontKey: NSFont] = [:]
-    var didStyleText: () -> Void = {}
+    var didStyleText: (NSRange, NSRange?, Int) -> Void = { _, _, _ in }
 
     init(style: MarkdownEditorStyle = .standard) {
         self.style = style
@@ -35,7 +35,7 @@ final class MarkdownHighlighter: NSObject, NSTextStorageDelegate {
         storage.beginEditing()
         apply(tokens, in: NSRange(location: 0, length: storage.length), to: storage)
         storage.endEditing()
-        didStyleText()
+        didStyleText(NSRange(location: 0, length: storage.length), nil, 0)
     }
 
     /// Attributes of unformatted text; also the editor's typing attributes.
@@ -55,7 +55,7 @@ final class MarkdownHighlighter: NSObject, NSTextStorageDelegate {
         MainActor.assumeIsolated {
             let update = lexer.update(text: storage.mutableString, editedRange: editedRange, changeInLength: delta)
             apply(update.tokens, in: update.range, to: storage)
-            didStyleText()
+            didStyleText(update.range, editedRange, delta)
         }
     }
 

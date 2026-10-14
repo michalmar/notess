@@ -126,7 +126,10 @@ public final class NoteDocument: Identifiable {
             guard case .image(let source) = token.kind else { return nil }
             return source
         })
-        for attachment in stagedAttachments where referencedPaths.contains(attachment.relativePath) {
+        let attachmentsToWrite = stagedAttachments.filter {
+            referencedPaths.contains($0.relativePath)
+        }
+        for attachment in attachmentsToWrite {
             try FileManager.default.createDirectory(
                 at: attachment.fileURL.deletingLastPathComponent(),
                 withIntermediateDirectories: true
@@ -138,9 +141,10 @@ public final class NoteDocument: Identifiable {
             withIntermediateDirectories: true
         )
         try Data(snapshot.utf8).write(to: fileURL, options: .atomic)
+        let writtenPaths = Set(attachmentsToWrite.map(\.relativePath))
+        stagedAttachments.removeAll { writtenPaths.contains($0.relativePath) }
         self.fileURL = fileURL
         pendingFreeNoteFolder = nil
-        stagedAttachments.removeAll()
         accept(snapshot)
     }
 

@@ -9,13 +9,33 @@ public final class MarkdownTextView: NSTextView {
     public var onPasteImage: ((Data, String) -> String?)?
     public var inlineImageData: ((String) -> Data?)?
     public var noteURL: URL? {
-        didSet { scheduleInlineImageRefresh() }
+        didSet {
+            guard oldValue != noteURL else { return }
+            imageCache.removeAll()
+            scheduleInlineImageRefresh()
+        }
     }
 
-    private var inlineImageViews: [NSImageView] = []
-    private var inlineImageSpacingRanges: [NSRange] = []
+    @MainActor
+    private final class InlineImagePreview {
+        let source: String
+        var range: NSRange
+        var paragraphRange: NSRange
+        let image: NSImage
+        let imageView = NSImageView()
 
-    var displayedInlineImageCount: Int { inlineImageViews.count }
+        init(source: String, range: NSRange, paragraphRange: NSRange, image: NSImage) {
+            self.source = source
+            self.range = range
+            self.paragraphRange = paragraphRange
+            self.image = image
+        }
+    }
+
+    private var inlineImagePreviews: [InlineImagePreview] = []
+    private var imageCache: [String: NSImage] = [:]
+
+    var displayedInlineImageCount: Int { inlineImagePreviews.count }
 
     /// Called when the user clicks a `[[wiki-link]]`; the click then does not move the caret.
     public var onWikiLinkClick: ((WikiLink) -> Void)?
@@ -34,8 +54,13 @@ public final class MarkdownTextView: NSTextView {
 
     /// Connects the highlighter to the text storage; called once after creation.
     func attachHighlighter() {
-        highlighter.didStyleText = { [weak self] in
-            self?.scheduleInlineImageRefresh()
+        highlighter.didStyleText = { [weak self] range, editedRange, delta in
+            guard let self else { return }
+            if let editedRange {
+                updateInlineImages(in: range, editedRange: editedRange, changeInLength: delta)
+            } else {
+                refreshInlineImages()
+            }
         }
         textStorage?.delegate = highlighter
         font = highlighter.style.font
@@ -80,7 +105,7 @@ public final class MarkdownTextView: NSTextView {
         let widthChanged = abs(frame.size.width - newSize.width) > 0.5
         super.setFrameSize(newSize)
         if widthChanged {
-            scheduleInlineImageRefresh()
+            scheduleInlineImageLayout(updateSpacing: true)
         }
     }
 
@@ -123,81 +148,178 @@ public final class MarkdownTextView: NSTextView {
     @objc func refreshInlineImages() {
         guard let textStorage else { return }
 
-        for imageView in inlineImageViews {
-            imageView.removeFromSuperview()
+        for preview in inlineImagePreviews {
+            if preview.paragraphRange.upperBound <= textStorage.length {
+                textStorage.removeAttribute(.paragraphStyle, range: preview.paragraphRange)
+            }
+            preview.imageView.removeFromSuperview()
         }
-        inlineImageViews.removeAll()
-        for range in inlineImageSpacingRanges where range.upperBound <= textStorage.length {
-            textStorage.removeAttribute(.paragraphStyle, range: range)
-        }
-        inlineImageSpacingRanges.removeAll()
+        inlineImagePreviews.removeAll()
 
         guard let noteURL, textStorage.length > 0 else { return }
-        var images: [(range: NSRange, image: NSImage)] = []
-        textStorage.enumerateAttribute(
-            .notessImageSource,
-            in: NSRange(location: 0, length: textStorage.length)
-        ) { value, range, _ in
+        addInlineImagePreviews(
+            in: NSRange(location: 0, length: textStorage.length),
+            noteURL: noteURL
+        )
+        updateParagraphSpacing(for: Set(inlineImagePreviews.map(\.paragraphRange)))
+        layoutInlineImageViews()
+    }
+
+    private func updateInlineImages(
+        in styledRange: NSRange,
+        editedRange: NSRange,
+        changeInLength delta: Int
+    ) {
+        guard let textStorage, let noteURL else { return }
+        let oldRange = NSRange(
+            location: editedRange.location,
+            length: max(0, editedRange.length - delta)
+        )
+        let removedByEdit = inlineImagePreviews.filter {
+            NSIntersectionRange($0.range, oldRange).length > 0
+        }
+        let oldEnd = oldRange.upperBound
+        for preview in inlineImagePreviews
+        where !removedByEdit.contains(where: { $0 === preview }) && preview.range.location >= oldEnd {
+            preview.range.location += delta
+            preview.paragraphRange.location += delta
+        }
+
+        let removedByStyling = inlineImagePreviews.filter {
+            NSIntersectionRange($0.range, styledRange).length > 0
+        }
+        let removed = removedByEdit + removedByStyling.filter { candidate in
+            !removedByEdit.contains { $0 === candidate }
+        }
+        for preview in removed {
+            preview.imageView.removeFromSuperview()
+        }
+        inlineImagePreviews.removeAll { preview in
+            removed.contains { $0 === preview }
+        }
+
+        let range = NSIntersectionRange(
+            styledRange,
+            NSRange(location: 0, length: textStorage.length)
+        )
+        guard range.length > 0 else {
+            scheduleInlineImageLayout()
+            return
+        }
+        addInlineImagePreviews(in: range, noteURL: noteURL)
+        let paragraphs = Set(inlineImagePreviews.compactMap { preview in
+            NSIntersectionRange(preview.paragraphRange, range).length > 0
+                ? preview.paragraphRange
+                : nil
+        })
+        updateParagraphSpacing(for: paragraphs)
+        scheduleInlineImageLayout()
+    }
+
+    private func addInlineImagePreviews(in range: NSRange, noteURL: URL) {
+        guard let textStorage else { return }
+        let string = textStorage.string as NSString
+        textStorage.enumerateAttribute(.notessImageSource, in: range) { value, imageRange, _ in
             guard let source = value as? String,
                   let image = self.image(source: source, noteURL: noteURL) else { return }
-            images.append((range, image))
+            let paragraphRange = string.paragraphRange(for: imageRange)
+            let preview = InlineImagePreview(
+                source: source,
+                range: imageRange,
+                paragraphRange: paragraphRange,
+                image: image
+            )
+            preview.imageView.image = image
+            preview.imageView.imageScaling = .scaleProportionallyUpOrDown
+            preview.imageView.isEditable = false
+            self.addSubview(preview.imageView)
+            self.inlineImagePreviews.append(preview)
         }
-        guard !images.isEmpty else { return }
+    }
 
-        let string = textStorage.string as NSString
-        let grouped = Dictionary(grouping: images) { item in
-            string.paragraphRange(for: item.range)
-        }
-        var imageSizes: [NSRange: [NSSize]] = [:]
-        for (paragraphRange, items) in grouped {
-            let sizes = items.map { fittedSize(for: $0.image) }
+    private func updateParagraphSpacing(for paragraphRanges: Set<NSRange>) {
+        guard let textStorage else { return }
+        for paragraphRange in paragraphRanges where paragraphRange.upperBound <= textStorage.length {
+            let previews = inlineImagePreviews.filter { $0.paragraphRange == paragraphRange }
             let style = NSMutableParagraphStyle()
-            style.paragraphSpacing = sizes.reduce(0) { $0 + $1.height + 8 }
+            style.paragraphSpacing = previews.reduce(0) {
+                $0 + fittedSize(for: $1.image).height + 8
+            }
             textStorage.addAttribute(.paragraphStyle, value: style, range: paragraphRange)
-            inlineImageSpacingRanges.append(paragraphRange)
-            imageSizes[paragraphRange] = sizes
         }
+    }
 
+    private func scheduleInlineImageLayout(updateSpacing: Bool = false) {
+        NSObject.cancelPreviousPerformRequests(
+            withTarget: self,
+            selector: #selector(layoutInlineImageViews),
+            object: nil
+        )
+        if updateSpacing {
+            updateParagraphSpacing(for: Set(inlineImagePreviews.map(\.paragraphRange)))
+        }
+        perform(#selector(layoutInlineImageViews), with: nil, afterDelay: 0)
+    }
+
+    @objc private func layoutInlineImageViews() {
         layoutSubtreeIfNeeded()
         var paragraphOffsets: [NSRange: CGFloat] = [:]
-        for item in images {
-            let paragraphRange = string.paragraphRange(for: item.range)
-            let index = grouped[paragraphRange]?.firstIndex(where: { $0.range == item.range }) ?? 0
-            let size = imageSizes[paragraphRange]?[index] ?? fittedSize(for: item.image)
-            let lineRect = characterRect(item.range)
-            let offset = paragraphOffsets[paragraphRange, default: 0]
-            let imageView = NSImageView(frame: NSRect(
+        for preview in inlineImagePreviews.sorted(by: { $0.range.location < $1.range.location }) {
+            let size = fittedSize(for: preview.image)
+            let lineRect = rect(forCharacterRange: preview.range)
+            let offset = paragraphOffsets[preview.paragraphRange, default: 0]
+            preview.imageView.frame = NSRect(
                 x: lineRect.minX,
                 y: lineRect.maxY + 8 + offset,
                 width: size.width,
                 height: size.height
-            ))
-            imageView.image = item.image
-            imageView.imageScaling = .scaleProportionallyUpOrDown
-            imageView.isEditable = false
-            addSubview(imageView)
-            inlineImageViews.append(imageView)
-            paragraphOffsets[paragraphRange] = offset + size.height + 8
+            )
+            paragraphOffsets[preview.paragraphRange] = offset + size.height + 8
         }
     }
 
     private func image(source: String, noteURL: URL) -> NSImage? {
-        let decoded = source.removingPercentEncoding ?? source
-        guard isSafeRelativePath(decoded) else { return nil }
-        if let data = inlineImageData?(source), let image = NSImage(data: data) {
-            return image
+        if let cached = imageCache[source] {
+            return cached
         }
-        let url = noteURL.deletingLastPathComponent()
-            .appending(path: decoded, directoryHint: .notDirectory)
-        return NSImage(contentsOf: url)
+        let unescaped = unescapeMarkdownPath(source)
+        let decoded = unescaped.removingPercentEncoding ?? unescaped
+        guard isSafeRelativePath(decoded) else { return nil }
+        let image: NSImage?
+        if let data = inlineImageData?(source) {
+            image = NSImage(data: data)
+        } else {
+            let url = noteURL.deletingLastPathComponent()
+                .appending(path: decoded, directoryHint: .notDirectory)
+                .standardizedFileURL
+            image = NSImage(contentsOf: url)
+        }
+        if let image {
+            imageCache[source] = image
+        }
+        return image
     }
 
     private func isSafeRelativePath(_ path: String) -> Bool {
-        let components = NSString(string: path).pathComponents
         return !path.hasPrefix("/")
-            && !components.contains("..")
-            && !components.contains(".")
             && URL(string: path)?.scheme == nil
+    }
+
+    private func unescapeMarkdownPath(_ path: String) -> String {
+        var result = ""
+        var escaping = false
+        for character in path {
+            if escaping {
+                result.append(character)
+                escaping = false
+            } else if character == "\\" {
+                escaping = true
+            } else {
+                result.append(character)
+            }
+        }
+        if escaping { result.append("\\") }
+        return result
     }
 
     private func fittedSize(for image: NSImage) -> NSSize {
@@ -207,7 +329,7 @@ public final class MarkdownTextView: NSTextView {
         return NSSize(width: image.size.width * scale, height: image.size.height * scale)
     }
 
-    private func characterRect(_ range: NSRange) -> NSRect {
+    private func rect(forCharacterRange range: NSRange) -> NSRect {
         guard let window else { return .zero }
         let screenRect = firstRect(forCharacterRange: range, actualRange: nil)
         return convert(window.convertFromScreen(screenRect), from: nil)
@@ -253,8 +375,6 @@ public final class MarkdownTextView: NSTextView {
 
     /// The rectangle of `range` in view coordinates.
     private func boxRect(_ range: NSRange) -> NSRect {
-        guard let window else { return .zero }
-        let screenRect = firstRect(forCharacterRange: range, actualRange: nil)
-        return convert(window.convertFromScreen(screenRect), from: nil)
+        rect(forCharacterRange: range)
     }
 }

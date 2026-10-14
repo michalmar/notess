@@ -283,6 +283,39 @@ struct MarkdownTextViewStylingTests {
         )
         #expect(style.paragraphSpacing > 0)
     }
+
+    @Test("dot, parent, and escaped relative image paths render")
+    func relativeImagePaths() throws {
+        let markdown = """
+        ![](./attachments/a.png)
+        ![](../assets/b.png)
+        ![](attachments/my\\ image.png)
+        """
+        let harness = Harness(markdown)
+        let png = try #require(testPNG())
+        harness.textView.noteURL = URL(filePath: "/Vault/Notes/Idea.md")
+        harness.textView.inlineImageData = { _ in png }
+
+        harness.textView.refreshInlineImages()
+
+        #expect(harness.textView.displayedInlineImageCount == 3)
+    }
+
+    @Test("deleting the image Markdown removes its preview")
+    func deletingInlineImage() throws {
+        let markdown = "![](attachments/image.png)"
+        let harness = Harness(markdown)
+        let png = try #require(testPNG())
+        harness.textView.noteURL = URL(filePath: "/Vault/Notes/Idea.md")
+        harness.textView.inlineImageData = { _ in png }
+        harness.textView.refreshInlineImages()
+        #expect(harness.textView.displayedInlineImageCount == 1)
+
+        harness.textView.setSelectedRange(NSRange(location: 0, length: (markdown as NSString).length))
+        harness.textView.insertText("", replacementRange: harness.textView.selectedRange())
+
+        #expect(harness.textView.displayedInlineImageCount == 0)
+    }
 }
 
 private func testPNG() -> Data? {
