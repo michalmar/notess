@@ -221,7 +221,8 @@ final class AppModel {
         do {
             let document = try tabSession.openNote(
                 at: fileURL,
-                newFileContent: newFileContent
+                newFileContent: newFileContent,
+                isReadOnly: isBrainNote(fileURL)
             )
             persistTabs()
             return document
@@ -263,6 +264,15 @@ final class AppModel {
               !components.contains(".."),
               !components.contains(".") else { return nil }
         return vault.rootURL.appending(path: relativePath, directoryHint: .notDirectory)
+    }
+
+    /// Brain Notes are read-only whichever way they are opened (sidebar, wiki-link, tab restoration).
+    private func isBrainNote(_ fileURL: URL) -> Bool {
+        guard let vault else { return false }
+        let root = vault.rootURL.resolvingSymlinksInPath().path + "/"
+        let path = fileURL.standardizedFileURL.resolvingSymlinksInPath().path
+        guard path.hasPrefix(root) else { return false }
+        return NoteKind.classify(relativePath: String(path.dropFirst(root.count))) == .brainNote
     }
 
     private func persistTabs() {

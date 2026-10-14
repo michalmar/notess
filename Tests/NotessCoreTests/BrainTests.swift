@@ -78,3 +78,37 @@ import Testing
         #expect(tv.vault.scanTree().notes.folders.isEmpty)
     }
 }
+
+@Suite struct BrainReviewFixTests {
+    @Test func crlfInstructionsAreParsed() {
+        let text = "## Entity types\r\n- `books/`\r\n"
+        #expect(BrainInstructions.entityTypes(in: text).map(\.folder) == ["books"])
+    }
+
+    @Test func symlinkedEntityFolderIsNotScanned() throws {
+        let tv = try TemporaryVault()
+        let outside = try TemporaryVault()
+        try outside.write("x", to: "Secret.md")
+        try tv.write("## Entity types\n- `people/`\n", to: "_brain/AGENTS.md")
+        try FileManager.default.createSymbolicLink(
+            at: tv.vault.rootURL.appendingPathComponent("_brain/people"),
+            withDestinationURL: outside.vault.rootURL
+        )
+        try FileManager.default.createSymbolicLink(
+            at: tv.vault.rootURL.appendingPathComponent("_brain/other"),
+            withDestinationURL: outside.vault.rootURL
+        )
+        #expect(tv.vault.scanTree().brain.groups.allSatisfy { $0.notes.isEmpty })
+    }
+
+    @MainActor @Test func tabSessionHonoursReadOnlyFlag() throws {
+        let tv = try TemporaryVault()
+        try tv.write("x", to: "_brain/people/Anna.md")
+        let session = TabSession()
+        let doc = try session.openNote(
+            at: tv.vault.rootURL.appendingPathComponent("_brain/people/Anna.md"),
+            isReadOnly: true
+        )
+        #expect(doc.isReadOnly)
+    }
+}

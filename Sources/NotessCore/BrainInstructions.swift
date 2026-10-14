@@ -11,8 +11,8 @@ public enum BrainInstructions {
         var types: [EntityType] = []
         var inSection = false
         var inCodeFence = false
-        for rawLine in text.split(separator: "\n", omittingEmptySubsequences: false) {
-            let line = rawLine.trimmingCharacters(in: .whitespaces)
+        for rawLine in text.split(whereSeparator: \.isNewline) {
+            let line = rawLine.trimmingCharacters(in: .whitespacesAndNewlines)
             if line.hasPrefix("```") || line.hasPrefix("~~~") {
                 inCodeFence.toggle()
                 continue

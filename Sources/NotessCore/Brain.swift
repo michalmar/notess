@@ -94,11 +94,14 @@ extension Vault {
         let url = rootURL.appending(path: NoteKind.brainFolder, directoryHint: .isDirectory)
         let entries = (try? FileManager.default.contentsOfDirectory(
             at: url,
-            includingPropertiesForKeys: [.isDirectoryKey],
+            includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey],
             options: [.skipsHiddenFiles]
         )) ?? []
         return entries
-            .filter { (try? $0.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true }
+            .filter {
+                let values = try? $0.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
+                return values?.isDirectory == true && values?.isSymbolicLink != true
+            }
             .map(\.lastPathComponent)
             .filter { $0 != NoteKind.attachmentsFolder }
             .sorted { $0.localizedStandardCompare($1) == .orderedAscending }
@@ -108,6 +111,9 @@ extension Vault {
     private func scanBrainGroup(folder: String?, title: String) -> BrainTree.Group {
         let relativeFolder = folder.map { "\(NoteKind.brainFolder)/\($0)" } ?? NoteKind.brainFolder
         let url = rootURL.appending(path: relativeFolder, directoryHint: .isDirectory)
+        if (try? url.resourceValues(forKeys: [.isSymbolicLinkKey]).isSymbolicLink) == true {
+            return .init(title: title, relativePath: relativeFolder, notes: [])
+        }
         let entries = (try? FileManager.default.contentsOfDirectory(
             at: url,
             includingPropertiesForKeys: [.isRegularFileKey, .isSymbolicLinkKey],
