@@ -24,6 +24,11 @@ struct NoteEditorScreen: View {
             },
             onOpenWikiLink: onOpenWikiLink,
             isEditable: !document.isReadOnly,
+            noteURL: document.fileURL,
+            onPasteImage: { data, fileExtension in
+                document.stageAttachment(data: data, fileExtension: fileExtension).markdown
+            },
+            inlineImageData: { document.stagedAttachmentData(relativePath: $0) },
             onTextChange: { document.text = $0 }
         )
         .navigationTitle(document.displayName)

@@ -80,6 +80,9 @@ public struct MarkdownEditor: NSViewRepresentable {
     private let reveal: EditorReveal?
     private let onOpenWikiLink: ((WikiLink) -> Void)?
     private let onTextChange: (String) -> Void
+    private let noteURL: URL?
+    private let onPasteImage: ((Data, String) -> String?)?
+    private let inlineImageData: ((String) -> Data?)?
 
     /// - Parameters:
     ///   - fontName: The body font's PostScript name, or `"System"`.
@@ -93,6 +96,9 @@ public struct MarkdownEditor: NSViewRepresentable {
         reveal: EditorReveal? = nil,
         onOpenWikiLink: ((WikiLink) -> Void)? = nil,
         isEditable: Bool = true,
+        noteURL: URL? = nil,
+        onPasteImage: ((Data, String) -> String?)? = nil,
+        inlineImageData: ((String) -> Data?)? = nil,
         onTextChange: @escaping (String) -> Void
     ) {
         self.documentID = documentID
@@ -101,6 +107,9 @@ public struct MarkdownEditor: NSViewRepresentable {
         self.initialText = initialText
         self.reveal = reveal
         self.onOpenWikiLink = onOpenWikiLink
+        self.noteURL = noteURL
+        self.onPasteImage = onPasteImage
+        self.inlineImageData = inlineImageData
         self.onTextChange = onTextChange
     }
 
@@ -112,6 +121,7 @@ public struct MarkdownEditor: NSViewRepresentable {
         let scrollView = MarkdownTextViewFactory.makeScrollView(style: style)
         let textView = scrollView.documentView as! MarkdownTextView
         textView.delegate = context.coordinator
+        configureImages(in: textView)
         context.coordinator.onTextChange = onTextChange
         textView.onWikiLinkClick = onOpenWikiLink
         textView.isEditable = isEditable
@@ -124,6 +134,7 @@ public struct MarkdownEditor: NSViewRepresentable {
         context.coordinator.onTextChange = onTextChange
         guard let textView = scrollView.documentView as? MarkdownTextView else { return }
         textView.onWikiLinkClick = onOpenWikiLink
+        configureImages(in: textView)
         if textView.markdownStyle != style {
             textView.markdownStyle = style
         }
@@ -146,16 +157,23 @@ public struct MarkdownEditor: NSViewRepresentable {
         }
     }
 
-    private func load(into textView: NSTextView, coordinator: Coordinator) {
+    private func load(into textView: MarkdownTextView, coordinator: Coordinator) {
         coordinator.documentID = documentID
         textView.string = initialText()
         textView.undoManager?.removeAllActions()
         textView.setSelectedRange(NSRange(location: (textView.string as NSString).length, length: 0))
+        textView.scheduleInlineImageRefresh()
         guard isEditable else { return }
         DispatchQueue.main.async {
             textView.window?.makeFirstResponder(textView)
             textView.scrollRangeToVisible(textView.selectedRange())
         }
+    }
+
+    private func configureImages(in textView: MarkdownTextView) {
+        textView.onPasteImage = onPasteImage
+        textView.inlineImageData = inlineImageData
+        textView.noteURL = noteURL
     }
 
     @MainActor

@@ -103,6 +103,8 @@ struct MarkdownSyntaxTests {
         let text = "[Notess](https://x.cz \"t\") ![obr](a.png) <https://a.cz> viz https://b.cz/x_(y). a www.c.cz"
         #expect(spans(text, .link) == ["Notess", "obr", "https://a.cz", "https://b.cz/x_(y)", "www.c.cz"])
         #expect(spans(text, .linkDestination) == ["https://x.cz \"t\"", "a.png"])
+        #expect(spans(text, .image(source: "a.png")) == ["![obr](a.png)"])
+        #expect(spans("![](attachments/a.png \"title\")", .image(source: "attachments/a.png")) == ["![](attachments/a.png \"title\")"])
         #expect(spans("[jen text] a [x]", .link).isEmpty)
     }
 
