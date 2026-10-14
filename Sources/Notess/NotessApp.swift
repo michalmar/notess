@@ -72,6 +72,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        model.terminateBrainRun()
         if let closeTabEventMonitor {
             NSEvent.removeMonitor(closeTabEventMonitor)
         }

@@ -23,6 +23,12 @@ final class AppModel {
     var reveal: EditorReveal?
     private(set) var backlinks: [Backlink] = []
     let settings: AppSettings
+    /// Where the Brain Run stands, shown in the toolbar.
+    var brainRunPhase: BrainRunPhase = .idle
+    /// When the open Vault's last successful Brain Run finished.
+    var lastSuccessfulBrainRun: Date?
+    let brainRunLog = BrainRunLog()
+    var isBrainRunLogPresented = false
 
     @ObservationIgnored private let vaultLocationStore: VaultLocationStore
     @ObservationIgnored private let tabRestorationStore: TabRestorationStore
@@ -32,16 +38,25 @@ final class AppModel {
     @ObservationIgnored private var backlinkGeneration = UUID()
     @ObservationIgnored var searchIndex: SearchIndex?
     @ObservationIgnored var searchIndexTask: Task<Void, Never>?
+    @ObservationIgnored let brainRunStateStore: BrainRunStateStore
+    @ObservationIgnored var brainRun: BrainRun?
+    @ObservationIgnored var brainRunTask: Task<Void, Never>?
+    /// Identifies the current Brain Run, so a run of a previous Vault reports nothing.
+    @ObservationIgnored var brainRunID = UUID()
+    @ObservationIgnored var isCheckingBrainRunBoundary = false
+    @ObservationIgnored var needsBrainRunBoundaryRecheck = false
 
     init(
         vaultLocationStore: VaultLocationStore = VaultLocationStore(),
         tabRestorationStore: TabRestorationStore = TabRestorationStore(),
         settings: AppSettings = AppSettings(),
+        brainRunStateStore: BrainRunStateStore = BrainRunStateStore(),
         now: @escaping () -> Date = Date.init
     ) {
         self.vaultLocationStore = vaultLocationStore
         self.tabRestorationStore = tabRestorationStore
         self.settings = settings
+        self.brainRunStateStore = brainRunStateStore
         self.now = now
         if let saved = vaultLocationStore.savedVault() {
             open(saved)
@@ -160,6 +175,7 @@ final class AppModel {
     func handleVaultChange(_ change: VaultChange) {
         reconcileWithDisk()
         updateSearchIndex(for: change)
+        checkBrainRunBoundary(after: change)
     }
 
     /// "Načíst": replaces a tab's unsaved text with the file on disk.
@@ -180,6 +196,8 @@ final class AppModel {
             tabSession.documents.first(where: { $0.id == id })
         } ?? tabSession.activeDocument
         guard let document else { return true }
+        // Whatever this save wrote is the user's, not the Agent's.
+        defer { acceptUserWriteDuringBrainRun(of: document) }
         do {
             try document.save()
             refreshTree()
@@ -207,6 +225,7 @@ final class AppModel {
     }
 
     private func open(_ vault: Vault) {
+        resetBrainRun(for: vault)
         self.vault = vault
         tabSession = TabSession()
         backlinks = []
@@ -377,7 +396,7 @@ final class AppModel {
         backlinks = loaded
     }
 
-    private func relativePath(for fileURL: URL, in vault: Vault) -> String? {
+    func relativePath(for fileURL: URL, in vault: Vault) -> String? {
         let root = vault.rootURL.standardizedFileURL.path(percentEncoded: false) + "/"
         let path = fileURL.standardizedFileURL.path(percentEncoded: false)
         guard path.hasPrefix(root) else { return nil }

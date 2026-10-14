@@ -27,6 +27,10 @@ public struct CopilotCLILocator: Sendable {
         return candidates.first(where: fileExists)
     }
 
+    func isExecutable(_ url: URL) -> Bool {
+        fileExists(url)
+    }
+
     private static var standardLocations: [URL] {
         let home = FileManager.default.homeDirectoryForCurrentUser
         return [
