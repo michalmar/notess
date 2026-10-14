@@ -385,9 +385,9 @@ struct MarkdownLineLexer {
             case Char.lbracket where allowsLinks && i + 1 < end && c[i + 1] == Char.lbracket:
                 if let after = lexWikiLink(at: i, end: end) { i = after } else { i += 2 }
             case Char.lbracket where allowsLinks:
-                i = lexLink(at: i, textStart: i + 1, end: end) ?? i + 1
+                i = lexLink(at: i, textStart: i + 1, end: end, isImage: false) ?? i + 1
             case Char.bang where allowsLinks && i + 1 < end && c[i + 1] == Char.lbracket:
-                i = lexLink(at: i, textStart: i + 2, end: end) ?? i + 2
+                i = lexLink(at: i, textStart: i + 2, end: end, isImage: true) ?? i + 2
             case Char.lt where allowsLinks:
                 i = lexAutolink(at: i, end: end) ?? i + 1
             case _ where allowsLinks && (unit == Char.lowerH || unit == Char.lowerW):
@@ -442,7 +442,7 @@ struct MarkdownLineLexer {
         return k + 2
     }
 
-    private mutating func lexLink(at i: Int, textStart: Int, end: Int) -> Int? {
+    private mutating func lexLink(at i: Int, textStart: Int, end: Int, isImage: Bool) -> Int? {
         var depth = 1
         var k = textStart
         while k < end {
@@ -473,7 +473,33 @@ struct MarkdownLineLexer {
         add(.syntaxMarker, k, k + 2)
         add(.linkDestination, k + 2, m)
         add(.syntaxMarker, m, m + 1)
+        if isImage {
+            let source = linkDestinationSource(from: k + 2, to: m)
+            add(.image(source: source), i, m + 1)
+        }
         return m + 1
+    }
+
+    private func linkDestinationSource(from start: Int, to end: Int) -> String {
+        var sourceStart = start
+        while sourceStart < end && Char.isWhitespace(c[sourceStart]) { sourceStart += 1 }
+        guard sourceStart < end else { return "" }
+        if c[sourceStart] == Char.lt {
+            var sourceEnd = sourceStart + 1
+            while sourceEnd < end && c[sourceEnd] != Char.gt { sourceEnd += 1 }
+            return String(decoding: c[(sourceStart + 1)..<sourceEnd], as: UTF16.self)
+        }
+        var sourceEnd = sourceStart
+        while sourceEnd < end {
+            if c[sourceEnd] == Char.backslash {
+                sourceEnd = min(sourceEnd + 2, end)
+            } else if Char.isWhitespace(c[sourceEnd]) {
+                break
+            } else {
+                sourceEnd += 1
+            }
+        }
+        return String(decoding: c[sourceStart..<sourceEnd], as: UTF16.self)
     }
 
     /// `<https://example.com>` or `<name@example.com>`.

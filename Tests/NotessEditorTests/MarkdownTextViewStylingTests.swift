@@ -221,6 +221,84 @@ struct MarkdownTextViewStylingTests {
         }
         #expect(elapsed < .seconds(2), "50 keystrokes took \(elapsed)")
     }
+
+    @Test("pasting an image inserts Markdown through the attachment handler")
+    func imagePaste() throws {
+        let harness = Harness("before ")
+        let pasteboard = NSPasteboard(name: .init("NotessEditorTests.imagePaste"))
+        pasteboard.clearContents()
+        let png = try #require(testPNG())
+        pasteboard.setData(png, forType: .png)
+        harness.textView.onPasteImage = { data, fileExtension in
+            #expect(data == png)
+            #expect(fileExtension == "png")
+            return "![](attachments/image.png)"
+        }
+        harness.textView.setSelectedRange(NSRange(location: 7, length: 0))
+
+        harness.textView.paste(from: pasteboard)
+
+        #expect(harness.textView.string == "before ![](attachments/image.png)")
+    }
+
+    @Test("pasting text is unchanged")
+    func textPaste() {
+        let harness = Harness("before ")
+        let pasteboard = NSPasteboard(name: .init("NotessEditorTests.textPaste"))
+        pasteboard.clearContents()
+        pasteboard.setString("plain text", forType: .string)
+        harness.textView.onPasteImage = { _, _ in
+            Issue.record("image handler must not run for text")
+            return nil
+        }
+        harness.textView.setSelectedRange(NSRange(location: 7, length: 0))
+
+        harness.textView.paste(from: pasteboard)
+
+        #expect(harness.textView.string == "before plain text")
+    }
+
+    @Test("relative image links render below visible Markdown, including staged images")
+    func inlineImage() throws {
+        let markdown = "before\n![](attachments/image.png)\nafter"
+        let harness = Harness(markdown)
+        let noteURL = URL(filePath: "/Vault/Notes/Idea.md")
+        let png = try #require(testPNG())
+        harness.textView.noteURL = noteURL
+        harness.textView.inlineImageData = { relativePath in
+            relativePath == "attachments/image.png" ? png : nil
+        }
+
+        harness.textView.refreshInlineImages()
+
+        #expect(harness.textView.string == markdown)
+        #expect(harness.textView.displayedInlineImageCount == 1)
+        let linkRange = (markdown as NSString).range(of: "![]")
+        let style = try #require(
+            harness.textView.textStorage?.attribute(
+                .paragraphStyle,
+                at: linkRange.location,
+                effectiveRange: nil
+            ) as? NSParagraphStyle
+        )
+        #expect(style.paragraphSpacing > 0)
+    }
+}
+
+private func testPNG() -> Data? {
+    guard let bitmap = NSBitmapImageRep(
+        bitmapDataPlanes: nil,
+        pixelsWide: 2,
+        pixelsHigh: 1,
+        bitsPerSample: 8,
+        samplesPerPixel: 4,
+        hasAlpha: true,
+        isPlanar: false,
+        colorSpaceName: .deviceRGB,
+        bytesPerRow: 0,
+        bitsPerPixel: 0
+    ) else { return nil }
+    return bitmap.representation(using: .png, properties: [:])
 }
 
 private extension NSScrollView {

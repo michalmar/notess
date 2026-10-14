@@ -46,6 +46,7 @@ public final class NoteDocument: Identifiable {
     /// The file's content as last loaded, saved or accepted; for a file not on
     /// disk, the content the note started from.
     @ObservationIgnored private var baseline: String
+    @ObservationIgnored private var stagedAttachments: [NoteAttachment] = []
 
     /// Name shown in tabs: the file name, or the heading of an unsaved Free Note.
     public var displayName: String {
@@ -121,6 +122,17 @@ public final class NoteDocument: Identifiable {
             }
         }
         let fileURL = pendingURL ?? self.fileURL
+        let referencedPaths = Set<String>(MarkdownSyntax.tokens(in: snapshot).compactMap { token in
+            guard case .image(let source) = token.kind else { return nil }
+            return source
+        })
+        for attachment in stagedAttachments where referencedPaths.contains(attachment.relativePath) {
+            try FileManager.default.createDirectory(
+                at: attachment.fileURL.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+            try attachment.data.write(to: attachment.fileURL, options: .atomic)
+        }
         try FileManager.default.createDirectory(
             at: fileURL.deletingLastPathComponent(),
             withIntermediateDirectories: true
@@ -128,6 +140,7 @@ public final class NoteDocument: Identifiable {
         try Data(snapshot.utf8).write(to: fileURL, options: .atomic)
         self.fileURL = fileURL
         pendingFreeNoteFolder = nil
+        stagedAttachments.removeAll()
         accept(snapshot)
     }
 
@@ -201,6 +214,27 @@ public final class NoteDocument: Identifiable {
         }
         externalChange = .modified(diskContent)
         return .conflict
+    }
+
+    /// Stages image bytes for the next explicit save and returns their Markdown link.
+    public func stageAttachment(
+        data: Data,
+        fileExtension: String,
+        id: UUID = UUID()
+    ) -> NoteAttachment {
+        let attachment = NoteAttachment.plan(
+            data: data,
+            fileExtension: fileExtension,
+            for: fileURL,
+            id: id
+        )
+        stagedAttachments.append(attachment)
+        return attachment
+    }
+
+    /// Returns bytes for an attachment waiting for the next explicit save.
+    public func stagedAttachmentData(relativePath: String) -> Data? {
+        stagedAttachments.last(where: { $0.relativePath == relativePath })?.data
     }
 
     private func refreshUnsavedChanges() {

@@ -34,6 +34,8 @@ public struct MarkdownToken: Hashable, Sendable {
         case link
         /// The `url "title"` part of an inline link.
         case linkDestination
+        /// A whole inline image and its source path.
+        case image(source: String)
         /// A whole `[[target#Section]]` wiki-link, brackets included.
         case wikiLink
         /// A whole `#tag`, hash included.
