@@ -12,7 +12,7 @@ struct RootView: View {
                         .navigationSplitViewColumnWidth(min: 200, ideal: 240, max: 400)
                 } detail: {
                     if let document = model.document {
-                        NoteEditorScreen(document: document)
+                        NoteEditorScreen(document: document, settings: model.settings)
                     } else {
                         ContentUnavailableView("Záznam není otevřený", systemImage: "doc.text")
                     }

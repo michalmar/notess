@@ -19,6 +19,7 @@ struct NoteKindTests {
         "Journal/2026/04/2026-03-14.md",
         "Journal/2026-03-14.md",
         "Journal/2026/03/2026-13-01.md",
+        "Journal/2026/02/2026-02-31.md",
         "Work/attachments/a.md",
         "Work/image.png",
         "Work/.hidden.md",
@@ -71,6 +72,25 @@ struct VaultTreeTests {
         #expect(work.notes.map(\.title) == ["Kickoff"])
         #expect(work.folders.map(\.relativePath) == ["Work/Deep"])
         #expect(work.folders[0].notes.map(\.relativePath) == ["Work/Deep/Plan.md"])
+    }
+
+    @Test func journalIgnoresDirectoriesAndNotesIgnoreSymlinks() throws {
+        let tmp = try TemporaryVault()
+        try FileManager.default.createDirectory(
+            at: tmp.vault.rootURL.appending(path: "Journal/2026/03/2026-03-14.md"), withIntermediateDirectories: true)
+        let outside = try TemporaryVault()
+        try outside.write("", to: "Secret.md")
+        try FileManager.default.createSymbolicLink(
+            at: tmp.vault.rootURL.appending(path: "Link"), withDestinationURL: outside.vault.rootURL)
+        let tree = tmp.vault.scanTree()
+        #expect(tree.journal.years.isEmpty)
+        #expect(tree.notes.folders.isEmpty)
+    }
+
+    @MainActor
+    @Test func refusesPathsOutsideVault() throws {
+        let tmp = try TemporaryVault()
+        #expect(throws: (any Error).self) { try tmp.vault.openNote(relativePath: "../outside.md") }
     }
 
     @MainActor

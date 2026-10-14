@@ -60,14 +60,20 @@ public struct MarkdownEditor: NSViewRepresentable {
     private let documentID: AnyHashable
     private let initialText: () -> String
     private let onTextChange: (String) -> Void
+    private let fontName: String
+    private let fontSize: CGFloat
 
     public init(
         documentID: AnyHashable,
         initialText: @escaping () -> String,
+        fontName: String = "System",
+        fontSize: CGFloat = 15,
         onTextChange: @escaping (String) -> Void
     ) {
         self.documentID = documentID
         self.initialText = initialText
+        self.fontName = fontName
+        self.fontSize = fontSize
         self.onTextChange = onTextChange
     }
 
@@ -86,8 +92,9 @@ public struct MarkdownEditor: NSViewRepresentable {
 
     public func updateNSView(_ scrollView: NSScrollView, context: Context) {
         context.coordinator.onTextChange = onTextChange
-        guard context.coordinator.documentID != documentID,
-              let textView = scrollView.documentView as? NSTextView else { return }
+        guard let textView = scrollView.documentView as? NSTextView else { return }
+        textView.font = resolvedFont()
+        guard context.coordinator.documentID != documentID else { return }
         load(into: textView, coordinator: context.coordinator)
     }
 
@@ -100,6 +107,13 @@ public struct MarkdownEditor: NSViewRepresentable {
             textView.window?.makeFirstResponder(textView)
             textView.scrollRangeToVisible(textView.selectedRange())
         }
+    }
+
+    private func resolvedFont() -> NSFont {
+        guard fontName != "System", let font = NSFont(name: fontName, size: fontSize) else {
+            return .systemFont(ofSize: fontSize)
+        }
+        return font
     }
 
     @MainActor

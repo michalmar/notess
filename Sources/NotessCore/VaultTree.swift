@@ -85,7 +85,9 @@ extension Vault {
         var days: [Day] = []
         for case let url as URL in enumerator {
             let path = url.standardizedFileURL.resolvingSymlinksInPath().path
-            guard path.hasPrefix(prefix) else { continue }
+            guard path.hasPrefix(prefix),
+                  (try? url.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true
+            else { continue }
             let relative = String(path.dropFirst(prefix.count))
             if let day = DailyEntry.day(forRelativePath: relative) { days.append(day) }
         }
@@ -99,7 +101,7 @@ extension Vault {
             : rootURL.appending(path: relativePath, directoryHint: .isDirectory)
         let entries = (try? fm.contentsOfDirectory(
             at: folderURL,
-            includingPropertiesForKeys: [.isDirectoryKey],
+            includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey],
             options: [.skipsHiddenFiles]
         )) ?? []
 
@@ -107,6 +109,7 @@ extension Vault {
         var notes: [NotesFolder.Note] = []
         for entry in entries {
             let name = entry.lastPathComponent
+            if (try? entry.resourceValues(forKeys: [.isSymbolicLinkKey]).isSymbolicLink) == true { continue }
             let childPath = relativePath.isEmpty ? name : "\(relativePath)/\(name)"
             let isDirectory = (try? entry.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true
             if isDirectory {
@@ -129,6 +132,8 @@ extension Vault {
     /// Opens an existing note by its Vault-relative path.
     @MainActor
     public func openNote(relativePath: String) throws -> NoteDocument {
-        try NoteDocument.open(fileURL: rootURL.appending(path: relativePath, directoryHint: .notDirectory), newFileContent: "")
+        let url = rootURL.appending(path: relativePath, directoryHint: .notDirectory).standardizedFileURL
+        guard url.path.hasPrefix(rootURL.path + "/") else { throw CocoaError(.fileReadNoPermission) }
+        return try NoteDocument.open(fileURL: url, newFileContent: "")
     }
 }

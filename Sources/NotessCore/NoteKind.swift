@@ -47,7 +47,13 @@ extension DailyEntry {
         guard pieces.count == 3,
               pieces[0].count == 4, pieces[1].count == 2, pieces[2].count == 2,
               let year = Int(pieces[0]), let month = Int(pieces[1]), let day = Int(pieces[2]),
-              (1...12).contains(month), (1...31).contains(day)
+              (1...12).contains(month), day >= 1
+        else { return nil }
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "UTC")!
+        guard let first = calendar.date(from: DateComponents(year: year, month: month, day: 1)),
+              let length = calendar.range(of: .day, in: .month, for: first)?.count,
+              day <= length
         else { return nil }
         let result = Day(year: year, month: month, day: day)
         guard parts[1] == result.yearString, parts[2] == result.monthString else { return nil }
