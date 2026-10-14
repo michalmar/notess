@@ -51,20 +51,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         guard model.hasUnsavedChanges else { return .terminateNow }
-        let alert = NSAlert()
-        alert.messageText = "Uložit všechny změny?"
-        alert.informativeText = "Některé otevřené poznámky obsahují neuložené změny."
-        alert.addButton(withTitle: "Uložit vše")
-        alert.addButton(withTitle: "Zahodit")
-        alert.addButton(withTitle: "Zrušit")
-        switch alert.runModal() {
-        case .alertFirstButtonReturn:
+        switch saveDecision(
+            message: "Uložit všechny změny?",
+            informativeText: "Některé otevřené poznámky obsahují neuložené změny.",
+            saveTitle: "Uložit vše",
+            discardTitle: "Zahodit"
+        ) {
+        case .save:
             if model.saveAll() { return .terminateNow }
             showSaveError()
             return .terminateCancel
-        case .alertSecondButtonReturn:
+        case .discard:
             return .terminateNow
-        default:
+        case .cancel:
             return .terminateCancel
         }
     }
@@ -89,23 +88,44 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
 
-        let alert = NSAlert()
-        alert.messageText = "Uložit změny?"
-        alert.informativeText = "\(document.fileURL.lastPathComponent) obsahuje neuložené změny."
-        alert.addButton(withTitle: "Uložit")
-        alert.addButton(withTitle: "Neukládat")
-        alert.addButton(withTitle: "Zrušit")
-        switch alert.runModal() {
-        case .alertFirstButtonReturn:
+        switch saveDecision(
+            message: "Uložit změny?",
+            informativeText: "\(document.fileURL.lastPathComponent) obsahuje neuložené změny.",
+            saveTitle: "Uložit",
+            discardTitle: "Neukládat"
+        ) {
+        case .save:
             guard model.save(documentID: documentID) else {
                 showSaveError()
                 return
             }
             model.closeTab(documentID: documentID)
-        case .alertSecondButtonReturn:
+        case .discard:
             model.closeTab(documentID: documentID)
-        default:
+        case .cancel:
             break
+        }
+    }
+
+    private func saveDecision(
+        message: String,
+        informativeText: String,
+        saveTitle: String,
+        discardTitle: String
+    ) -> SaveDecision {
+        let alert = NSAlert()
+        alert.messageText = message
+        alert.informativeText = informativeText
+        alert.addButton(withTitle: saveTitle)
+        alert.addButton(withTitle: discardTitle)
+        alert.addButton(withTitle: "Zrušit")
+        switch alert.runModal() {
+        case .alertFirstButtonReturn:
+            return .save
+        case .alertSecondButtonReturn:
+            return .discard
+        default:
+            return .cancel
         }
     }
 
@@ -115,4 +135,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         model.errorMessage = nil
         alert.runModal()
     }
+}
+
+private enum SaveDecision {
+    case save
+    case discard
+    case cancel
 }
