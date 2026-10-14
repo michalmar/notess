@@ -1,0 +1,42 @@
+import Foundation
+import NotessCore
+import NotessEditor
+
+extension AppModel {
+    /// Follows a `[[target]]` or `[[target#Section]]` link clicked in the editor:
+    /// opens the note in a tab (or selects its tab) and scrolls to the Section.
+    /// A link that cannot be followed shows a message and changes nothing on disk.
+    func openWikiLink(_ link: WikiLink) {
+        guard let vault else { return }
+
+        let document: NoteDocument
+        let noteName: String
+        if link.target.isEmpty {
+            guard let current = tabSession.activeDocument else { return }
+            document = current
+            noteName = current.fileURL.deletingPathExtension().lastPathComponent
+        } else {
+            let resolver = WikiLinkResolver(relativePaths: vault.scanNotePaths())
+            guard let relativePath = resolver.resolve(target: link.target) else {
+                errorMessage = "Poznámka „\(link.target)“ ve Vaultu neexistuje."
+                return
+            }
+            guard let opened = openNote(at: vault.rootURL.appending(path: relativePath, directoryHint: .notDirectory)) else {
+                return
+            }
+            document = opened
+            noteName = link.target
+        }
+
+        guard let sectionName = link.section else {
+            reveal = nil
+            return
+        }
+        guard let section = NoteSection.find(sectionName, in: document.text) else {
+            reveal = nil
+            errorMessage = "Sekce „\(sectionName)“ v poznámce „\(noteName)“ neexistuje."
+            return
+        }
+        reveal = EditorReveal(documentID: document.id, range: section.headingRange)
+    }
+}

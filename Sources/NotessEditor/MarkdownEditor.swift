@@ -1,4 +1,5 @@
 import AppKit
+import NotessCore
 import SwiftUI
 
 /// Builds the editor's AppKit view hierarchy: a `MarkdownTextView` on TextKit 2
@@ -51,6 +52,21 @@ public enum MarkdownTextViewFactory {
     }
 }
 
+/// A request to select and scroll to a range of a document's text, e.g. a
+/// Section. Applied once per `id`, after the document is loaded into the editor.
+public struct EditorReveal: Equatable {
+    public let id: UUID
+    public let documentID: AnyHashable
+    /// UTF-16 range in the document's text.
+    public let range: NSRange
+
+    public init(id: UUID = UUID(), documentID: AnyHashable, range: NSRange) {
+        self.id = id
+        self.documentID = documentID
+        self.range = range
+    }
+}
+
 /// SwiftUI wrapper around the TextKit 2 Markdown editor.
 ///
 /// The text view owns the text while the user types; SwiftUI is only told about
@@ -60,6 +76,8 @@ public struct MarkdownEditor: NSViewRepresentable {
     private let documentID: AnyHashable
     private let style: MarkdownEditorStyle
     private let initialText: () -> String
+    private let reveal: EditorReveal?
+    private let onOpenWikiLink: ((WikiLink) -> Void)?
     private let onTextChange: (String) -> Void
 
     /// - Parameters:
@@ -71,11 +89,15 @@ public struct MarkdownEditor: NSViewRepresentable {
         fontName: String = "System",
         fontSize: CGFloat = 15,
         colors: MarkdownEditorStyle.Colors = .init(),
+        reveal: EditorReveal? = nil,
+        onOpenWikiLink: ((WikiLink) -> Void)? = nil,
         onTextChange: @escaping (String) -> Void
     ) {
         self.documentID = documentID
         self.style = MarkdownEditorStyle(fontName: fontName, fontSize: fontSize, colors: colors)
         self.initialText = initialText
+        self.reveal = reveal
+        self.onOpenWikiLink = onOpenWikiLink
         self.onTextChange = onTextChange
     }
 
@@ -88,18 +110,35 @@ public struct MarkdownEditor: NSViewRepresentable {
         let textView = scrollView.documentView as! MarkdownTextView
         textView.delegate = context.coordinator
         context.coordinator.onTextChange = onTextChange
+        textView.onWikiLinkClick = onOpenWikiLink
         load(into: textView, coordinator: context.coordinator)
+        applyReveal(to: textView, coordinator: context.coordinator)
         return scrollView
     }
 
     public func updateNSView(_ scrollView: NSScrollView, context: Context) {
         context.coordinator.onTextChange = onTextChange
         guard let textView = scrollView.documentView as? MarkdownTextView else { return }
+        textView.onWikiLinkClick = onOpenWikiLink
         if textView.markdownStyle != style {
             textView.markdownStyle = style
         }
-        guard context.coordinator.documentID != documentID else { return }
-        load(into: textView, coordinator: context.coordinator)
+        if context.coordinator.documentID != documentID {
+            load(into: textView, coordinator: context.coordinator)
+        }
+        applyReveal(to: textView, coordinator: context.coordinator)
+    }
+
+    private func applyReveal(to textView: NSTextView, coordinator: Coordinator) {
+        guard let reveal, reveal.documentID == documentID, coordinator.lastRevealID != reveal.id else { return }
+        coordinator.lastRevealID = reveal.id
+        let length = (textView.string as NSString).length
+        guard reveal.range.location <= length else { return }
+        let range = NSRange(location: reveal.range.location, length: min(reveal.range.length, length - reveal.range.location))
+        textView.setSelectedRange(NSRange(location: range.location, length: 0))
+        DispatchQueue.main.async {
+            textView.scrollRangeToVisible(range)
+        }
     }
 
     private func load(into textView: NSTextView, coordinator: Coordinator) {
@@ -116,6 +155,7 @@ public struct MarkdownEditor: NSViewRepresentable {
     @MainActor
     public final class Coordinator: NSObject, NSTextViewDelegate {
         var documentID: AnyHashable?
+        var lastRevealID: UUID?
         var onTextChange: (String) -> Void = { _ in }
 
         public func textDidChange(_ notification: Notification) {

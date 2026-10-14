@@ -6,6 +6,8 @@ import SwiftUI
 struct NoteEditorScreen: View {
     let document: NoteDocument
     @Bindable var settings: AppSettings
+    var reveal: EditorReveal?
+    var onOpenWikiLink: (WikiLink) -> Void = { _ in }
 
     var body: some View {
         MarkdownEditor(
@@ -13,6 +15,8 @@ struct NoteEditorScreen: View {
             initialText: { document.text },
             fontName: settings.editorFont.name,
             fontSize: CGFloat(settings.editorFont.size),
+            reveal: reveal,
+            onOpenWikiLink: onOpenWikiLink,
             onTextChange: { document.text = $0 }
         )
         .navigationTitle(document.fileURL.deletingPathExtension().lastPathComponent)

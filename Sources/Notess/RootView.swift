@@ -23,7 +23,12 @@ struct RootView: View {
                             Divider()
                         }
                         if let document = model.document {
-                            NoteEditorScreen(document: document, settings: model.settings)
+                            NoteEditorScreen(
+                                document: document,
+                                settings: model.settings,
+                                reveal: model.reveal,
+                                onOpenWikiLink: { model.openWikiLink($0) }
+                            )
                         } else {
                             ContentUnavailableView(
                                 "Žádná otevřená poznámka",
