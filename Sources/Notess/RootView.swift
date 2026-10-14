@@ -1,8 +1,10 @@
 import AppKit
+import NotessCore
 import SwiftUI
 
 struct RootView: View {
     @Bindable var model: AppModel
+    let onCloseTab: (NoteDocument.ID) -> Void
 
     var body: some View {
         Group {
@@ -11,10 +13,23 @@ struct RootView: View {
                     SidebarView(model: model)
                         .navigationSplitViewColumnWidth(min: 200, ideal: 240, max: 400)
                 } detail: {
-                    if let document = model.document {
-                        NoteEditorScreen(document: document, settings: model.settings)
-                    } else {
-                        ContentUnavailableView("Záznam není otevřený", systemImage: "doc.text")
+                    VStack(spacing: 0) {
+                        if !model.tabSession.documents.isEmpty {
+                            NoteTabBar(
+                                session: model.tabSession,
+                                onSelect: model.selectTab,
+                                onClose: onCloseTab
+                            )
+                            Divider()
+                        }
+                        if let document = model.document {
+                            NoteEditorScreen(document: document, settings: model.settings)
+                        } else {
+                            ContentUnavailableView(
+                                "Žádná otevřená poznámka",
+                                systemImage: "doc.text"
+                            )
+                        }
                     }
                 }
                 .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in

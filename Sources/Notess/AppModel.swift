@@ -2,12 +2,12 @@ import Foundation
 import NotessCore
 import Observation
 
-/// App-wide state: which Vault is open and which note is being edited.
+/// App-wide state: which Vault is open and which note tabs are open.
 @MainActor
 @Observable
 final class AppModel {
     private(set) var vault: Vault?
-    private(set) var document: NoteDocument?
+    private(set) var tabSession = TabSession()
     private(set) var tree: VaultTree = .empty
     /// Vault-relative folder chosen in the Notes section ("" is the Vault root); target for new Free Notes.
     var selectedFolder = ""
@@ -15,14 +15,17 @@ final class AppModel {
     let settings: AppSettings
 
     @ObservationIgnored private let vaultLocationStore: VaultLocationStore
+    @ObservationIgnored private let tabRestorationStore: TabRestorationStore
     @ObservationIgnored private let now: () -> Date
 
     init(
         vaultLocationStore: VaultLocationStore = VaultLocationStore(),
+        tabRestorationStore: TabRestorationStore = TabRestorationStore(),
         settings: AppSettings = AppSettings(),
         now: @escaping () -> Date = Date.init
     ) {
         self.vaultLocationStore = vaultLocationStore
+        self.tabRestorationStore = tabRestorationStore
         self.settings = settings
         self.now = now
         if let saved = vaultLocationStore.savedVault() {
@@ -30,8 +33,12 @@ final class AppModel {
         }
     }
 
+    var document: NoteDocument? {
+        tabSession.activeDocument
+    }
+
     var hasUnsavedChanges: Bool {
-        document?.hasUnsavedChanges == true
+        tabSession.hasUnsavedChanges
     }
 
     func chooseVault(at url: URL) {
@@ -45,22 +52,44 @@ final class AppModel {
     }
 
     func openDailyEntry(_ entry: DailyEntry) {
-        guard let vault, !isShowing(vault.url(for: entry)), canLeaveCurrentDocument() else { return }
-        do {
-            document = try vault.openDailyEntry(entry)
-        } catch {
-            errorMessage = "Záznam se nepodařilo otevřít: \(error.localizedDescription)"
-        }
+        guard let vault else { return }
+        openNote(
+            at: vault.url(for: entry),
+            newFileContent: entry.initialContent,
+            errorPrefix: "Záznam se nepodařilo otevřít"
+        )
     }
 
-    /// Single entry point for opening a file from the sidebar; tabs (#3) replace its body.
+    /// Opens a Vault file in a tab, or selects its existing tab.
+    @discardableResult
+    func openNote(at fileURL: URL, newFileContent: String = "") -> NoteDocument? {
+        openNote(
+            at: fileURL,
+            newFileContent: newFileContent,
+            errorPrefix: "Poznámku se nepodařilo otevřít"
+        )
+    }
+
+    /// Single entry point for opening a file from the sidebar.
     func openNote(relativePath: String) {
-        guard let vault, !isShowing(vault.rootURL.appending(path: relativePath)), canLeaveCurrentDocument() else { return }
+        guard let vault else { return }
         do {
-            document = try vault.openNote(relativePath: relativePath)
+            let document = try vault.openNote(relativePath: relativePath)
+            tabSession.open(document)
+            persistTabs()
         } catch {
             errorMessage = "Poznámku se nepodařilo otevřít: \(error.localizedDescription)"
         }
+    }
+
+    func selectTab(documentID: NoteDocument.ID) {
+        tabSession.select(documentID: documentID)
+        persistTabs()
+    }
+
+    func closeTab(documentID: NoteDocument.ID) {
+        tabSession.closeTab(documentID: documentID)
+        persistTabs()
     }
 
     func refreshTree() {
@@ -69,7 +98,10 @@ final class AppModel {
 
     /// Returns `false` if saving failed; the error is then in `errorMessage`.
     @discardableResult
-    func save() -> Bool {
+    func save(documentID: NoteDocument.ID? = nil) -> Bool {
+        let document = documentID.flatMap { id in
+            tabSession.documents.first(where: { $0.id == id })
+        } ?? tabSession.activeDocument
         guard let document else { return true }
         do {
             try document.save()
@@ -81,22 +113,93 @@ final class AppModel {
         }
     }
 
+    @discardableResult
+    func saveAll() -> Bool {
+        for document in tabSession.unsavedDocuments {
+            guard save(documentID: document.id) else { return false }
+        }
+        return true
+    }
+
     private func open(_ vault: Vault) {
         self.vault = vault
-        document = nil
+        tabSession = TabSession()
         selectedFolder = ""
         refreshTree()
-        openToday()
+        do {
+            if let state = try tabRestorationStore.savedState(for: vault) {
+                restoreTabs(from: state, in: vault)
+            } else {
+                openToday()
+            }
+        } catch {
+            errorMessage = "Obnova otevřených tabů se nezdařila: \(error.localizedDescription)"
+            openToday()
+        }
     }
 
-    private func isShowing(_ url: URL) -> Bool {
-        document?.fileURL.standardizedFileURL == url.standardizedFileURL
+    @discardableResult
+    private func openNote(
+        at fileURL: URL,
+        newFileContent: String,
+        errorPrefix: String
+    ) -> NoteDocument? {
+        do {
+            let document = try tabSession.openNote(
+                at: fileURL,
+                newFileContent: newFileContent
+            )
+            persistTabs()
+            return document
+        } catch {
+            errorMessage = "\(errorPrefix): \(error.localizedDescription)"
+            return nil
+        }
     }
 
-    // Until tabs exist only one document is open; never silently drop its edits.
-    private func canLeaveCurrentDocument() -> Bool {
-        guard hasUnsavedChanges else { return true }
-        errorMessage = "Nejdřív uložte změny (⌘S)."
-        return false
+    private func restoreTabs(from state: TabRestorationState, in vault: Vault) {
+        let today = DailyEntry(date: now())
+        for relativePath in state.relativePaths {
+            guard let url = restorationURL(for: relativePath, in: vault) else {
+                errorMessage = "Některé uložené taby měly neplatnou cestu a nebyly obnoveny."
+                continue
+            }
+            let isToday = relativePath == today.relativePath
+            guard isToday || FileManager.default.fileExists(atPath: url.path) else { continue }
+            _ = openNote(
+                at: url,
+                newFileContent: isToday ? today.initialContent : "",
+                errorPrefix: "Tab se nepodařilo obnovit"
+            )
+        }
+
+        guard let activePath = state.activeRelativePath,
+              let activeURL = restorationURL(for: activePath, in: vault),
+              let active = tabSession.documents.first(where: {
+                  TabSession.refersToSameFile($0.fileURL, activeURL)
+              }) else { return }
+        tabSession.select(documentID: active.id)
+        persistTabs()
+    }
+
+    private func restorationURL(for relativePath: String, in vault: Vault) -> URL? {
+        let components = NSString(string: relativePath).pathComponents
+        guard !relativePath.hasPrefix("/"),
+              !components.isEmpty,
+              !components.contains(".."),
+              !components.contains(".") else { return nil }
+        return vault.rootURL.appending(path: relativePath, directoryHint: .notDirectory)
+    }
+
+    private func persistTabs() {
+        guard let vault else { return }
+        do {
+            try tabRestorationStore.remember(
+                tabSession.restorationState(relativeTo: vault.rootURL),
+                for: vault
+            )
+        } catch {
+            errorMessage = "Stav otevřených tabů se nepodařilo uložit: \(error.localizedDescription)"
+        }
     }
 }

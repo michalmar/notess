@@ -40,6 +40,9 @@ struct SidebarView: View {
             }
         }
         .listStyle(.sidebar)
+        .onChange(of: model.document?.id) { _, _ in
+            syncSelectionWithDocument()
+        }
         .onChange(of: selection) { _, item in
             switch item {
             case .day(let day):

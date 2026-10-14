@@ -30,7 +30,7 @@ Package.swift
 Sources/
   NotessCore/     Domain logic, no UI: Vault, settings, Copilot CLI detection, DailyEntry
   NotessEditor/   The editor: AppKit NSTextView on TextKit 2, wrapped for SwiftUI
-  Notess/         SwiftUI app shell: window, Vault selection, menu commands (Cmd+S)
+  Notess/         SwiftUI app shell: window, Vault selection, tabs and menu commands
 Tests/
   NotessCoreTests/    Unit tests for the domain logic
   NotessEditorTests/  Tests for the editor view configuration (e.g. TextKit 2)
@@ -40,9 +40,11 @@ scripts/          build-app.sh
 
 Dependencies point inwards: `Notess` → `NotessEditor`, `NotessCore`. `NotessCore` must not import AppKit or SwiftUI so it stays fast to test; `NotessEditor` does not depend on `NotessCore`.
 
-## Behaviour (v1 skeleton)
+## Behaviour
 
 - Open **Notess → Nastavení…** (`Cmd+,`) to change the Vault, editor font and its size, or Copilot CLI path. A Vault change asks whether to save or discard unsaved text before opening the new Vault. The editor settings persist in `UserDefaults` and apply immediately. Notess always follows the macOS light/dark appearance.
 - Copilot CLI is autodetected from standard Homebrew, npm and user-local locations, then from the login shell's `PATH`. A manual path overrides autodetection; missing executables are shown as an error.
 - On launch today's Daily Entry is open. If `Journal/YYYY/MM/YYYY-MM-DD.md` does not exist yet, the editor starts with `# YYYY-MM-DD` and nothing is written to disk until **Cmd+S** (ADR 0003).
-- Cmd+S writes the file, creating `Journal/YYYY/MM/` as needed. Unsaved changes are shown by a dot in the toolbar, "Neuloženo" in the window subtitle and the standard edited dot in the close button. Quitting (or closing the window) with unsaved changes asks *Uložit změny?*; tabs and per-tab close prompts come with #3.
+- Notes open in tabs with one tab per file; reopening a file selects its existing tab. **Cmd+T** opens today's Daily Entry, **Cmd+S** saves the active tab and **Cmd+W** closes it.
+- Unsaved tabs have a dot. Closing an unsaved tab asks whether to save it; quitting with any unsaved tabs asks once whether to save all, discard all or cancel.
+- Open tabs, their order and the active tab are restored after restart. Missing files are skipped except for today's not-yet-saved Daily Entry.

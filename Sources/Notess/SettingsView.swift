@@ -98,7 +98,7 @@ struct SettingsView: View {
             ),
             actions: {
                 Button("Uložit a změnit") {
-                    if model.save() { openRequestedVault() }
+                    if model.saveAll() { openRequestedVault() }
                 }
                 Button("Zahodit změny", role: .destructive) {
                     openRequestedVault()
@@ -108,7 +108,7 @@ struct SettingsView: View {
                 }
             },
             message: {
-                Text("Otevřená poznámka obsahuje neuložené změny.")
+                Text("Některé otevřené poznámky obsahují neuložené změny.")
             }
         )
     }
