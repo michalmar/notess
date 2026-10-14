@@ -66,7 +66,7 @@ public struct NoteSection: Hashable, Sendable {
 
     /// The text of a heading line: ATX markers and the optional closing `#`s are
     /// removed; a setext heading line is already plain text.
-    private static func title(of line: String) -> String {
+    static func title(of line: String) -> String {
         var text = line.trimmingCharacters(in: .whitespaces)
         guard text.hasPrefix("#") else { return text }
         text = String(text.drop(while: { $0 == "#" })).trimmingCharacters(in: .whitespaces)

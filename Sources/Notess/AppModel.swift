@@ -11,6 +11,11 @@ final class AppModel {
     private(set) var tabSession = TabSession()
     private(set) var tree: VaultTree = .empty
     var isQuickOpenPresented = false
+    var isSearchPresented = false
+    /// The search index is catching up with the Vault or being rebuilt.
+    var isIndexing = false
+    /// Bumped whenever the search index has changed, so open results refresh.
+    var searchIndexRevision = 0
     /// Vault-relative folder chosen in the Notes section ("" is the Vault root); target for new Free Notes.
     var selectedFolder = ""
     var errorMessage: String?
@@ -25,6 +30,8 @@ final class AppModel {
     @ObservationIgnored private var watcher: VaultWatcher?
     @ObservationIgnored private var backlinkIndex = BacklinkIndex()
     @ObservationIgnored private var backlinkGeneration = UUID()
+    @ObservationIgnored var searchIndex: SearchIndex?
+    @ObservationIgnored var searchIndexTask: Task<Void, Never>?
 
     init(
         vaultLocationStore: VaultLocationStore = VaultLocationStore(),
@@ -106,8 +113,7 @@ final class AppModel {
     func openExistingNote(relativePath: String) -> NoteDocument? {
         guard let vault else { return nil }
         do {
-            let document = try vault.openNote(relativePath: relativePath)
-            tabSession.open(document)
+            let document = tabSession.open(try vault.openNote(relativePath: relativePath))
             persistTabs()
             refreshVisibleBacklinks()
             return document
@@ -137,6 +143,7 @@ final class AppModel {
 
     func presentQuickOpen() {
         guard vault != nil else { return }
+        isSearchPresented = false
         isQuickOpenPresented = true
     }
 
@@ -152,6 +159,7 @@ final class AppModel {
     /// new files (e.g. Brain Notes after a Brain Run) hook in here.
     func handleVaultChange(_ change: VaultChange) {
         reconcileWithDisk()
+        updateSearchIndex(for: change)
     }
 
     /// "Načíst": replaces a tab's unsaved text with the file on disk.
@@ -175,6 +183,7 @@ final class AppModel {
         do {
             try document.save()
             refreshTree()
+            updateSearchIndex(forSaved: document)
             persistTabs()
             updateBacklinks(for: document)
             return true
@@ -205,12 +214,14 @@ final class AppModel {
         backlinkGeneration = UUID()
         selectedFolder = ""
         isQuickOpenPresented = false
+        isSearchPresented = false
         watch(vault)
         do {
             try vault.ensureBrainInstructions()
         } catch {
             errorMessage = "Výchozí _brain/AGENTS.md se nepodařilo vytvořit: \(error.localizedDescription)"
         }
+        startSearchIndex(for: vault)
         refreshTree()
         do {
             if let state = try tabRestorationStore.savedState(for: vault) {

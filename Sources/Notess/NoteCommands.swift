@@ -22,6 +22,11 @@ struct NoteCommands: Commands {
             Button("Rychle otevřít…") { model.presentQuickOpen() }
                 .keyboardShortcut("p", modifiers: .command)
                 .disabled(model.vault == nil)
+            Button("Hledat…") { model.presentSearch() }
+                .keyboardShortcut("f", modifiers: [.command, .shift])
+                .disabled(model.vault == nil)
+            Button("Přegenerovat index hledání") { model.rebuildSearchIndex() }
+                .disabled(model.vault == nil || model.isIndexing)
             Button("Zavřít tab", action: onCloseActiveTab)
                 .keyboardShortcut("w", modifiers: .command)
                 .disabled(model.document == nil)
