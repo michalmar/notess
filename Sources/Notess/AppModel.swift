@@ -10,6 +10,7 @@ final class AppModel {
     private(set) var vault: Vault?
     private(set) var tabSession = TabSession()
     private(set) var tree: VaultTree = .empty
+    var isQuickOpenPresented = false
     /// Vault-relative folder chosen in the Notes section ("" is the Vault root); target for new Free Notes.
     var selectedFolder = ""
     var errorMessage: String?
@@ -114,6 +115,11 @@ final class AppModel {
 
     func refreshTree() {
         tree = vault?.scanTree() ?? .empty
+    }
+
+    func presentQuickOpen() {
+        guard vault != nil else { return }
+        isQuickOpenPresented = true
     }
 
     /// Returns `false` if saving failed; the error is then in `errorMessage`.

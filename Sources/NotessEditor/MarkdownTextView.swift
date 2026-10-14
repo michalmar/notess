@@ -61,7 +61,7 @@ public final class MarkdownTextView: NSTextView {
 
     /// Toggles the task box under `point` (view coordinates), if any.
     func toggleTask(atPoint point: NSPoint) -> Bool {
-        guard let textStorage else { return false }
+        guard isEditable, let textStorage else { return false }
         let index = characterIndexForInsertion(at: point)
         for candidate in [index, index - 1] {
             guard let change = highlighter.lexer.taskToggle(at: candidate, in: textStorage.mutableString) else { continue }
@@ -79,7 +79,7 @@ public final class MarkdownTextView: NSTextView {
     /// unsaved); nothing is written to disk.
     @discardableResult
     public func toggleTask(at index: Int) -> Bool {
-        guard let textStorage,
+        guard isEditable, let textStorage,
               let change = highlighter.lexer.taskToggle(at: index, in: textStorage.mutableString) else { return false }
         return apply(change)
     }

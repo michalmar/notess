@@ -17,6 +17,7 @@ struct NoteEditorScreen: View {
             fontSize: CGFloat(settings.editorFont.size),
             reveal: reveal,
             onOpenWikiLink: onOpenWikiLink,
+            isEditable: !document.isReadOnly,
             onTextChange: { document.text = $0 }
         )
         .navigationTitle(document.displayName)

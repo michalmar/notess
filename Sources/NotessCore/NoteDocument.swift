@@ -9,6 +9,7 @@ public final class NoteDocument: Identifiable {
     public nonisolated let id = UUID()
     /// For an unsaved Free Note this is a placeholder until the first save.
     public private(set) var fileURL: URL
+    public let isReadOnly: Bool
 
     /// The current, possibly unsaved, text.
     public var text: String {
@@ -33,11 +34,12 @@ public final class NoteDocument: Identifiable {
             : FreeNote.fileStem(forTitle: FreeNote.title(in: text))
     }
 
-    private init(fileURL: URL, text: String, existsOnDisk: Bool) {
+    private init(fileURL: URL, text: String, existsOnDisk: Bool, isReadOnly: Bool) {
         self.fileURL = fileURL
         self.text = text
         self.baseline = text
         self.existsOnDisk = existsOnDisk
+        self.isReadOnly = isReadOnly
     }
 
     /// A Free Note that exists only in memory until its first save.
@@ -46,24 +48,44 @@ public final class NoteDocument: Identifiable {
             path: "\(FreeNote.defaultFileStem)-\(UUID().uuidString).md",
             directoryHint: .notDirectory
         )
-        let document = NoteDocument(fileURL: placeholder, text: content, existsOnDisk: false)
+        let document = NoteDocument(
+            fileURL: placeholder,
+            text: content,
+            existsOnDisk: false,
+            isReadOnly: false
+        )
         document.pendingFreeNoteFolder = folderURL
         return document
     }
 
     /// Loads the note at `fileURL`, or starts from `newFileContent` without
     /// touching the disk if the file does not exist.
-    public static func open(fileURL: URL, newFileContent: String) throws -> NoteDocument {
+    public static func open(
+        fileURL: URL,
+        newFileContent: String,
+        isReadOnly: Bool = false
+    ) throws -> NoteDocument {
         do {
             let text = try String(contentsOf: fileURL, encoding: .utf8)
-            return NoteDocument(fileURL: fileURL, text: text, existsOnDisk: true)
+            return NoteDocument(
+                fileURL: fileURL,
+                text: text,
+                existsOnDisk: true,
+                isReadOnly: isReadOnly
+            )
         } catch let error as CocoaError where error.code == .fileReadNoSuchFile {
-            return NoteDocument(fileURL: fileURL, text: newFileContent, existsOnDisk: false)
+            return NoteDocument(
+                fileURL: fileURL,
+                text: newFileContent,
+                existsOnDisk: false,
+                isReadOnly: isReadOnly
+            )
         }
     }
 
     /// Writes `text` to the file, creating intermediate folders as needed.
     public func save() throws {
+        guard !isReadOnly else { throw CocoaError(.fileWriteNoPermission) }
         guard hasUnsavedChanges || !existsOnDisk else { return }
         let snapshot = text
         let pendingURL = pendingFreeNoteFolder.map {

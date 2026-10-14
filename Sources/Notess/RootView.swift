@@ -7,7 +7,7 @@ struct RootView: View {
     let onCloseTab: (NoteDocument.ID) -> Void
 
     var body: some View {
-        Group {
+        ZStack {
             if model.vault != nil {
                 NavigationSplitView {
                     SidebarView(model: model)
@@ -42,6 +42,16 @@ struct RootView: View {
                 }
             } else {
                 VaultSetupView { url in model.chooseVault(at: url) }
+            }
+
+            if model.isQuickOpenPresented, let vault = model.vault {
+                Color.black.opacity(0.2)
+                    .ignoresSafeArea()
+                QuickOpenView(
+                    vault: vault,
+                    open: model.openNote(relativePath:),
+                    dismiss: { model.isQuickOpenPresented = false }
+                )
             }
         }
         .alert(
