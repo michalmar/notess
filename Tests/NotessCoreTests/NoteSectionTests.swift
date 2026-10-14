@@ -75,6 +75,13 @@ struct NoteSectionTests {
         #expect(NoteSection.find("Plán", in: "### Plán\nx")?.level == 3)
     }
 
+    @Test("finds a later occurrence after edits move duplicate Section titles")
+    func occurrence() throws {
+        let doc = "úvod\n## Stav\nA\n## Jiná\nB\n## Stav\nC"
+        let section = try #require(NoteSection.find("Stav", occurrence: 1, in: doc))
+        #expect((doc as NSString).substring(with: section.range) == "## Stav\nC")
+    }
+
     @Test("headings inside code blocks are ignored")
     func codeBlocks() {
         let doc = "```\n## Fake\n```\n## Real\nx"

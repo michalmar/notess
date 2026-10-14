@@ -42,4 +42,27 @@ extension AppModel {
         }
         reveal = EditorReveal(documentID: document.id, range: section.headingRange)
     }
+
+    /// Opens the source of a backlink and reveals the Section that contains it.
+    func openBacklink(_ backlink: Backlink) {
+        guard let vault else { return }
+        let url = vault.rootURL.appending(
+            path: backlink.sourceRelativePath,
+            directoryHint: .notDirectory
+        )
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            errorMessage = "Zdrojová poznámka už ve Vaultu neexistuje."
+            rebuildBacklinks()
+            return
+        }
+        guard let document = openExistingNote(relativePath: backlink.sourceRelativePath) else { return }
+
+        guard let sectionTitle = backlink.sectionTitle,
+              let occurrence = backlink.sectionTitleOccurrence,
+              let section = NoteSection.find(sectionTitle, occurrence: occurrence, in: document.text) else {
+            reveal = nil
+            return
+        }
+        reveal = EditorReveal(documentID: document.id, range: section.headingRange)
+    }
 }

@@ -21,10 +21,23 @@ public struct NoteSection: Hashable, Sendable {
     /// level; among equals the first one in the note wins. Headings inside code
     /// blocks are not headings. Returns nil when no heading matches.
     public static func find(_ name: String, in text: String) -> NoteSection? {
+        find(name, occurrence: 0, in: text)
+    }
+
+    /// Finds a particular occurrence of a same-named second-level heading.
+    ///
+    /// This lets navigation relocate an indexed Section after unsaved edits
+    /// moved it within the note.
+    public static func find(_ name: String, occurrence: Int, in text: String) -> NoteSection? {
+        guard occurrence >= 0 else { return nil }
         let wanted = normalize(name)
         guard !wanted.isEmpty else { return nil }
         let matches = headings(in: text).filter { normalize($0.title) == wanted }
-        return matches.first(where: { $0.level == 2 }) ?? matches.first
+        let secondLevel = matches.filter { $0.level == 2 }
+        if secondLevel.indices.contains(occurrence) {
+            return secondLevel[occurrence]
+        }
+        return occurrence == 0 ? matches.first : nil
     }
 
     /// All headings of `text` in order, each with the range it spans.
@@ -66,7 +79,7 @@ public struct NoteSection: Hashable, Sendable {
         return text
     }
 
-    private static func normalize(_ name: String) -> String {
+    static func normalize(_ name: String) -> String {
         name.split(whereSeparator: \.isWhitespace).joined(separator: " ")
             .precomposedStringWithCanonicalMapping.lowercased()
     }
