@@ -23,6 +23,12 @@ struct RootView: View {
                             Divider()
                         }
                         if let document = model.document {
+                            ExternalChangeBar(
+                                document: document,
+                                onReload: { model.reloadFromDisk(documentID: document.id) },
+                                onSave: { model.save(documentID: document.id) },
+                                onClose: { onCloseTab(document.id) }
+                            )
                             NoteEditorScreen(
                                 document: document,
                                 settings: model.settings,
@@ -38,7 +44,7 @@ struct RootView: View {
                     }
                 }
                 .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
-                    model.refreshTree()
+                    model.reconcileWithDisk()
                 }
             } else {
                 VaultSetupView { url in model.chooseVault(at: url) }

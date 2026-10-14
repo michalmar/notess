@@ -134,7 +134,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func showSaveError() {
         let alert = NSAlert()
-        alert.messageText = model.errorMessage ?? "Uložení se nezdařilo."
+        if let message = model.errorMessage {
+            alert.messageText = message
+        } else {
+            // Saving refused because the file changed or vanished outside Notess.
+            alert.messageText = "Uložení se nezdařilo."
+            alert.informativeText = "Soubor byl mezitím změněn nebo smazán mimo Notess. Rozhodněte v liště nad editorem, co s ním."
+        }
         model.errorMessage = nil
         alert.runModal()
     }

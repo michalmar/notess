@@ -28,6 +28,11 @@ public final class TabSession {
         documents.contains(where: \.hasUnsavedChanges)
     }
 
+    /// Reacts to outside changes of every open note's file (see `NoteDocument.reconcileWithDisk()`).
+    public func reconcileWithDisk() {
+        for document in documents { document.reconcileWithDisk() }
+    }
+
     /// Opens a note or selects its existing tab when the same file is already open.
     @discardableResult
     public func openNote(at fileURL: URL, newFileContent: String = "") throws -> NoteDocument {
