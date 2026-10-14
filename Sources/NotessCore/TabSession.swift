@@ -35,11 +35,16 @@ public final class TabSession {
 
     /// Opens a note or selects its existing tab when the same file is already open.
     @discardableResult
-    public func openNote(at fileURL: URL, newFileContent: String = "") throws -> NoteDocument {
+    public func openNote(
+        at fileURL: URL,
+        newFileContent: String = "",
+        isReadOnly: Bool = false
+    ) throws -> NoteDocument {
         let canonicalURL = Self.canonicalURL(fileURL)
         return open(try NoteDocument.open(
             fileURL: canonicalURL,
-            newFileContent: newFileContent
+            newFileContent: newFileContent,
+            isReadOnly: isReadOnly
         ))
     }
 

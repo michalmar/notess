@@ -49,7 +49,9 @@ struct VaultTreeTests {
 
     @Test func emptyVaultHasEmptyTree() throws {
         let tmp = try TemporaryVault()
-        #expect(tmp.vault.scanTree() == VaultTree.empty.withName(tmp.vault.rootURL.lastPathComponent))
+        let tree = tmp.vault.scanTree()
+        #expect(tree == VaultTree.empty.withName(tmp.vault.rootURL.lastPathComponent, brain: tree.brain))
+        #expect(tree.brain.groups.allSatisfy { $0.notes.isEmpty })
     }
 
     @Test func notesExcludeJournalBrainAndAttachments() throws {
@@ -103,7 +105,7 @@ struct VaultTreeTests {
 }
 
 private extension VaultTree {
-    func withName(_ name: String) -> VaultTree {
-        VaultTree(journal: journal, notes: NotesFolder(relativePath: "", name: name, folders: [], notes: []))
+    func withName(_ name: String, brain: BrainTree = .empty) -> VaultTree {
+        VaultTree(journal: journal, notes: NotesFolder(relativePath: "", name: name, folders: [], notes: []), brain: brain)
     }
 }

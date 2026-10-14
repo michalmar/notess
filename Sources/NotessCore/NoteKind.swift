@@ -22,6 +22,9 @@ public enum NoteKind: Hashable, Sendable {
         else { return nil }
 
         switch parts[0] {
+        case brainFolder where relativePath == Vault.brainInstructionsRelativePath:
+            // The user's own, editable instructions for the Agent.
+            return .freeNote
         case brainFolder where parts.count > 1:
             return .brainNote
         case DailyEntry.journalFolder where parts.count > 1:

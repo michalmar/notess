@@ -38,6 +38,22 @@ struct SidebarView: View {
                     .tag(SidebarItem.folder(""))
                 FolderContents(folder: model.tree.notes)
             }
+            Section("Brain") {
+                if model.vault?.isBrainFolderAvailable ?? false {
+                    Label("Instrukce (AGENTS.md)", systemImage: "gearshape")
+                        .tag(SidebarItem.note(Vault.brainInstructionsRelativePath))
+                }
+                ForEach(model.tree.brain.groups) { group in
+                    DisclosureGroup {
+                        ForEach(group.notes) { note in
+                            Label(note.title, systemImage: "brain")
+                                .tag(SidebarItem.note(note.relativePath))
+                        }
+                    } label: {
+                        Label(group.title, systemImage: "folder")
+                    }
+                }
+            }
         }
         .listStyle(.sidebar)
         .onChange(of: model.document?.id) { _, _ in
@@ -67,7 +83,7 @@ struct SidebarView: View {
         let relative = String(path.dropFirst(root.count))
         switch NoteKind.classify(relativePath: relative) {
         case .dailyEntry: selection = DailyEntry.day(forRelativePath: relative).map(SidebarItem.day)
-        case .freeNote: selection = .note(relative)
+        case .freeNote, .brainNote: selection = .note(relative)
         default: break
         }
     }

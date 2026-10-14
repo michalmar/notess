@@ -114,6 +114,7 @@ public final class MarkdownTextView: NSTextView {
     }
 
     private func paste(from pasteboard: NSPasteboard, fallback: () -> Void) {
+        guard isEditable else { return }
         if let data = pngData(from: pasteboard),
            let markdown = onPasteImage?(data, "png") {
             insertText(markdown, replacementRange: selectedRange())
