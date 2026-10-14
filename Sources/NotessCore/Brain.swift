@@ -53,6 +53,7 @@ extension Vault {
     @discardableResult
     public func ensureBrainInstructions() throws -> Bool {
         let url = brainInstructionsURL
+        guard !isBrainFolderSymlink else { throw CocoaError(.fileWriteNoPermission) }
         guard !FileManager.default.fileExists(atPath: url.path) else { return false }
         try FileManager.default.createDirectory(
             at: url.deletingLastPathComponent(),
@@ -69,11 +70,18 @@ extension Vault {
     /// The Entity types listed in `_brain/AGENTS.md`; the defaults if the file is
     /// missing, unreadable or lists none.
     public func entityTypes() -> [EntityType] {
-        guard let text = try? String(contentsOf: brainInstructionsURL, encoding: .utf8) else {
+        guard !isBrainFolderSymlink,
+              let text = try? String(contentsOf: brainInstructionsURL, encoding: .utf8) else {
             return EntityType.defaults
         }
         let types = BrainInstructions.entityTypes(in: text)
         return types.isEmpty ? EntityType.defaults : types
+    }
+
+    /// A symlinked `_brain` could lead outside the Vault, so nothing is read or written through it.
+    private var isBrainFolderSymlink: Bool {
+        let url = rootURL.appending(path: NoteKind.brainFolder, directoryHint: .isDirectory)
+        return (try? url.resourceValues(forKeys: [.isSymbolicLinkKey]).isSymbolicLink) == true
     }
 
     func scanBrain() -> BrainTree {
@@ -91,6 +99,7 @@ extension Vault {
     }
 
     private func brainFolderNames() -> [String] {
+        guard !isBrainFolderSymlink else { return [] }
         let url = rootURL.appending(path: NoteKind.brainFolder, directoryHint: .isDirectory)
         let entries = (try? FileManager.default.contentsOfDirectory(
             at: url,
@@ -111,7 +120,8 @@ extension Vault {
     private func scanBrainGroup(folder: String?, title: String) -> BrainTree.Group {
         let relativeFolder = folder.map { "\(NoteKind.brainFolder)/\($0)" } ?? NoteKind.brainFolder
         let url = rootURL.appending(path: relativeFolder, directoryHint: .isDirectory)
-        if (try? url.resourceValues(forKeys: [.isSymbolicLinkKey]).isSymbolicLink) == true {
+        if isBrainFolderSymlink
+            || (try? url.resourceValues(forKeys: [.isSymbolicLinkKey]).isSymbolicLink) == true {
             return .init(title: title, relativePath: relativeFolder, notes: [])
         }
         let entries = (try? FileManager.default.contentsOfDirectory(

@@ -112,3 +112,19 @@ import Testing
         #expect(doc.isReadOnly)
     }
 }
+
+@Suite struct BrainSymlinkRootTests {
+    @Test func symlinkedBrainFolderIsNeverWrittenOrRead() throws {
+        let tv = try TemporaryVault()
+        let outside = try TemporaryVault()
+        try outside.write("## Entity types\n- `x/`\n", to: "AGENTS.md")
+        try outside.write("n", to: "people/A.md")
+        try FileManager.default.createSymbolicLink(
+            at: tv.vault.rootURL.appendingPathComponent("_brain"),
+            withDestinationURL: outside.vault.rootURL
+        )
+        #expect(throws: (any Error).self) { try tv.vault.ensureBrainInstructions() }
+        #expect(tv.vault.entityTypes() == EntityType.defaults)
+        #expect(tv.vault.scanTree().brain.groups.allSatisfy { $0.notes.isEmpty })
+    }
+}
