@@ -64,8 +64,8 @@ public enum BrainInstructions {
     4. **Aliases.** Keep nicknames and other names of the Entity in the front-matter `aliases:` list
        of its Brain Note, and use them to recognise the Entity in the notes.
     5. **When unsure, do not merge.** If you cannot tell whether two names mean the same Entity,
-       create a separate Entity and add the line `Possibly the same as [[Other Entity]]`
-       (Czech notes: `možná totožné s [[Other Entity]]`) to both notes.
+       create a separate Entity and add the line `možná totožné s [[Other Entity]]`
+       ("possibly the same as") to both notes.
     6. **Recompute, do not append.** For every file you are asked to process, read the whole current
        file and re-derive the facts it supports. Update or remove facts that no longer match it.
     7. **Delete facts without a source.** If a file was deleted, or a Section no longer says what a
@@ -76,7 +76,8 @@ public enum BrainInstructions {
     ## Entity types
 
     Each type is a folder inside `_brain/`. Add or remove lines to change what is tracked;
-    Notess groups Brain Notes in its sidebar by this list.
+    Notess groups Brain Notes in its sidebar by this list. Keep this heading and start each
+    line with the folder in backticks, or Notess falls back to the default types.
 
     - `people/` — a person
     - `companies/` — a company or organisation
