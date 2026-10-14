@@ -105,15 +105,12 @@ extension AppModel {
         }
     }
 
-    /// Tells the running Brain Run that the user wrote this note (and its attachments).
+    /// Tells the running Brain Run which files the user's last save wrote.
     func acceptUserWriteDuringBrainRun(of document: NoteDocument) {
-        guard let brainRun, let vault,
-              let path = relativePath(for: document.fileURL, in: vault) else { return }
-        let folder = (path as NSString).deletingLastPathComponent
-        let attachments = folder.isEmpty
-            ? NoteKind.attachmentsFolder
-            : "\(folder)/\(NoteKind.attachmentsFolder)"
-        brainRun.acceptUserWrite(under: [path, attachments])
+        guard let brainRun, let vault else { return }
+        let paths = document.lastSaveWrittenFileURLs.compactMap { relativePath(for: $0, in: vault) }
+        guard !paths.isEmpty else { return }
+        brainRun.acceptUserWrite(under: paths)
     }
 
     /// Outside changes during a run: if a file outside `_brain/` changed without

@@ -141,7 +141,7 @@ struct BrainRunTests {
         let run = brainRun { _, _ in
             try "# Plan\n\n## Goals\n".write(to: root.appending(path: "Projects/Plan.md"), atomically: true, encoding: .utf8)
             try "png".write(to: root.appending(path: "Projects/attachments/a.png"), atomically: false, encoding: .utf8)
-            holder.current?.acceptUserWrite(under: ["Projects/Plan.md", "Projects/attachments"])
+            holder.current?.acceptUserWrite(under: ["Projects/attachments/a.png", "Projects/Plan.md"])
             #expect(holder.current?.changesOutsideBrain() == [])
             return 0
         }
@@ -185,6 +185,23 @@ struct BrainRunTests {
         #expect(!temp.fileExists("_brain/people/Old.md"))
         #expect(temp.fileExists("_brain/people/Bob.md"))
         #expect(temp.fileExists("_brain/AGENTS.md"))
+    }
+
+    @Test("a cancelled run leaves the Agent's emptied Brain Notes alone")
+    func cancelledRunKeepsEmptyBrainNotes() async throws {
+        write("# Old\n", "_brain/people/Old.md")
+        let root = temp.vault.rootURL
+        let run = brainRun { _, _ in
+            try "".write(to: root.appending(path: "_brain/people/Old.md"), atomically: true, encoding: .utf8)
+            try await Task.sleep(for: .seconds(30))
+            return 0
+        }
+        let task = Task { await run.run(log: { _ in }) }
+        try await Task.sleep(for: .milliseconds(100))
+        task.cancel()
+
+        #expect(await task.value == .cancelled)
+        #expect(temp.fileExists("_brain/people/Old.md"))
     }
 
     @Test("Entity type folders exist before the Agent starts, since it cannot create folders itself")

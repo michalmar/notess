@@ -196,7 +196,7 @@ final class AppModel {
             tabSession.documents.first(where: { $0.id == id })
         } ?? tabSession.activeDocument
         guard let document else { return true }
-        // Whatever this save wrote is the user's, not the Agent's.
+        // Exactly the files this save wrote are the user's, not the Agent's.
         defer { acceptUserWriteDuringBrainRun(of: document) }
         do {
             try document.save()

@@ -124,7 +124,9 @@ public final class BrainRun: @unchecked Sendable {
             launchError = error.localizedDescription
         }
 
-        deleteEmptyBrainNotes(log: log)
+        let completed = launchError == nil && status == 0 && !Task.isCancelled
+        // A cancelled or failed Agent may be mid-edit: leave its notes as they are.
+        if completed { deleteEmptyBrainNotes(log: log) }
         let outside = changesOutsideBrain()
         if !outside.isEmpty { return .failed(.changedOutsideBrain(outside)) }
         if Task.isCancelled { return .cancelled }
@@ -141,7 +143,7 @@ public final class BrainRun: @unchecked Sendable {
     }
 
     /// Records that the user just saved the files at or below these Vault-relative
-    /// paths (a note, its `attachments/` folder), so the change is not reported.
+    /// paths (see `NoteDocument.lastSaveWrittenFileURLs`), so the change is not reported.
     /// Call it right after the save; does nothing when no Agent is running.
     public func acceptUserWrite(under relativePaths: [String]) {
         lock.withLock {
