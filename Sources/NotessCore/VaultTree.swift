@@ -145,7 +145,9 @@ extension Vault {
     @MainActor
     public func openNote(relativePath: String) throws -> NoteDocument {
         let url = rootURL.appending(path: relativePath, directoryHint: .notDirectory).standardizedFileURL
-        guard url.path.hasPrefix(rootURL.path + "/") else { throw CocoaError(.fileReadNoPermission) }
+        guard url.path.hasPrefix(rootURL.path + "/"), contains(url) else {
+            throw CocoaError(.fileReadNoPermission)
+        }
         return try NoteDocument.open(
             fileURL: url,
             newFileContent: "",

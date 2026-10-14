@@ -39,8 +39,10 @@ struct SidebarView: View {
                 FolderContents(folder: model.tree.notes)
             }
             Section("Brain") {
-                Label("Instrukce (AGENTS.md)", systemImage: "gearshape")
-                    .tag(SidebarItem.note(Vault.brainInstructionsRelativePath))
+                if model.vault?.isBrainFolderAvailable ?? false {
+                    Label("Instrukce (AGENTS.md)", systemImage: "gearshape")
+                        .tag(SidebarItem.note(Vault.brainInstructionsRelativePath))
+                }
                 ForEach(model.tree.brain.groups) { group in
                     DisclosureGroup {
                         ForEach(group.notes) { note in

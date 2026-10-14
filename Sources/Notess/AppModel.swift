@@ -218,6 +218,10 @@ final class AppModel {
         newFileContent: String,
         errorPrefix: String
     ) -> NoteDocument? {
+        guard vault?.contains(fileURL) ?? true else {
+            errorMessage = "\(errorPrefix): soubor leží mimo Vault."
+            return nil
+        }
         do {
             let document = try tabSession.openNote(
                 at: fileURL,

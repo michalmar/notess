@@ -128,3 +128,35 @@ import Testing
         #expect(tv.vault.scanTree().brain.groups.allSatisfy { $0.notes.isEmpty })
     }
 }
+
+@Suite struct BrainContainmentTests {
+    @MainActor @Test func symlinksLeadingOutsideTheVaultAreNotOpened() throws {
+        let tv = try TemporaryVault()
+        let outside = try TemporaryVault()
+        try outside.write("secret", to: "AGENTS.md")
+        try tv.write("x", to: "_brain/other/A.md")
+        // AGENTS.md itself is a link to an external file.
+        try FileManager.default.createSymbolicLink(
+            at: tv.vault.rootURL.appendingPathComponent("_brain/AGENTS.md"),
+            withDestinationURL: outside.vault.rootURL.appendingPathComponent("AGENTS.md")
+        )
+        #expect(throws: (any Error).self) { try tv.vault.openNote(relativePath: "_brain/AGENTS.md") }
+        #expect(tv.vault.entityTypes() == EntityType.defaults)
+        #expect(throws: (any Error).self) { try tv.vault.ensureBrainInstructions() }
+        #expect(try outside.read("AGENTS.md") == "secret")
+        #expect(throws: (any Error).self) { try tv.vault.openNote(relativePath: "../x.md") }
+        #expect(tv.vault.contains(tv.vault.rootURL.appendingPathComponent("_brain/other/A.md")))
+    }
+
+    @MainActor @Test func symlinkedBrainFolderIsUnavailableAndNotOpenable() throws {
+        let tv = try TemporaryVault()
+        let outside = try TemporaryVault()
+        try outside.write("secret", to: "AGENTS.md")
+        try FileManager.default.createSymbolicLink(
+            at: tv.vault.rootURL.appendingPathComponent("_brain"),
+            withDestinationURL: outside.vault.rootURL
+        )
+        #expect(tv.vault.isBrainFolderAvailable == false)
+        #expect(throws: (any Error).self) { try tv.vault.openNote(relativePath: "_brain/AGENTS.md") }
+    }
+}

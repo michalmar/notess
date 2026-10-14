@@ -53,7 +53,7 @@ extension Vault {
     @discardableResult
     public func ensureBrainInstructions() throws -> Bool {
         let url = brainInstructionsURL
-        guard !isBrainFolderSymlink else { throw CocoaError(.fileWriteNoPermission) }
+        guard !isBrainFolderSymlink, contains(url) else { throw CocoaError(.fileWriteNoPermission) }
         guard !FileManager.default.fileExists(atPath: url.path) else { return false }
         try FileManager.default.createDirectory(
             at: url.deletingLastPathComponent(),
@@ -70,13 +70,22 @@ extension Vault {
     /// The Entity types listed in `_brain/AGENTS.md`; the defaults if the file is
     /// missing, unreadable or lists none.
     public func entityTypes() -> [EntityType] {
-        guard !isBrainFolderSymlink,
+        guard !isBrainFolderSymlink, contains(brainInstructionsURL),
               let text = try? String(contentsOf: brainInstructionsURL, encoding: .utf8) else {
             return EntityType.defaults
         }
         let types = BrainInstructions.entityTypes(in: text)
         return types.isEmpty ? EntityType.defaults : types
     }
+
+    /// Whether `url`, with every symlink resolved, lies inside the Vault.
+    public func contains(_ url: URL) -> Bool {
+        let root = rootURL.resolvingSymlinksInPath().path + "/"
+        return url.standardizedFileURL.resolvingSymlinksInPath().path.hasPrefix(root)
+    }
+
+    /// False when `_brain` is a symlink: nothing is then read or written through it.
+    public var isBrainFolderAvailable: Bool { !isBrainFolderSymlink }
 
     /// A symlinked `_brain` could lead outside the Vault, so nothing is read or written through it.
     private var isBrainFolderSymlink: Bool {
