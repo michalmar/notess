@@ -50,13 +50,19 @@ extension AppModel {
             path: backlink.sourceRelativePath,
             directoryHint: .notDirectory
         )
-        guard let document = openNote(at: url) else { return }
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            errorMessage = "Zdrojová poznámka už ve Vaultu neexistuje."
+            rebuildBacklinks()
+            return
+        }
+        guard let document = openExistingNote(relativePath: backlink.sourceRelativePath) else { return }
 
-        guard let headingRange = backlink.sectionHeadingRange,
-              NSMaxRange(headingRange) <= (document.text as NSString).length else {
+        guard let sectionTitle = backlink.sectionTitle,
+              let occurrence = backlink.sectionTitleOccurrence,
+              let section = NoteSection.find(sectionTitle, occurrence: occurrence, in: document.text) else {
             reveal = nil
             return
         }
-        reveal = EditorReveal(documentID: document.id, range: headingRange)
+        reveal = EditorReveal(documentID: document.id, range: section.headingRange)
     }
 }

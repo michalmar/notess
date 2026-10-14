@@ -4,6 +4,7 @@ import Foundation
 public struct Backlink: Hashable, Identifiable, Sendable {
     public let sourceRelativePath: String
     public let sectionTitle: String?
+    public let sectionTitleOccurrence: Int?
     public let preview: String
     public let sectionHeadingRange: NSRange?
 
@@ -68,14 +69,20 @@ public actor BacklinkIndex {
             var recordedSectionsByTarget: Set<String> = []
 
             for link in WikiLink.links(in: text) {
-                let targetPath = link.target.isEmpty
-                    ? sourcePath
-                    : resolver.resolve(target: link.target)
+                guard !link.target.isEmpty else { continue }
+                let targetPath = resolver.resolve(target: link.target)
                 guard let targetPath else { continue }
 
                 let section = sections.first(where: {
                     NSLocationInRange(link.range.location, $0.range)
                 })
+                let sectionOccurrence = section.flatMap { section in
+                    sections.firstIndex(of: section).map { index in
+                        sections[..<index].count {
+                            NoteSection.normalize($0.title) == NoteSection.normalize(section.title)
+                        }
+                    }
+                }
                 let sectionKey = section?.range.location ?? -1
                 guard recordedSectionsByTarget.insert("\(targetPath)#\(sectionKey)").inserted else { continue }
 
@@ -83,6 +90,7 @@ public actor BacklinkIndex {
                     Backlink(
                         sourceRelativePath: sourcePath,
                         sectionTitle: section?.title,
+                        sectionTitleOccurrence: sectionOccurrence,
                         preview: Self.preview(for: link, section: section, in: text),
                         sectionHeadingRange: section?.headingRange
                     )

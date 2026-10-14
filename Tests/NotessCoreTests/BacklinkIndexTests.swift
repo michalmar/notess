@@ -91,5 +91,17 @@ struct BacklinkIndexTests {
         let range = try #require(backlink.sectionHeadingRange)
         #expect((source as NSString).substring(with: range) == "## Stav")
         #expect(range.location == 15)
+        #expect(backlink.sectionTitleOccurrence == 1)
+    }
+
+    @Test("same-note Section links are not backlinks")
+    func ignoresSameNoteSectionLinks() async throws {
+        let temp = try TemporaryVault()
+        try temp.write("## První\n[[#Druhá]]\n\n## Druhá\ntext", to: "Acme.md")
+        let index = BacklinkIndex()
+
+        await index.rebuild(in: temp.vault)
+
+        #expect(await index.backlinks(to: "Acme.md").isEmpty)
     }
 }

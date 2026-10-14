@@ -99,14 +99,21 @@ final class AppModel {
 
     /// Single entry point for opening a file from the sidebar.
     func openNote(relativePath: String) {
-        guard let vault else { return }
+        _ = openExistingNote(relativePath: relativePath)
+    }
+
+    @discardableResult
+    func openExistingNote(relativePath: String) -> NoteDocument? {
+        guard let vault else { return nil }
         do {
             let document = try vault.openNote(relativePath: relativePath)
             tabSession.open(document)
             persistTabs()
             refreshVisibleBacklinks()
+            return document
         } catch {
             errorMessage = "Poznámku se nepodařilo otevřít: \(error.localizedDescription)"
+            return nil
         }
     }
 
@@ -288,7 +295,7 @@ final class AppModel {
         }
     }
 
-    private func rebuildBacklinks() {
+    func rebuildBacklinks() {
         refreshBacklinks { index, vault in
             await index.rebuild(in: vault)
         }
