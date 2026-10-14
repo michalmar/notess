@@ -34,6 +34,14 @@ struct NoteEditorScreen: View {
         .navigationTitle(document.displayName)
         .navigationSubtitle(document.hasUnsavedChanges ? "Neuloženo" : "")
         .toolbar {
+            if document.isReadOnly {
+                ToolbarItem(placement: .status) {
+                    Label("Jen pro čtení", systemImage: "lock.fill")
+                        .labelStyle(.titleAndIcon)
+                        .foregroundStyle(.secondary)
+                        .help("Brain Note spravuje Agent – nelze ji upravit")
+                }
+            }
             ToolbarItem(placement: .status) {
                 UnsavedChangesIndicator(isVisible: document.hasUnsavedChanges)
             }

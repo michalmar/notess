@@ -184,6 +184,11 @@ final class AppModel {
         selectedFolder = ""
         isQuickOpenPresented = false
         watch(vault)
+        do {
+            try vault.ensureBrainInstructions()
+        } catch {
+            errorMessage = "Výchozí _brain/AGENTS.md se nepodařilo vytvořit: \(error.localizedDescription)"
+        }
         refreshTree()
         do {
             if let state = try tabRestorationStore.savedState(for: vault) {

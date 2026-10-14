@@ -58,10 +58,18 @@ public struct NotesFolder: Equatable, Sendable, Identifiable {
 public struct VaultTree: Equatable, Sendable {
     public let journal: JournalTree
     public let notes: NotesFolder
+    public let brain: BrainTree
+
+    init(journal: JournalTree, notes: NotesFolder, brain: BrainTree = .empty) {
+        self.journal = journal
+        self.notes = notes
+        self.brain = brain
+    }
 
     public static let empty = VaultTree(
         journal: .empty,
-        notes: NotesFolder(relativePath: "", name: "", folders: [], notes: [])
+        notes: NotesFolder(relativePath: "", name: "", folders: [], notes: []),
+        brain: .empty
     )
 }
 
@@ -69,7 +77,11 @@ extension Vault {
     /// Scans the Vault for the sidebar. Not recursive into hidden items.
     public func scanTree() -> VaultTree {
         let days = scanJournalDays()
-        return VaultTree(journal: JournalTree(days: days), notes: scanNotesFolder(relativePath: ""))
+        return VaultTree(
+            journal: JournalTree(days: days),
+            notes: scanNotesFolder(relativePath: ""),
+            brain: scanBrain()
+        )
     }
 
     private func scanJournalDays() -> [Day] {

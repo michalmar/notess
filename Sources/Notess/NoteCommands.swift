@@ -16,7 +16,7 @@ struct NoteCommands: Commands {
         CommandGroup(replacing: .saveItem) {
             Button("Uložit") { model.save() }
                 .keyboardShortcut("s", modifiers: .command)
-                .disabled(model.document == nil)
+                .disabled(model.document == nil || model.document?.isReadOnly == true)
         }
         CommandGroup(after: .saveItem) {
             Button("Rychle otevřít…") { model.presentQuickOpen() }
