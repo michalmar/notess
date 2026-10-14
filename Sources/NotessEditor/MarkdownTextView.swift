@@ -45,7 +45,7 @@ public final class MarkdownTextView: NSTextView {
 
     /// The wiki-link whose text lies under `point` (view coordinates), if any.
     func wikiLink(atPoint point: NSPoint) -> WikiLink? {
-        guard onWikiLinkClick != nil, textStorage != nil else { return nil }
+        guard onWikiLinkClick != nil, textStorage != nil, string.contains("[[") else { return nil }
         let index = characterIndexForInsertion(at: point)
         let candidates = [index, index - 1].filter { $0 >= 0 && $0 < (string as NSString).length }
         guard !candidates.isEmpty else { return nil }

@@ -21,9 +21,12 @@ extension AppModel {
                 errorMessage = "Poznámka „\(link.target)“ ve Vaultu neexistuje."
                 return
             }
-            guard let opened = openNote(at: vault.rootURL.appending(path: relativePath, directoryHint: .notDirectory)) else {
+            let url = vault.rootURL.appending(path: relativePath, directoryHint: .notDirectory)
+            guard FileManager.default.fileExists(atPath: url.path) else {
+                errorMessage = "Poznámka „\(link.target)“ ve Vaultu neexistuje."
                 return
             }
+            guard let opened = openNote(at: url) else { return }
             document = opened
             noteName = link.target
         }
