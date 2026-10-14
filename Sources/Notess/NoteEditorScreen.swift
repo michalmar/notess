@@ -1,0 +1,49 @@
+import AppKit
+import NotessCore
+import NotessEditor
+import SwiftUI
+
+struct NoteEditorScreen: View {
+    let document: NoteDocument
+
+    var body: some View {
+        MarkdownEditor(
+            documentID: document.id,
+            initialText: { document.text },
+            onTextChange: { document.text = $0 }
+        )
+        .navigationTitle(document.fileURL.deletingPathExtension().lastPathComponent)
+        .navigationSubtitle(document.hasUnsavedChanges ? "Neuloženo" : "")
+        .toolbar {
+            ToolbarItem(placement: .status) {
+                UnsavedChangesIndicator(isVisible: document.hasUnsavedChanges)
+            }
+        }
+        .background(WindowDocumentEditedMarker(isEdited: document.hasUnsavedChanges))
+    }
+}
+
+/// A dot shown while the note has unsaved changes (ADR 0003).
+struct UnsavedChangesIndicator: View {
+    let isVisible: Bool
+
+    var body: some View {
+        Image(systemName: "circle.fill")
+            .font(.system(size: 8))
+            .foregroundStyle(.secondary)
+            .opacity(isVisible ? 1 : 0)
+            .help(isVisible ? "Neuložené změny – uložte pomocí ⌘S" : "Uloženo")
+            .accessibilityLabel(isVisible ? "Neuložené změny" : "Uloženo")
+    }
+}
+
+/// Mirrors unsaved changes into the window's standard "edited" dot in the close button.
+private struct WindowDocumentEditedMarker: NSViewRepresentable {
+    let isEdited: Bool
+
+    func makeNSView(context: Context) -> NSView { NSView() }
+
+    func updateNSView(_ view: NSView, context: Context) {
+        DispatchQueue.main.async { view.window?.isDocumentEdited = isEdited }
+    }
+}
