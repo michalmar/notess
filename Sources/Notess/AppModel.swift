@@ -8,6 +8,9 @@ import Observation
 final class AppModel {
     private(set) var vault: Vault?
     private(set) var document: NoteDocument?
+    private(set) var tree: VaultTree = .empty
+    /// Vault-relative folder chosen in the Notes section ("" is the Vault root); target for new Free Notes.
+    var selectedFolder = ""
     var errorMessage: String?
     let settings: AppSettings
 
@@ -38,12 +41,30 @@ final class AppModel {
     }
 
     func openToday() {
-        guard let vault else { return }
+        openDailyEntry(DailyEntry(date: now()))
+    }
+
+    func openDailyEntry(_ entry: DailyEntry) {
+        guard let vault, !isShowing(vault.url(for: entry)), canLeaveCurrentDocument() else { return }
         do {
-            document = try vault.openDailyEntry(DailyEntry(date: now()))
+            document = try vault.openDailyEntry(entry)
         } catch {
-            errorMessage = "Dnešní záznam se nepodařilo otevřít: \(error.localizedDescription)"
+            errorMessage = "Záznam se nepodařilo otevřít: \(error.localizedDescription)"
         }
+    }
+
+    /// Single entry point for opening a file from the sidebar; tabs (#3) replace its body.
+    func openNote(relativePath: String) {
+        guard let vault, !isShowing(vault.rootURL.appending(path: relativePath)), canLeaveCurrentDocument() else { return }
+        do {
+            document = try vault.openNote(relativePath: relativePath)
+        } catch {
+            errorMessage = "Poznámku se nepodařilo otevřít: \(error.localizedDescription)"
+        }
+    }
+
+    func refreshTree() {
+        tree = vault?.scanTree() ?? .empty
     }
 
     /// Returns `false` if saving failed; the error is then in `errorMessage`.
@@ -52,6 +73,7 @@ final class AppModel {
         guard let document else { return true }
         do {
             try document.save()
+            refreshTree()
             return true
         } catch {
             errorMessage = "Uložení se nezdařilo: \(error.localizedDescription)"
@@ -62,6 +84,19 @@ final class AppModel {
     private func open(_ vault: Vault) {
         self.vault = vault
         document = nil
+        selectedFolder = ""
+        refreshTree()
         openToday()
+    }
+
+    private func isShowing(_ url: URL) -> Bool {
+        document?.fileURL.standardizedFileURL == url.standardizedFileURL
+    }
+
+    // Until tabs exist only one document is open; never silently drop its edits.
+    private func canLeaveCurrentDocument() -> Bool {
+        guard hasUnsavedChanges else { return true }
+        errorMessage = "Nejdřív uložte změny (⌘S)."
+        return false
     }
 }

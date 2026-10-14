@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 struct RootView: View {
@@ -5,12 +6,22 @@ struct RootView: View {
 
     var body: some View {
         Group {
-            if let document = model.document {
-                NoteEditorScreen(document: document, settings: model.settings)
-            } else if model.vault == nil {
-                VaultSetupView { url in model.chooseVault(at: url) }
+            if model.vault != nil {
+                NavigationSplitView {
+                    SidebarView(model: model)
+                        .navigationSplitViewColumnWidth(min: 200, ideal: 240, max: 400)
+                } detail: {
+                    if let document = model.document {
+                        NoteEditorScreen(document: document, settings: model.settings)
+                    } else {
+                        ContentUnavailableView("Záznam není otevřený", systemImage: "doc.text")
+                    }
+                }
+                .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+                    model.refreshTree()
+                }
             } else {
-                ContentUnavailableView("Záznam není otevřený", systemImage: "doc.text")
+                VaultSetupView { url in model.chooseVault(at: url) }
             }
         }
         .alert(
