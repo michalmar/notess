@@ -1,16 +1,33 @@
+import NotessCore
 import SwiftUI
 
 struct RootView: View {
     @Bindable var model: AppModel
+    let onCloseTab: (NoteDocument.ID) -> Void
 
     var body: some View {
         Group {
-            if let document = model.document {
-                NoteEditorScreen(document: document)
-            } else if model.vault == nil {
+            if model.vault == nil {
                 VaultSetupView { url in model.chooseVault(at: url) }
             } else {
-                ContentUnavailableView("Záznam není otevřený", systemImage: "doc.text")
+                VStack(spacing: 0) {
+                    if !model.tabSession.documents.isEmpty {
+                        NoteTabBar(
+                            session: model.tabSession,
+                            onSelect: model.selectTab,
+                            onClose: onCloseTab
+                        )
+                        Divider()
+                    }
+                    if let document = model.document {
+                        NoteEditorScreen(document: document)
+                    } else {
+                        ContentUnavailableView(
+                            "Žádná otevřená poznámka",
+                            systemImage: "doc.text"
+                        )
+                    }
+                }
             }
         }
         .alert(
