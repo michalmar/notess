@@ -21,8 +21,8 @@ final class AppModel {
         }
     }
 
-    var canChangeVault: Bool {
-        document?.hasUnsavedChanges != true
+    var hasUnsavedChanges: Bool {
+        document?.hasUnsavedChanges == true
     }
 
     func chooseVault(at url: URL) {
@@ -40,12 +40,16 @@ final class AppModel {
         }
     }
 
-    func save() {
-        guard let document else { return }
+    /// Returns `false` if saving failed; the error is then in `errorMessage`.
+    @discardableResult
+    func save() -> Bool {
+        guard let document else { return true }
         do {
             try document.save()
+            return true
         } catch {
             errorMessage = "Uložení se nezdařilo: \(error.localizedDescription)"
+            return false
         }
     }
 

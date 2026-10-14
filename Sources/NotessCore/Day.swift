@@ -22,10 +22,16 @@ extension Day {
 
     /// `YYYY-MM-DD`.
     public var isoString: String {
-        "\(Self.pad(year, 4))-\(Self.pad(month, 2))-\(Self.pad(day, 2))"
+        "\(yearString)-\(monthString)-\(Self.pad(day, 2))"
     }
 
-    static func pad(_ value: Int, _ width: Int) -> String {
+    /// Four-digit year, e.g. `2026`.
+    public var yearString: String { Self.pad(year, 4) }
+
+    /// Two-digit month, e.g. `03`.
+    public var monthString: String { Self.pad(month, 2) }
+
+    private static func pad(_ value: Int, _ width: Int) -> String {
         let digits = String(value)
         return String(repeating: "0", count: max(0, width - digits.count)) + digits
     }

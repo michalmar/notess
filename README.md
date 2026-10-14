@@ -42,6 +42,6 @@ Dependencies point inwards: `Notess` → `NotessEditor`, `NotessCore`. `NotessCo
 
 ## Behaviour (v1 skeleton)
 
-- On first launch the app asks for the Vault folder and remembers it (`UserDefaults`, key `vaultPath`). If the folder disappears it asks again. *File ▸ Změnit Vault…* switches it.
+- On first launch the app asks for the Vault folder and remembers it (`UserDefaults`, key `vaultPath`). If the folder disappears it asks again. Switching the Vault in the UI comes with Settings (#13).
 - On launch today's Daily Entry is open. If `Journal/YYYY/MM/YYYY-MM-DD.md` does not exist yet, the editor starts with `# YYYY-MM-DD` and nothing is written to disk until **Cmd+S** (ADR 0003).
-- Cmd+S writes the file, creating `Journal/YYYY/MM/` as needed. Unsaved changes are shown by a dot in the toolbar, "Neuloženo" in the window subtitle and the standard edited dot in the close button.
+- Cmd+S writes the file, creating `Journal/YYYY/MM/` as needed. Unsaved changes are shown by a dot in the toolbar, "Neuloženo" in the window subtitle and the standard edited dot in the close button. Quitting (or closing the window) with unsaved changes asks *Uložit změny?*; tabs and per-tab close prompts come with #3.

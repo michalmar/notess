@@ -9,13 +9,5 @@ struct NoteCommands: Commands {
                 .keyboardShortcut("s", modifiers: .command)
                 .disabled(model.document == nil)
         }
-        CommandGroup(after: .newItem) {
-            Button("Změnit Vault…") {
-                if let url = VaultPicker.chooseFolder() {
-                    model.chooseVault(at: url)
-                }
-            }
-            .disabled(!model.canChangeVault)
-        }
     }
 }

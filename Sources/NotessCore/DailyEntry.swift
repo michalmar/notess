@@ -20,7 +20,7 @@ public struct DailyEntry: Hashable, Sendable {
 
     /// Path relative to the Vault root.
     public var relativePath: String {
-        "\(Self.journalFolder)/\(Day.pad(day.year, 4))/\(Day.pad(day.month, 2))/\(title).md"
+        "\(Self.journalFolder)/\(day.yearString)/\(day.monthString)/\(title).md"
     }
 
     /// Content of a Daily Entry that does not exist on disk yet.
