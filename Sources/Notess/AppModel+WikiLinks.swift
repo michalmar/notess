@@ -42,4 +42,21 @@ extension AppModel {
         }
         reveal = EditorReveal(documentID: document.id, range: section.headingRange)
     }
+
+    /// Opens the source of a backlink and reveals the Section that contains it.
+    func openBacklink(_ backlink: Backlink) {
+        guard let vault else { return }
+        let url = vault.rootURL.appending(
+            path: backlink.sourceRelativePath,
+            directoryHint: .notDirectory
+        )
+        guard let document = openNote(at: url) else { return }
+
+        guard let sectionTitle = backlink.sectionTitle,
+              let section = NoteSection.find(sectionTitle, in: document.text) else {
+            reveal = nil
+            return
+        }
+        reveal = EditorReveal(documentID: document.id, range: section.headingRange)
+    }
 }

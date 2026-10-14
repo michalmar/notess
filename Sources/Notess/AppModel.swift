@@ -16,12 +16,15 @@ final class AppModel {
     var errorMessage: String?
     /// Section to scroll the editor to after following a wiki-link.
     var reveal: EditorReveal?
+    private(set) var backlinks: [Backlink] = []
     let settings: AppSettings
 
     @ObservationIgnored private let vaultLocationStore: VaultLocationStore
     @ObservationIgnored private let tabRestorationStore: TabRestorationStore
     @ObservationIgnored private let now: () -> Date
     @ObservationIgnored private var watcher: VaultWatcher?
+    @ObservationIgnored private var backlinkIndex = BacklinkIndex()
+    @ObservationIgnored private var backlinkGeneration = UUID()
 
     init(
         vaultLocationStore: VaultLocationStore = VaultLocationStore(),
@@ -66,6 +69,7 @@ final class AppModel {
             )
             tabSession.open(document)
             persistTabs()
+            backlinks = []
         } catch {
             errorMessage = "Poznámku se nepodařilo vytvořit: \(error.localizedDescription)"
         }
@@ -78,16 +82,19 @@ final class AppModel {
             newFileContent: entry.initialContent,
             errorPrefix: "Záznam se nepodařilo otevřít"
         )
+        refreshVisibleBacklinks()
     }
 
     /// Opens a Vault file in a tab, or selects its existing tab.
     @discardableResult
     func openNote(at fileURL: URL, newFileContent: String = "") -> NoteDocument? {
-        openNote(
+        let document = openNote(
             at: fileURL,
             newFileContent: newFileContent,
             errorPrefix: "Poznámku se nepodařilo otevřít"
         )
+        refreshVisibleBacklinks()
+        return document
     }
 
     /// Single entry point for opening a file from the sidebar.
@@ -97,6 +104,7 @@ final class AppModel {
             let document = try vault.openNote(relativePath: relativePath)
             tabSession.open(document)
             persistTabs()
+            refreshVisibleBacklinks()
         } catch {
             errorMessage = "Poznámku se nepodařilo otevřít: \(error.localizedDescription)"
         }
@@ -106,12 +114,14 @@ final class AppModel {
         reveal = nil
         tabSession.select(documentID: documentID)
         persistTabs()
+        refreshVisibleBacklinks()
     }
 
     func closeTab(documentID: NoteDocument.ID) {
         reveal = nil
         tabSession.closeTab(documentID: documentID)
         persistTabs()
+        refreshVisibleBacklinks()
     }
 
     func refreshTree() {
@@ -128,6 +138,7 @@ final class AppModel {
     func reconcileWithDisk() {
         refreshTree()
         tabSession.reconcileWithDisk()
+        rebuildBacklinks()
     }
 
     /// Where every batch of outside Vault changes lands; features that react to
@@ -158,6 +169,7 @@ final class AppModel {
             try document.save()
             refreshTree()
             persistTabs()
+            updateBacklinks(for: document)
             return true
         } catch is NoteDocument.SaveError {
             // The file changed or vanished outside Notess: the tab's bar asks what to do.
@@ -181,6 +193,9 @@ final class AppModel {
     private func open(_ vault: Vault) {
         self.vault = vault
         tabSession = TabSession()
+        backlinks = []
+        backlinkIndex = BacklinkIndex()
+        backlinkGeneration = UUID()
         selectedFolder = ""
         isQuickOpenPresented = false
         watch(vault)
@@ -195,6 +210,7 @@ final class AppModel {
             errorMessage = "Obnova otevřených tabů se nezdařila: \(error.localizedDescription)"
             openToday()
         }
+        rebuildBacklinks()
     }
 
     private func watch(_ vault: Vault) {
@@ -270,5 +286,69 @@ final class AppModel {
         } catch {
             errorMessage = "Stav otevřených tabů se nepodařilo uložit: \(error.localizedDescription)"
         }
+    }
+
+    private func rebuildBacklinks() {
+        guard let vault else {
+            backlinks = []
+            return
+        }
+        let index = backlinkIndex
+        let generation = backlinkGeneration
+        Task { [weak self] in
+            await index.rebuild(in: vault)
+            guard let self, self.backlinkGeneration == generation else { return }
+            await self.loadVisibleBacklinks(from: index, in: vault, generation: generation)
+        }
+    }
+
+    private func updateBacklinks(for document: NoteDocument) {
+        guard let vault, let relativePath = relativePath(for: document.fileURL, in: vault) else { return }
+        let content = document.text
+        let index = backlinkIndex
+        let generation = backlinkGeneration
+        Task { [weak self] in
+            await index.update(relativePath: relativePath, content: content, in: vault)
+            guard let self, self.backlinkGeneration == generation else { return }
+            await self.loadVisibleBacklinks(from: index, in: vault, generation: generation)
+        }
+    }
+
+    private func refreshVisibleBacklinks() {
+        guard let vault else {
+            backlinks = []
+            return
+        }
+        let index = backlinkIndex
+        let generation = backlinkGeneration
+        Task { [weak self] in
+            guard let self else { return }
+            await self.loadVisibleBacklinks(from: index, in: vault, generation: generation)
+        }
+    }
+
+    private func loadVisibleBacklinks(
+        from index: BacklinkIndex,
+        in vault: Vault,
+        generation: UUID
+    ) async {
+        guard backlinkGeneration == generation,
+              let document,
+              let relativePath = relativePath(for: document.fileURL, in: vault) else {
+            backlinks = []
+            return
+        }
+        let loaded = await index.backlinks(to: relativePath)
+        guard backlinkGeneration == generation,
+              let current = self.document,
+              self.relativePath(for: current.fileURL, in: vault) == relativePath else { return }
+        backlinks = loaded
+    }
+
+    private func relativePath(for fileURL: URL, in vault: Vault) -> String? {
+        let root = vault.rootURL.standardizedFileURL.path(percentEncoded: false) + "/"
+        let path = fileURL.standardizedFileURL.path(percentEncoded: false)
+        guard path.hasPrefix(root) else { return nil }
+        return String(path.dropFirst(root.count))
     }
 }

@@ -33,7 +33,9 @@ struct RootView: View {
                                 document: document,
                                 settings: model.settings,
                                 reveal: model.reveal,
-                                onOpenWikiLink: { model.openWikiLink($0) }
+                                backlinks: model.backlinks,
+                                onOpenWikiLink: { model.openWikiLink($0) },
+                                onOpenBacklink: { model.openBacklink($0) }
                             )
                         } else {
                             ContentUnavailableView(
