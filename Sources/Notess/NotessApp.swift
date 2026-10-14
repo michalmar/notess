@@ -11,6 +11,9 @@ struct NotessApp: App {
                 .frame(minWidth: 480, minHeight: 320)
         }
         .defaultSize(width: 820, height: 640)
+        Settings {
+            SettingsView(model: appDelegate.model)
+        }
         .commands {
             NoteCommands(model: appDelegate.model)
         }

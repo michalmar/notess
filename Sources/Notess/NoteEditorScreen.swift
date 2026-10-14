@@ -5,11 +5,14 @@ import SwiftUI
 
 struct NoteEditorScreen: View {
     let document: NoteDocument
+    @Bindable var settings: AppSettings
 
     var body: some View {
         MarkdownEditor(
             documentID: document.id,
             initialText: { document.text },
+            fontName: settings.editorFont.name,
+            fontSize: CGFloat(settings.editorFont.size),
             onTextChange: { document.text = $0 }
         )
         .navigationTitle(document.fileURL.deletingPathExtension().lastPathComponent)
