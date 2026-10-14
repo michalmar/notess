@@ -48,6 +48,27 @@ struct NoteAttachmentTests {
 
         #expect(try Data(contentsOf: attachment.fileURL) == bytes)
         #expect(try temp.read("Notes/Idea.md") == "# Idea\n\n\(attachment.markdown)")
+        #expect(document.lastSaveWrittenFileURLs == [attachment.fileURL, noteURL])
+    }
+
+    @Test("a save reports only the files it wrote")
+    func lastSaveWrittenFileURLs() throws {
+        let temp = try TemporaryVault()
+        try temp.write("# Idea\n", to: "Notes/Idea.md")
+        let noteURL = temp.vault.rootURL.appending(path: "Notes/Idea.md")
+        let document = try NoteDocument.open(fileURL: noteURL, newFileContent: "")
+
+        try document.save()
+        #expect(document.lastSaveWrittenFileURLs.isEmpty)
+
+        document.text += "edit"
+        try document.save()
+        #expect(document.lastSaveWrittenFileURLs == [noteURL])
+
+        try temp.write("# Idea\n\nchanged elsewhere\n", to: "Notes/Idea.md")
+        document.text += " more"
+        #expect(throws: NoteDocument.SaveError.self) { try document.save() }
+        #expect(document.lastSaveWrittenFileURLs.isEmpty)
     }
 
     @Test("removing a staged image link before save does not create an orphan")

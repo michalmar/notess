@@ -49,6 +49,11 @@ struct RootView: View {
                     model.reconcileWithDisk()
                     model.synchronizeSearchIndex()
                 }
+                .toolbar {
+                    ToolbarItemGroup(placement: .primaryAction) {
+                        BrainRunToolbarItems(model: model)
+                    }
+                }
             } else {
                 VaultSetupView { url in model.chooseVault(at: url) }
             }

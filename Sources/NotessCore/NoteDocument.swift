@@ -48,6 +48,10 @@ public final class NoteDocument: Identifiable {
     @ObservationIgnored private var baseline: String
     @ObservationIgnored private var stagedAttachments: [NoteAttachment] = []
 
+    /// The files the most recent `save()` wrote, including those written before
+    /// it failed; empty when it wrote nothing.
+    @ObservationIgnored public private(set) var lastSaveWrittenFileURLs: [URL] = []
+
     /// Name shown in tabs: the file name, or the heading of an unsaved Free Note.
     public var displayName: String {
         pendingFreeNoteFolder == nil
@@ -103,6 +107,7 @@ public final class NoteDocument: Identifiable {
     /// such a save records `externalChange` and throws `SaveError` instead.
     /// After `keepMine()` (or once a deletion is signalled) saving writes.
     public func save() throws {
+        lastSaveWrittenFileURLs = []
         guard !isReadOnly else { throw CocoaError(.fileWriteNoPermission) }
         guard hasUnsavedChanges || !existsOnDisk else { return }
         let snapshot = text
@@ -135,12 +140,14 @@ public final class NoteDocument: Identifiable {
                 withIntermediateDirectories: true
             )
             try attachment.data.write(to: attachment.fileURL, options: .atomic)
+            lastSaveWrittenFileURLs.append(attachment.fileURL)
         }
         try FileManager.default.createDirectory(
             at: fileURL.deletingLastPathComponent(),
             withIntermediateDirectories: true
         )
         try Data(snapshot.utf8).write(to: fileURL, options: .atomic)
+        lastSaveWrittenFileURLs.append(fileURL)
         let writtenPaths = Set(attachmentsToWrite.map(\.relativePath))
         stagedAttachments.removeAll { writtenPaths.contains($0.relativePath) }
         self.fileURL = fileURL
