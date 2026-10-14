@@ -1,3 +1,4 @@
+import AppKit
 import NotessCore
 import SwiftUI
 
@@ -7,27 +8,35 @@ struct RootView: View {
 
     var body: some View {
         Group {
-            if model.vault == nil {
-                VaultSetupView { url in model.chooseVault(at: url) }
-            } else {
-                VStack(spacing: 0) {
-                    if !model.tabSession.documents.isEmpty {
-                        NoteTabBar(
-                            session: model.tabSession,
-                            onSelect: model.selectTab,
-                            onClose: onCloseTab
-                        )
-                        Divider()
-                    }
-                    if let document = model.document {
-                        NoteEditorScreen(document: document)
-                    } else {
-                        ContentUnavailableView(
-                            "Žádná otevřená poznámka",
-                            systemImage: "doc.text"
-                        )
+            if model.vault != nil {
+                NavigationSplitView {
+                    SidebarView(model: model)
+                        .navigationSplitViewColumnWidth(min: 200, ideal: 240, max: 400)
+                } detail: {
+                    VStack(spacing: 0) {
+                        if !model.tabSession.documents.isEmpty {
+                            NoteTabBar(
+                                session: model.tabSession,
+                                onSelect: model.selectTab,
+                                onClose: onCloseTab
+                            )
+                            Divider()
+                        }
+                        if let document = model.document {
+                            NoteEditorScreen(document: document, settings: model.settings)
+                        } else {
+                            ContentUnavailableView(
+                                "Žádná otevřená poznámka",
+                                systemImage: "doc.text"
+                            )
+                        }
                     }
                 }
+                .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+                    model.refreshTree()
+                }
+            } else {
+                VaultSetupView { url in model.chooseVault(at: url) }
             }
         }
         .alert(

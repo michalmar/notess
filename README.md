@@ -28,7 +28,7 @@ Everything is a Swift package and runs from the command line; no Xcode project i
 ```
 Package.swift
 Sources/
-  NotessCore/     Domain logic, no UI: Vault, Day, DailyEntry, NoteDocument, VaultLocationStore
+  NotessCore/     Domain logic, no UI: Vault, settings, Copilot CLI detection, DailyEntry
   NotessEditor/   The editor: AppKit NSTextView on TextKit 2, wrapped for SwiftUI
   Notess/         SwiftUI app shell: window, Vault selection, tabs and menu commands
 Tests/
@@ -42,7 +42,8 @@ Dependencies point inwards: `Notess` → `NotessEditor`, `NotessCore`. `NotessCo
 
 ## Behaviour
 
-- On first launch the app asks for the Vault folder and remembers it (`UserDefaults`, key `vaultPath`). If the folder disappears it asks again. Switching the Vault in the UI comes with Settings (#13).
+- Open **Notess → Nastavení…** (`Cmd+,`) to change the Vault, editor font and its size, or Copilot CLI path. A Vault change asks whether to save or discard unsaved text before opening the new Vault. The editor settings persist in `UserDefaults` and apply immediately. Notess always follows the macOS light/dark appearance.
+- Copilot CLI is autodetected from standard Homebrew, npm and user-local locations, then from the login shell's `PATH`. A manual path overrides autodetection; missing executables are shown as an error.
 - On launch today's Daily Entry is open. If `Journal/YYYY/MM/YYYY-MM-DD.md` does not exist yet, the editor starts with `# YYYY-MM-DD` and nothing is written to disk until **Cmd+S** (ADR 0003).
 - Notes open in tabs with one tab per file; reopening a file selects its existing tab. **Cmd+T** opens today's Daily Entry, **Cmd+S** saves the active tab and **Cmd+W** closes it.
 - Unsaved tabs have a dot. Closing an unsaved tab asks whether to save it; quitting with any unsaved tabs asks once whether to save all, discard all or cancel.

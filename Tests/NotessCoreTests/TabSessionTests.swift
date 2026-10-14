@@ -23,6 +23,43 @@ struct TabSessionTests {
         #expect(session.activeDocument === first)
     }
 
+    @Test("different paths to the same existing file share one tab")
+    func existingFileIdentityPreventsDuplicateTabs() throws {
+        let temp = try TemporaryVault()
+        try temp.write("Plan", to: "Notes/Plan.md")
+        let original = temp.vault.rootURL.appending(path: "Notes/Plan.md")
+        let alias = temp.vault.rootURL.appending(path: "Notes/plan-alias.md")
+        try FileManager.default.linkItem(at: original, to: alias)
+        let session = TabSession()
+
+        let first = try session.openNote(at: original)
+        let reopened = try session.openNote(at: alias)
+
+        #expect(session.documents.count == 1)
+        #expect(reopened === first)
+    }
+
+    @Test("missing file paths follow their volume's case sensitivity")
+    func missingFilePathsUseVolumeCaseSensitivity() throws {
+        let temp = try TemporaryVault()
+        let supportsCaseSensitiveNames = try #require(
+            temp.vault.rootURL.resourceValues(forKeys: [.volumeSupportsCaseSensitiveNamesKey])
+                .volumeSupportsCaseSensitiveNames as Bool?
+        )
+        let session = TabSession()
+
+        _ = try session.openNote(
+            at: temp.vault.rootURL.appending(path: "Notes/Draft.md"),
+            newFileContent: "Draft"
+        )
+        _ = try session.openNote(
+            at: temp.vault.rootURL.appending(path: "Notes/draft.md"),
+            newFileContent: "Draft"
+        )
+
+        #expect(session.documents.count == (supportsCaseSensitiveNames ? 2 : 1))
+    }
+
     @Test("closing a tab preserves order and selects its next neighbor")
     func closingTabSelectsNeighbor() throws {
         let temp = try TemporaryVault()

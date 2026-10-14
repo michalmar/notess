@@ -8,7 +8,11 @@ import Observation
 final class AppModel {
     private(set) var vault: Vault?
     private(set) var tabSession = TabSession()
+    private(set) var tree: VaultTree = .empty
+    /// Vault-relative folder chosen in the Notes section ("" is the Vault root); target for new Free Notes.
+    var selectedFolder = ""
     var errorMessage: String?
+    let settings: AppSettings
 
     @ObservationIgnored private let vaultLocationStore: VaultLocationStore
     @ObservationIgnored private let tabRestorationStore: TabRestorationStore
@@ -17,10 +21,12 @@ final class AppModel {
     init(
         vaultLocationStore: VaultLocationStore = VaultLocationStore(),
         tabRestorationStore: TabRestorationStore = TabRestorationStore(),
+        settings: AppSettings = AppSettings(),
         now: @escaping () -> Date = Date.init
     ) {
         self.vaultLocationStore = vaultLocationStore
         self.tabRestorationStore = tabRestorationStore
+        self.settings = settings
         self.now = now
         if let saved = vaultLocationStore.savedVault() {
             open(saved)
@@ -42,12 +48,15 @@ final class AppModel {
     }
 
     func openToday() {
+        openDailyEntry(DailyEntry(date: now()))
+    }
+
+    func openDailyEntry(_ entry: DailyEntry) {
         guard let vault else { return }
-        let entry = DailyEntry(date: now())
         openNote(
             at: vault.url(for: entry),
             newFileContent: entry.initialContent,
-            errorPrefix: "Dnešní záznam se nepodařilo otevřít"
+            errorPrefix: "Záznam se nepodařilo otevřít"
         )
     }
 
@@ -61,6 +70,18 @@ final class AppModel {
         )
     }
 
+    /// Single entry point for opening a file from the sidebar.
+    func openNote(relativePath: String) {
+        guard let vault else { return }
+        do {
+            let document = try vault.openNote(relativePath: relativePath)
+            tabSession.open(document)
+            persistTabs()
+        } catch {
+            errorMessage = "Poznámku se nepodařilo otevřít: \(error.localizedDescription)"
+        }
+    }
+
     func selectTab(documentID: NoteDocument.ID) {
         tabSession.select(documentID: documentID)
         persistTabs()
@@ -69,6 +90,10 @@ final class AppModel {
     func closeTab(documentID: NoteDocument.ID) {
         tabSession.closeTab(documentID: documentID)
         persistTabs()
+    }
+
+    func refreshTree() {
+        tree = vault?.scanTree() ?? .empty
     }
 
     /// Returns `false` if saving failed; the error is then in `errorMessage`.
@@ -80,6 +105,7 @@ final class AppModel {
         guard let document else { return true }
         do {
             try document.save()
+            refreshTree()
             return true
         } catch {
             errorMessage = "Uložení se nezdařilo: \(error.localizedDescription)"
@@ -98,6 +124,8 @@ final class AppModel {
     private func open(_ vault: Vault) {
         self.vault = vault
         tabSession = TabSession()
+        selectedFolder = ""
+        refreshTree()
         do {
             if let state = try tabRestorationStore.savedState(for: vault) {
                 restoreTabs(from: state, in: vault)
@@ -148,8 +176,7 @@ final class AppModel {
         guard let activePath = state.activeRelativePath,
               let activeURL = restorationURL(for: activePath, in: vault),
               let active = tabSession.documents.first(where: {
-                  $0.fileURL.standardizedFileURL.resolvingSymlinksInPath()
-                      == activeURL.standardizedFileURL.resolvingSymlinksInPath()
+                  TabSession.refersToSameFile($0.fileURL, activeURL)
               }) else { return }
         tabSession.select(documentID: active.id)
         persistTabs()
