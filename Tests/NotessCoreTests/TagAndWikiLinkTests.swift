@@ -103,6 +103,17 @@ struct TagTests {
         #expect(names("\\#escaped") == [])
     }
 
+    @Test("a Tag may follow Czech quotes, dashes and a no-break space")
+    func unicodeBoundaries() {
+        #expect(names("„#acme“ v\u{00A0}#projekt —#pomlcka") == ["acme", "projekt", "pomlcka"])
+        #expect(names("žluť#ne e\u{301}#ne") == [])
+    }
+
+    @Test("a Tag in a link's text counts, one in its target does not")
+    func tagInLinkText() {
+        #expect(names("[#acme kickoff](https://example.com/#ne)") == ["acme"])
+    }
+
     @Test("a hash needs at least one letter")
     func needsLetter() {
         #expect(names("priorita #1 a #2026") == [])

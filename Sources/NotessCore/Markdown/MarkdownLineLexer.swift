@@ -286,13 +286,7 @@ struct MarkdownLineLexer {
     // MARK: Tables
 
     private func containsUnescapedPipe(from start: Int) -> Bool {
-        var i = start
-        while i < c.count {
-            if c[i] == Char.backslash { i += 2; continue }
-            if c[i] == Char.pipe { return true }
-            i += 1
-        }
-        return false
+        !pipePositions(from: start).isEmpty
     }
 
     private func pipePositions(from start: Int) -> [Int] {
@@ -375,7 +369,9 @@ struct MarkdownLineLexer {
         var closeUsed = 0
     }
 
-    private mutating func lexInline(_ start: Int, _ end: Int, allowsLinksAndTags: Bool = true) {
+    /// Inline spans of `start..<end`; inside a link's text no nested links are recognised.
+    private mutating func lexInline(_ start: Int, _ end: Int, isLinkText: Bool = false) {
+        let allowsLinks = !isLinkText
         var delimiters: [Delimiter] = []
         var i = start
         while i < end {
@@ -386,17 +382,17 @@ struct MarkdownLineLexer {
                 i += 2
             case Char.backtick:
                 i = lexCodeSpan(at: i, end: end)
-            case Char.lbracket where allowsLinksAndTags && i + 1 < end && c[i + 1] == Char.lbracket:
+            case Char.lbracket where allowsLinks && i + 1 < end && c[i + 1] == Char.lbracket:
                 if let after = lexWikiLink(at: i, end: end) { i = after } else { i += 2 }
-            case Char.lbracket where allowsLinksAndTags:
+            case Char.lbracket where allowsLinks:
                 i = lexLink(at: i, textStart: i + 1, end: end) ?? i + 1
-            case Char.bang where allowsLinksAndTags && i + 1 < end && c[i + 1] == Char.lbracket:
+            case Char.bang where allowsLinks && i + 1 < end && c[i + 1] == Char.lbracket:
                 i = lexLink(at: i, textStart: i + 2, end: end) ?? i + 2
-            case Char.lt where allowsLinksAndTags:
+            case Char.lt where allowsLinks:
                 i = lexAutolink(at: i, end: end) ?? i + 1
-            case _ where allowsLinksAndTags && (unit == Char.lowerH || unit == Char.lowerW):
+            case _ where allowsLinks && (unit == Char.lowerH || unit == Char.lowerW):
                 i = lexBareURL(at: i, start: start, end: end) ?? i + 1
-            case Char.hash where allowsLinksAndTags:
+            case Char.hash:
                 i = lexTag(at: i, start: start, end: end) ?? i + 1
             case Char.star, Char.underscore, Char.tilde:
                 var j = i
@@ -473,7 +469,7 @@ struct MarkdownLineLexer {
         guard m < end else { return nil }
         add(.syntaxMarker, i, textStart)
         add(.link, textStart, k)
-        lexInline(textStart, k, allowsLinksAndTags: false)
+        lexInline(textStart, k, isLinkText: true)
         add(.syntaxMarker, k, k + 2)
         add(.linkDestination, k + 2, m)
         add(.syntaxMarker, m, m + 1)
@@ -531,7 +527,7 @@ struct MarkdownLineLexer {
     /// `page#section` and `&#123;` are not Tags; `# Heading` is not one either
     /// because of the space.
     private mutating func lexTag(at i: Int, start: Int, end: Int) -> Int? {
-        if i > start && !Char.tagMayFollow(c[i - 1]) { return nil }
+        if i > start && !Char.tagMayFollow(c, at: i - 1) { return nil }
         var j = i + 1
         var hasLetter = false
         while j < end {
@@ -660,7 +656,7 @@ enum Char {
     static let tilde: UInt16 = 0x7E
 
     static let trailingURLPunctuation: Set<UInt16> = Set("?!.,:*_~'\"".utf16)
-    /// Characters after which a `#` may start a Tag (besides whitespace and line start).
+    /// ASCII characters after which a `#` may start a Tag (besides whitespace and line start).
     private static let tagPrefixes: Set<UInt16> = Set("([{\"',;:*_~>|".utf16)
 
     static func isWhitespace(_ u: UInt16) -> Bool { u == space || u == tab }
@@ -690,8 +686,20 @@ enum Char {
         return scalar.properties.isAlphabetic || scalar.properties.numericType != nil
     }
 
-    static func tagMayFollow(_ u: UInt16) -> Bool {
-        isWhitespace(u) || tagPrefixes.contains(u)
+    /// Whether a Tag may start right after the code unit at `i`: whitespace,
+    /// some ASCII punctuation, or any non-ASCII character that is not part of
+    /// a word (so `„#tag“`, `—#tag` and a no-break space before `#tag` work).
+    static func tagMayFollow(_ c: [UInt16], at i: Int) -> Bool {
+        let u = c[i]
+        if u < 0x80 { return isWhitespace(u) || tagPrefixes.contains(u) }
+        if isAlphanumeric(u) { return false }
+        guard let scalar = Unicode.Scalar(u) else { return false }
+        switch scalar.properties.generalCategory {
+        case .nonspacingMark, .spacingMark, .enclosingMark:
+            return false
+        default:
+            return true
+        }
     }
 
     /// Decodes the Unicode scalar starting at `i`, handling surrogate pairs.

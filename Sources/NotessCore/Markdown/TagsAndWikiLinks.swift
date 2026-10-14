@@ -5,7 +5,7 @@ import Foundation
 /// Allowed characters are letters (diacritics included), digits, `-` and `_`,
 /// and a Tag needs at least one letter (`#2026` is not a Tag). Tags are not
 /// hierarchical, compare case-insensitively (`normalizedName`) and are ignored
-/// inside inline code, code blocks, links and wiki-links. A heading (`# Title`)
+/// inside inline code, code blocks, URLs, link targets and wiki-links. A heading (`# Title`)
 /// is not a Tag because of the space after the hash.
 public struct Tag: Hashable, Sendable {
     /// The name as written, without the leading `#`.

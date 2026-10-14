@@ -27,8 +27,12 @@ The span of a note from one second-level heading to the next; the unit that sear
 _Avoid_: Block, chunk, topic, chapter
 
 **Tag**:
-A `#word` token (hash immediately followed by a word, no space) written anywhere in a note; it marks the whole Section it appears in.
+A `#word` token (hash immediately followed by a word, no space) written anywhere in a note outside code; it marks the whole Section it appears in. The word needs at least one letter, so `#2026` is not a Tag.
 _Avoid_: Label, category, topic
+
+**Wiki-link**:
+A `[[Note]]` reference to another note by its file name, optionally to one of its headings with `[[Note#Heading]]`.
+_Avoid_: Internal link, backlink (a backlink is a wiki-link seen from its target)
 
 ### Second brain
 

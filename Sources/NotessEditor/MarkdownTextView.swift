@@ -36,12 +36,15 @@ public final class MarkdownTextView: NSTextView {
 
     /// Toggles the task box under `point` (view coordinates), if any.
     func toggleTask(atPoint point: NSPoint) -> Bool {
+        guard let textStorage else { return false }
         let index = characterIndexForInsertion(at: point)
         for candidate in [index, index - 1] {
-            guard let boxRange = taskBoxRange(at: candidate), boxRect(boxRange).insetBy(dx: -2, dy: -2).contains(point) else {
-                continue
+            guard let change = highlighter.lexer.taskToggle(at: candidate, in: textStorage.mutableString) else { continue }
+            // The `[`, mark and `]` around the replaced mark.
+            let box = NSRange(location: change.range.location - 1, length: 3)
+            if boxRect(box).insetBy(dx: -2, dy: -2).contains(point) {
+                return apply(change)
             }
-            return toggleTask(at: candidate)
         }
         return false
     }
@@ -52,8 +55,14 @@ public final class MarkdownTextView: NSTextView {
     @discardableResult
     public func toggleTask(at index: Int) -> Bool {
         guard let textStorage,
-              let change = highlighter.lexer.taskToggle(at: index, in: textStorage.mutableString),
-              shouldChangeText(in: change.range, replacementString: change.replacement) else { return false }
+              let change = highlighter.lexer.taskToggle(at: index, in: textStorage.mutableString) else { return false }
+        return apply(change)
+    }
+
+    private func apply(_ change: (range: NSRange, replacement: String)) -> Bool {
+        guard let textStorage, shouldChangeText(in: change.range, replacementString: change.replacement) else {
+            return false
+        }
         breakUndoCoalescing()
         let selection = selectedRanges
         textStorage.replaceCharacters(in: change.range, with: change.replacement)
@@ -61,13 +70,6 @@ public final class MarkdownTextView: NSTextView {
         selectedRanges = selection
         undoManager?.setActionName("Přepnout úkol")
         return true
-    }
-
-    private func taskBoxRange(at index: Int) -> NSRange? {
-        guard let textStorage, let change = highlighter.lexer.taskToggle(at: index, in: textStorage.mutableString) else {
-            return nil
-        }
-        return NSRange(location: change.range.location - 1, length: 3)
     }
 
     /// The rectangle of `range` in view coordinates.

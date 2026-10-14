@@ -2,8 +2,8 @@ import AppKit
 
 /// Fonts and colours of the Markdown editor.
 ///
-/// Injected into `MarkdownEditor` so that Settings (font, size, theme) can
-/// change it; changing the style restyles the whole note. The default colours
+/// Built by `MarkdownEditor` from the Settings font and size; changing the
+/// style restyles the whole note. The default colours
 /// are dynamic system colours, so they follow the light/dark appearance.
 public struct MarkdownEditorStyle: Equatable {
     public struct Colors: Equatable {
