@@ -6,6 +6,9 @@ struct NoteCommands: Commands {
 
     var body: some Commands {
         CommandGroup(replacing: .newItem) {
+            Button("Nová poznámka") { model.newFreeNote() }
+                .keyboardShortcut("n", modifiers: .command)
+                .disabled(model.vault == nil)
             Button("Dnešní záznam") { model.openToday() }
                 .keyboardShortcut("t", modifiers: .command)
                 .disabled(model.vault == nil)
