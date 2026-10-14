@@ -19,6 +19,9 @@ struct NoteCommands: Commands {
                 .disabled(model.document == nil)
         }
         CommandGroup(after: .saveItem) {
+            Button("Rychle otevřít…") { model.presentQuickOpen() }
+                .keyboardShortcut("p", modifiers: .command)
+                .disabled(model.vault == nil)
             Button("Zavřít tab", action: onCloseActiveTab)
                 .keyboardShortcut("w", modifiers: .command)
                 .disabled(model.document == nil)

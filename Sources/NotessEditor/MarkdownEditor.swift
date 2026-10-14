@@ -75,6 +75,7 @@ public struct EditorReveal: Equatable {
 public struct MarkdownEditor: NSViewRepresentable {
     private let documentID: AnyHashable
     private let style: MarkdownEditorStyle
+    private let isEditable: Bool
     private let initialText: () -> String
     private let reveal: EditorReveal?
     private let onOpenWikiLink: ((WikiLink) -> Void)?
@@ -91,10 +92,12 @@ public struct MarkdownEditor: NSViewRepresentable {
         colors: MarkdownEditorStyle.Colors = .init(),
         reveal: EditorReveal? = nil,
         onOpenWikiLink: ((WikiLink) -> Void)? = nil,
+        isEditable: Bool = true,
         onTextChange: @escaping (String) -> Void
     ) {
         self.documentID = documentID
         self.style = MarkdownEditorStyle(fontName: fontName, fontSize: fontSize, colors: colors)
+        self.isEditable = isEditable
         self.initialText = initialText
         self.reveal = reveal
         self.onOpenWikiLink = onOpenWikiLink
@@ -111,6 +114,7 @@ public struct MarkdownEditor: NSViewRepresentable {
         textView.delegate = context.coordinator
         context.coordinator.onTextChange = onTextChange
         textView.onWikiLinkClick = onOpenWikiLink
+        textView.isEditable = isEditable
         load(into: textView, coordinator: context.coordinator)
         applyReveal(to: textView, coordinator: context.coordinator)
         return scrollView
@@ -123,6 +127,7 @@ public struct MarkdownEditor: NSViewRepresentable {
         if textView.markdownStyle != style {
             textView.markdownStyle = style
         }
+        textView.isEditable = isEditable
         if context.coordinator.documentID != documentID {
             load(into: textView, coordinator: context.coordinator)
         }
@@ -146,6 +151,7 @@ public struct MarkdownEditor: NSViewRepresentable {
         textView.string = initialText()
         textView.undoManager?.removeAllActions()
         textView.setSelectedRange(NSRange(location: (textView.string as NSString).length, length: 0))
+        guard isEditable else { return }
         DispatchQueue.main.async {
             textView.window?.makeFirstResponder(textView)
             textView.scrollRangeToVisible(textView.selectedRange())
