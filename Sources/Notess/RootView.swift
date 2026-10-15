@@ -43,7 +43,8 @@ struct RootView: View {
                                 onOpenImagePreview: model.presentImagePreview,
                                 onImageLoadFailure: {
                                     model.errorMessage = $0
-                                }
+                                },
+                                isImagePreviewPresented: model.imagePreview.content != nil
                             )
                         } else {
                             ContentUnavailableView(

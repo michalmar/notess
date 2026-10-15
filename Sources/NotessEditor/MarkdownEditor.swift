@@ -76,6 +76,7 @@ public struct MarkdownEditor: NSViewRepresentable {
     private let documentID: AnyHashable
     private let style: MarkdownEditorStyle
     private let isEditable: Bool
+    private let isInteractionEnabled: Bool
     private let initialText: () -> String
     private let reveal: EditorReveal?
     private let onOpenWikiLink: ((WikiLink) -> Void)?
@@ -99,6 +100,7 @@ public struct MarkdownEditor: NSViewRepresentable {
         reveal: EditorReveal? = nil,
         onOpenWikiLink: ((WikiLink) -> Void)? = nil,
         isEditable: Bool = true,
+        isInteractionEnabled: Bool = true,
         noteURL: URL? = nil,
         onPasteImage: ((Data, String) -> String?)? = nil,
         onPasteImageFailure: ((Error) -> Void)? = nil,
@@ -110,6 +112,7 @@ public struct MarkdownEditor: NSViewRepresentable {
         self.documentID = documentID
         self.style = MarkdownEditorStyle(fontName: fontName, fontSize: fontSize, colors: colors)
         self.isEditable = isEditable
+        self.isInteractionEnabled = isInteractionEnabled
         self.initialText = initialText
         self.reveal = reveal
         self.onOpenWikiLink = onOpenWikiLink
@@ -133,7 +136,7 @@ public struct MarkdownEditor: NSViewRepresentable {
         configureImages(in: textView)
         context.coordinator.onTextChange = onTextChange
         textView.onWikiLinkClick = onOpenWikiLink
-        textView.isEditable = isEditable
+        configureInteraction(in: textView, coordinator: context.coordinator)
         load(into: textView, coordinator: context.coordinator)
         applyReveal(to: textView, coordinator: context.coordinator)
         return scrollView
@@ -147,7 +150,7 @@ public struct MarkdownEditor: NSViewRepresentable {
         if textView.markdownStyle != style {
             textView.markdownStyle = style
         }
-        textView.isEditable = isEditable
+        configureInteraction(in: textView, coordinator: context.coordinator)
         if context.coordinator.documentID != documentID {
             load(into: textView, coordinator: context.coordinator)
         }
@@ -172,7 +175,7 @@ public struct MarkdownEditor: NSViewRepresentable {
         textView.undoManager?.removeAllActions()
         textView.setSelectedRange(NSRange(location: (textView.string as NSString).length, length: 0))
         textView.scheduleInlineImageRefresh()
-        guard isEditable else { return }
+        guard isEditable && isInteractionEnabled else { return }
         DispatchQueue.main.async {
             textView.window?.makeFirstResponder(textView)
             textView.scrollRangeToVisible(textView.selectedRange())
@@ -188,10 +191,22 @@ public struct MarkdownEditor: NSViewRepresentable {
         textView.noteURL = noteURL
     }
 
+    private func configureInteraction(in textView: MarkdownTextView, coordinator: Coordinator) {
+        let wasInteractionEnabled = coordinator.isInteractionEnabled
+        coordinator.isInteractionEnabled = isInteractionEnabled
+        textView.isEditable = isEditable && isInteractionEnabled
+        textView.isSelectable = isInteractionEnabled
+        guard isInteractionEnabled, wasInteractionEnabled == false else { return }
+        DispatchQueue.main.async {
+            textView.window?.makeFirstResponder(textView)
+        }
+    }
+
     @MainActor
     public final class Coordinator: NSObject, NSTextViewDelegate {
         var documentID: AnyHashable?
         var lastRevealID: UUID?
+        var isInteractionEnabled: Bool?
         var onTextChange: (String) -> Void = { _ in }
 
         public func textDidChange(_ notification: Notification) {

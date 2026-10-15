@@ -363,9 +363,7 @@ public final class MarkdownTextView: NSTextView {
             preview.imageView.isEditable = false
             preview.imageView.onClick = { [weak self, weak preview] in
                 guard let self, let preview else { return }
-                self.onOpenImagePreview?(
-                    ImagePreviewContent(source: preview.source, image: preview.image)
-                )
+                self.open(preview)
             }
             self.addSubview(preview.imageView)
             self.inlineImagePreviews.append(preview)
@@ -453,7 +451,7 @@ public final class MarkdownTextView: NSTextView {
             NSLocationInRange(index, $0.range)
                 || index == $0.range.upperBound
         }) else { return false }
-        onOpenImagePreview?(ImagePreviewContent(source: preview.source, image: preview.image))
+        open(preview)
         return true
     }
 
@@ -461,8 +459,14 @@ public final class MarkdownTextView: NSTextView {
         guard let preview = inlineImagePreviews.first(where: {
             $0.imageView.frame.contains(point)
         }) else { return false }
-        onOpenImagePreview?(ImagePreviewContent(source: preview.source, image: preview.image))
+        open(preview)
         return true
+    }
+
+    private func open(_ preview: InlineImagePreview) {
+        onOpenImagePreview?(
+            ImagePreviewContent(source: preview.source, image: preview.image)
+        )
     }
 
     private func isSafeRelativePath(_ path: String) -> Bool {

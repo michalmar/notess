@@ -54,6 +54,7 @@ public enum ImagePreviewLayout {
 public struct ImagePreviewOverlay: View {
     private let content: ImagePreviewContent
     private let onDismiss: () -> Void
+    @FocusState private var isCloseButtonFocused: Bool
 
     public init(content: ImagePreviewContent, onDismiss: @escaping () -> Void) {
         self.content = content
@@ -86,10 +87,14 @@ public struct ImagePreviewOverlay: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .keyboardShortcut(.cancelAction)
+                .focused($isCloseButtonFocused)
                 .padding(20)
             }
         }
         .onExitCommand(perform: onDismiss)
+        .onAppear {
+            isCloseButtonFocused = true
+        }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Zvětšený náhled obrázku")
     }

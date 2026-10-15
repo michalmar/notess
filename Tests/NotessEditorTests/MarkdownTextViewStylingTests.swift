@@ -250,11 +250,22 @@ struct MarkdownTextViewStylingTests {
 
     @Test("clicking a staged inline image opens the shared preview without changing the note")
     func clickStagedInlineImage() throws {
-        let markdown = "before\n![](attachments/image.png)\nafter"
+        let directory = FileManager.default.temporaryDirectory
+            .appending(path: UUID().uuidString, directoryHint: .isDirectory)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let noteURL = directory.appending(path: "Idea.md")
+        let document = try NoteDocument.open(fileURL: noteURL, newFileContent: "before\nafter")
+        let attachment = document.stageAttachment(
+            data: try #require(testPNG()),
+            fileExtension: "png"
+        )
+        let markdown = "before\n\(attachment.markdown)\nafter"
+        document.text = markdown
         let harness = Harness(markdown)
-        let png = try #require(testPNG())
-        harness.textView.noteURL = URL(filePath: "/Vault/Notes/Idea.md")
-        harness.textView.inlineImageData = { _ in png }
+        harness.textView.noteURL = noteURL
+        harness.textView.inlineImageData = {
+            document.stagedAttachmentData(relativePath: $0)
+        }
         var opened: ImagePreviewContent?
         harness.textView.onOpenImagePreview = { opened = $0 }
         var changes = 0
@@ -263,13 +274,16 @@ struct MarkdownTextViewStylingTests {
         ) { _ in MainActor.assumeIsolated { changes += 1 } }
         defer { NotificationCenter.default.removeObserver(observer) }
         harness.textView.refreshInlineImages()
+        let wasUnsaved = document.hasUnsavedChanges
 
         #expect(harness.textView.openInlineImage(at: 10))
-        #expect(opened?.source == "attachments/image.png")
+        #expect(opened?.source == attachment.relativePath)
         #expect(opened?.image.size.width == 2)
         #expect(opened?.image.size.height == 1)
         #expect(harness.textView.string == markdown)
         #expect(changes == 0)
+        #expect(document.hasUnsavedChanges == wasUnsaved)
+        #expect(FileManager.default.fileExists(atPath: attachment.fileURL.path) == false)
     }
 
     @Test("clicking a persisted inline image opens the same shared preview")
@@ -282,7 +296,11 @@ struct MarkdownTextViewStylingTests {
         try FileManager.default.createDirectory(at: attachmentDirectory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
         try #require(testPNG()).write(to: attachmentDirectory.appending(path: "image.png"))
-        harness.textView.noteURL = directory.appending(path: "Idea.md")
+        let noteURL = directory.appending(path: "Idea.md")
+        try markdown.write(to: noteURL, atomically: true, encoding: .utf8)
+        let document = try NoteDocument.open(fileURL: noteURL, newFileContent: "")
+        let diskBefore = try Data(contentsOf: noteURL)
+        harness.textView.noteURL = noteURL
         var opened: ImagePreviewContent?
         harness.textView.onOpenImagePreview = { opened = $0 }
         harness.textView.refreshInlineImages()
@@ -290,6 +308,8 @@ struct MarkdownTextViewStylingTests {
         #expect(harness.textView.openInlineImage(at: 3))
         #expect(opened?.source == "attachments/image.png")
         #expect(harness.textView.string == markdown)
+        #expect(document.hasUnsavedChanges == false)
+        #expect(try Data(contentsOf: noteURL) == diskBefore)
     }
 
     @Test("read-only notes use the same inline image preview interaction")
