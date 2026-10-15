@@ -27,7 +27,7 @@ The span of a note from one second-level heading to the next heading of level 1 
 _Avoid_: Block, chunk, topic, chapter
 
 **Tag**:
-A `#word` token (hash immediately followed by a word, no space) written anywhere in a note outside code, including in a heading of any level; it marks the whole Section it appears in. A Tag in an H2 heading marks the Section that heading starts, a Tag in a deeper heading marks its enclosing Section, and a Tag in an H1 heading marks the Section that heading starts. Tags in the introductory text before the first second-level heading mark only that introductory Section; they never apply to later Sections. The word needs at least one letter, so `#2026` is not a Tag. Tags are compared case-insensitively and Unicode-normalised, and repeating a Tag within a Section counts once.
+A `#word` token (hash immediately followed by a word, no space) written anywhere in a note outside code, including in a heading of any level; it marks the whole Section it appears in. A Tag in an H2 heading marks the Section that heading starts, a Tag in a deeper heading marks its enclosing Section, and a Tag in an H1 heading that ends a Section marks the Section it starts. Tags in the introductory text before the first second-level heading, including in its H1 title or deeper headings, mark only that introductory Section; they never apply to later Sections. The word needs at least one letter, so `#2026` is not a Tag. Tags are compared case-insensitively and Unicode-normalised, and repeating a Tag within a Section counts once.
 _Avoid_: Label, category, topic
 
 **Tag Timeline**:

@@ -337,7 +337,8 @@ final class SearchIndexTests {
         let index = makeIndex()
         try await index.synchronize()
         #expect(ids(try await index.search(SearchQuery("#beta"))) == ["2026-04-02#1"])
-        #expect(ids(try await index.search(SearchQuery("#acme")).filter { $0.kind == .dailyEntry }).prefix(2) == ["2026-04-05#1", "2026-04-02#1"])
+        #expect(ids(try await index.search(SearchQuery("#acme")).filter { $0.kind == .dailyEntry })
+            == ["2026-04-05#1", "2026-04-02#1", "2026-04-02#3", "2026-03-14#1"])
 
         // On a later start the converged cache is kept, not rebuilt again.
         let reopened = makeIndex()
