@@ -52,7 +52,6 @@ struct ImagePreviewTests {
             dismissals += 1
         }
         harness.window.makeKeyAndOrderFront(nil)
-        harness.installOverlay()
         runMainLoop()
         let closePoint = NSPoint(
             x: harness.hostingView.bounds.maxX - 58,
@@ -102,11 +101,10 @@ struct ImagePreviewTests {
             dismissals += 1
         }
         harness.window.makeKeyAndOrderFront(nil)
-        harness.window.makeFirstResponder(harness.textView)
-        harness.installOverlay()
         runMainLoop()
+        let textView = try #require(harness.textView)
 
-        #expect(harness.window.firstResponder !== harness.textView)
+        #expect(harness.window.firstResponder !== textView)
 
         let escape = try #require(
             NSEvent.keyEvent(
@@ -126,14 +124,19 @@ struct ImagePreviewTests {
         runMainLoop()
 
         #expect(dismissals == 1)
+        #expect(harness.window.firstResponder === textView)
     }
 }
 
 @MainActor
 private final class PreviewHarness {
     let window: NSWindow
-    let textView = NSTextView()
-    let hostingView: NSHostingView<ImagePreviewOverlay>
+    let hostingView: NSHostingView<PreviewInteractionHarnessView>
+    var textView: MarkdownTextView? {
+        allSubviews(of: hostingView)
+            .compactMap { $0 as? MarkdownTextView }
+            .first
+    }
 
     init(content: ImagePreviewContent, onDismiss: @escaping () -> Void) {
         window = NSWindow(
@@ -144,23 +147,48 @@ private final class PreviewHarness {
         )
         window.isReleasedWhenClosed = false
         hostingView = NSHostingView(
-            rootView: ImagePreviewOverlay(content: content, onDismiss: onDismiss)
+            rootView: PreviewInteractionHarnessView(
+                content: content,
+                onDismiss: onDismiss
+            )
         )
-        installOverlay()
+        hostingView.frame = window.contentLayoutRect
+        hostingView.autoresizingMask = [.width, .height]
+        window.contentView = hostingView
         runMainLoop()
     }
 
-    func installOverlay() {
-        let container = NSView(frame: window.contentLayoutRect)
-        textView.frame = container.bounds
-        textView.autoresizingMask = [.width, .height]
-        hostingView.frame = container.bounds
-        hostingView.autoresizingMask = [.width, .height]
-        container.addSubview(textView)
-        container.addSubview(hostingView)
-        window.contentView = container
-    }
+}
 
+@MainActor
+private struct PreviewInteractionHarnessView: View {
+    let content: ImagePreviewContent
+    let onDismiss: () -> Void
+    @State private var isPresented = true
+
+    var body: some View {
+        ZStack {
+            MarkdownEditor(
+                documentID: "preview-test",
+                initialText: { "Poznámka" },
+                isInteractionEnabled: !isPresented,
+                noteURL: URL(filePath: "/tmp/preview-test.md"),
+                onTextChange: { _ in }
+            )
+
+            if isPresented {
+                ImagePreviewOverlay(content: content) {
+                    isPresented = false
+                    onDismiss()
+                }
+            }
+        }
+    }
+}
+
+@MainActor
+private func allSubviews(of view: NSView) -> [NSView] {
+    view.subviews + view.subviews.flatMap(allSubviews)
 }
 
 @MainActor
