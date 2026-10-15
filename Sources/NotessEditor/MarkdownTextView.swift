@@ -11,6 +11,8 @@ public final class MarkdownTextView: NSTextView {
     public var inlineImageData: ((String) -> Data?)?
     public var onOpenImagePreview: ((ImagePreviewContent) -> Void)?
     public var onImageLoadFailure: ((String) -> Void)?
+    /// Called after inline images changed the height the text needs.
+    var onInlineImagesLaidOut: (() -> Void)?
     public var noteURL: URL? {
         didSet {
             guard oldValue != noteURL else { return }
@@ -292,6 +294,7 @@ public final class MarkdownTextView: NSTextView {
         )
         updateParagraphSpacing(for: Set(inlineImagePreviews.map(\.paragraphRange)))
         layoutInlineImageViews()
+        onInlineImagesLaidOut?()
     }
 
     private func updateInlineImages(
@@ -343,6 +346,7 @@ public final class MarkdownTextView: NSTextView {
         })
         updateParagraphSpacing(for: paragraphs)
         scheduleInlineImageLayout()
+        onInlineImagesLaidOut?()
     }
 
     private func addInlineImagePreviews(in range: NSRange, noteURL: URL) {
@@ -368,6 +372,15 @@ public final class MarkdownTextView: NSTextView {
             self.addSubview(preview.imageView)
             self.inlineImagePreviews.append(preview)
         }
+    }
+
+    /// Space the last paragraph's images need below it. TextKit does not count
+    /// paragraph spacing after the final paragraph in its usage bounds.
+    var trailingInlineImageHeight: CGFloat {
+        guard let length = textStorage?.length else { return 0 }
+        return inlineImagePreviews
+            .filter { $0.paragraphRange.upperBound >= length }
+            .reduce(0) { $0 + fittedSize(for: $1.image).height + 8 }
     }
 
     private func updateParagraphSpacing(for paragraphRanges: Set<NSRange>) {

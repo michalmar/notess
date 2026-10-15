@@ -52,6 +52,8 @@ struct TagTimelineView: View {
     @Bindable var settings: AppSettings
     let isIndexing: Bool
     let indexFailure: String?
+    let noteURL: (TagTimelineSection) -> URL?
+    let openImagePreview: (ImagePreviewContent) -> Void
     let open: (TagTimelineSection) -> Void
 
     var body: some View {
@@ -104,7 +106,13 @@ struct TagTimelineView: View {
                             .font(.headline)
                             .foregroundStyle(.secondary)
                         ForEach(day.sections) { section in
-                            SectionCard(section: section, settings: settings, open: open)
+                            SectionCard(
+                                section: section,
+                                settings: settings,
+                                noteURL: noteURL(section),
+                                openImagePreview: openImagePreview,
+                                open: open
+                            )
                         }
                     }
                 }
@@ -171,15 +179,28 @@ private struct IndexStatusFooter: View {
 private struct SectionCard: View {
     let section: TagTimelineSection
     @Bindable var settings: AppSettings
+    let noteURL: URL?
+    let openImagePreview: (ImagePreviewContent) -> Void
     let open: (TagTimelineSection) -> Void
+    @State private var imageFailures: [String] = []
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             ReadOnlyMarkdownView(
                 markdown: section.markdown,
                 fontName: settings.editorFont.name,
-                fontSize: CGFloat(settings.editorFont.size)
+                fontSize: CGFloat(settings.editorFont.size),
+                noteURL: noteURL,
+                onOpenImagePreview: openImagePreview,
+                onImageLoadFailure: { message in
+                    if !imageFailures.contains(message) { imageFailures.append(message) }
+                }
             )
+            ForEach(imageFailures, id: \.self) { message in
+                Label(message, systemImage: "exclamationmark.triangle")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+            }
             HStack {
                 Spacer()
                 Button {
@@ -193,5 +214,7 @@ private struct SectionCard: View {
         }
         .padding(14)
         .background(.quaternary.opacity(0.4), in: .rect(cornerRadius: 8))
+        .onChange(of: section.markdown) { imageFailures = [] }
+        .onChange(of: noteURL) { imageFailures = [] }
     }
 }
