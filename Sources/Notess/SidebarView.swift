@@ -12,6 +12,47 @@ struct SidebarView: View {
     @State private var selection: SidebarItem?
 
     var body: some View {
+        VStack(spacing: 0) {
+            Picker("Režim", selection: $model.sidebarMode) {
+                Text("Journal").tag(SidebarMode.journal)
+                Text("Tagy").tag(SidebarMode.tags)
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+
+            switch model.sidebarMode {
+            case .journal:
+                journalList
+            case .tags:
+                TagList(
+                    browser: model.tagTimeline,
+                    isIndexing: model.isIndexing,
+                    indexFailure: model.searchIndexFailure,
+                    select: model.selectTimelineTag
+                )
+            }
+        }
+        .onChange(of: model.document?.id) { _, _ in
+            syncSelectionWithDocument()
+        }
+        .onChange(of: selection) { _, item in
+            switch item {
+            case .day(let day):
+                model.openDailyEntry(DailyEntry(day: day))
+                syncSelectionWithDocument()
+            case .note(let path):
+                model.openNote(relativePath: path)
+                syncSelectionWithDocument()
+            case .folder(let path): model.selectedFolder = path
+            case nil: break
+            }
+        }
+        .onAppear { selection = .folder(model.selectedFolder) }
+    }
+
+    private var journalList: some View {
         List(selection: $selection) {
             Section("Journal") {
                 Button {
@@ -56,22 +97,6 @@ struct SidebarView: View {
             }
         }
         .listStyle(.sidebar)
-        .onChange(of: model.document?.id) { _, _ in
-            syncSelectionWithDocument()
-        }
-        .onChange(of: selection) { _, item in
-            switch item {
-            case .day(let day):
-                model.openDailyEntry(DailyEntry(day: day))
-                syncSelectionWithDocument()
-            case .note(let path):
-                model.openNote(relativePath: path)
-                syncSelectionWithDocument()
-            case .folder(let path): model.selectedFolder = path
-            case nil: break
-            }
-        }
-        .onAppear { selection = .folder(model.selectedFolder) }
     }
 
     /// Keeps the highlight on the file that is actually open, e.g. after a refused or failed open.

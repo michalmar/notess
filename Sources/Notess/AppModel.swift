@@ -3,6 +3,14 @@ import NotessCore
 import NotessEditor
 import Observation
 
+/// The two ways to browse the Vault in the sidebar.
+enum SidebarMode: Hashable {
+    /// The day-based workflow: Journal, Notes and Brain, with the note editor.
+    case journal
+    /// Tags of saved Daily Entries, with the selected Tag's timeline.
+    case tags
+}
+
 /// App-wide state: which Vault is open and which note tabs are open.
 @MainActor
 @Observable
@@ -14,8 +22,21 @@ final class AppModel {
     var isSearchPresented = false
     /// The search index is catching up with the Vault or being rebuilt.
     var isIndexing = false
+    /// Why the search index may be missing saved notes, until a full catch-up succeeds.
+    var searchIndexFailure: String?
     /// Bumped whenever the search index has changed, so open results refresh.
-    var searchIndexRevision = 0
+    var searchIndexRevision = 0 {
+        didSet { refreshTagTimeline() }
+    }
+    /// What the sidebar and the detail show: the day-based workflow or the Tag Timeline.
+    var sidebarMode: SidebarMode = .journal {
+        didSet {
+            guard sidebarMode != oldValue else { return }
+            refreshTagTimeline()
+        }
+    }
+    /// The Tags of saved Daily Entries and the selected Tag's timeline (Tags mode).
+    let tagTimeline = TagTimelineBrowser()
     /// Vault-relative folder chosen in the Notes section ("" is the Vault root); target for new Free Notes.
     var selectedFolder = ""
     var errorMessage: String?
@@ -95,7 +116,7 @@ final class AppModel {
                 on: Day(date: now())
             )
             tabSession.open(document)
-            persistTabs()
+            showOpenedTab()
             backlinks = []
         } catch {
             errorMessage = "Poznámku se nepodařilo vytvořit: \(error.localizedDescription)"
@@ -134,7 +155,7 @@ final class AppModel {
         guard let vault else { return nil }
         do {
             let document = tabSession.open(try vault.openNote(relativePath: relativePath))
-            persistTabs()
+            showOpenedTab()
             refreshVisibleBacklinks()
             return document
         } catch {
@@ -286,12 +307,18 @@ final class AppModel {
                 newFileContent: newFileContent,
                 isReadOnly: isBrainNote(fileURL)
             )
-            persistTabs()
+            showOpenedTab()
             return document
         } catch {
             errorMessage = "\(errorPrefix): \(error.localizedDescription)"
             return nil
         }
+    }
+
+    /// Every note opened in a tab is shown in the editor, so Tags mode gives way to Journal.
+    private func showOpenedTab() {
+        persistTabs()
+        sidebarMode = .journal
     }
 
     private func restoreTabs(from state: TabRestorationState, in vault: Vault) {

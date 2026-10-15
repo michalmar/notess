@@ -14,44 +14,17 @@ struct RootView: View {
                     SidebarView(model: model)
                         .navigationSplitViewColumnWidth(min: 200, ideal: 240, max: 400)
                 } detail: {
-                    VStack(spacing: 0) {
-                        if !model.tabSession.documents.isEmpty {
-                            NoteTabBar(
-                                session: model.tabSession,
-                                onSelect: model.selectTab,
-                                onClose: onCloseTab
-                            )
-                            Divider()
-                        }
-                        if let document = model.document {
-                            ExternalChangeBar(
-                                document: document,
-                                onReload: { model.reloadFromDisk(documentID: document.id) },
-                                onSave: { model.save(documentID: document.id) },
-                                onClose: { onCloseTab(document.id) }
-                            )
-                            NoteEditorScreen(
-                                document: document,
-                                settings: model.settings,
-                                reveal: model.reveal,
-                                backlinks: model.backlinks,
-                                onOpenWikiLink: { model.openWikiLink($0) },
-                                onOpenBacklink: { model.openBacklink($0) },
-                                onPasteImageFailure: { error in
-                                    model.errorMessage = "Obrázek se nepodařilo vložit: \(error.localizedDescription)"
-                                },
-                                onOpenImagePreview: model.presentImagePreview,
-                                onImageLoadFailure: {
-                                    model.errorMessage = $0
-                                },
-                                isImagePreviewPresented: model.imagePreview.content != nil
-                            )
-                        } else {
-                            ContentUnavailableView(
-                                "Žádná otevřená poznámka",
-                                systemImage: "doc.text"
-                            )
-                        }
+                    switch model.sidebarMode {
+                    case .journal:
+                        journalDetail
+                    case .tags:
+                        TagTimelineView(
+                            browser: model.tagTimeline,
+                            settings: model.settings,
+                            isIndexing: model.isIndexing,
+                            indexFailure: model.searchIndexFailure,
+                            open: model.openTimelineSection
+                        )
                     }
                 }
                 .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
@@ -107,6 +80,48 @@ struct RootView: View {
             actions: { Button("OK", role: .cancel) {} },
             message: { Text(model.errorMessage ?? "") }
         )
+    }
+
+    private var journalDetail: some View {
+        VStack(spacing: 0) {
+            if !model.tabSession.documents.isEmpty {
+                NoteTabBar(
+                    session: model.tabSession,
+                    onSelect: model.selectTab,
+                    onClose: onCloseTab
+                )
+                Divider()
+            }
+            if let document = model.document {
+                ExternalChangeBar(
+                    document: document,
+                    onReload: { model.reloadFromDisk(documentID: document.id) },
+                    onSave: { model.save(documentID: document.id) },
+                    onClose: { onCloseTab(document.id) }
+                )
+                NoteEditorScreen(
+                    document: document,
+                    settings: model.settings,
+                    reveal: model.reveal,
+                    backlinks: model.backlinks,
+                    onOpenWikiLink: { model.openWikiLink($0) },
+                    onOpenBacklink: { model.openBacklink($0) },
+                    onPasteImageFailure: { error in
+                        model.errorMessage = "Obrázek se nepodařilo vložit: \(error.localizedDescription)"
+                    },
+                    onOpenImagePreview: model.presentImagePreview,
+                    onImageLoadFailure: {
+                        model.errorMessage = $0
+                    },
+                    isImagePreviewPresented: model.imagePreview.content != nil
+                )
+            } else {
+                ContentUnavailableView(
+                    "Žádná otevřená poznámka",
+                    systemImage: "doc.text"
+                )
+            }
+        }
     }
 }
 
