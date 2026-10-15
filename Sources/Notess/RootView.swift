@@ -23,6 +23,8 @@ struct RootView: View {
                             settings: model.settings,
                             isIndexing: model.isIndexing,
                             indexFailure: model.searchIndexFailure,
+                            noteURL: model.noteURL(for:),
+                            openImagePreview: model.presentImagePreview,
                             open: model.openTimelineSection
                         )
                     }

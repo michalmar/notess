@@ -11,6 +11,8 @@ public final class MarkdownTextView: NSTextView {
     public var inlineImageData: ((String) -> Data?)?
     public var onOpenImagePreview: ((ImagePreviewContent) -> Void)?
     public var onImageLoadFailure: ((String) -> Void)?
+    /// Called after inline images changed the height the text needs.
+    var onInlineImagesLaidOut: (() -> Void)?
     public var noteURL: URL? {
         didSet {
             guard oldValue != noteURL else { return }
@@ -292,6 +294,7 @@ public final class MarkdownTextView: NSTextView {
         )
         updateParagraphSpacing(for: Set(inlineImagePreviews.map(\.paragraphRange)))
         layoutInlineImageViews()
+        onInlineImagesLaidOut?()
     }
 
     private func updateInlineImages(
@@ -343,6 +346,7 @@ public final class MarkdownTextView: NSTextView {
         })
         updateParagraphSpacing(for: paragraphs)
         scheduleInlineImageLayout()
+        onInlineImagesLaidOut?()
     }
 
     private func addInlineImagePreviews(in range: NSRange, noteURL: URL) {

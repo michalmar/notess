@@ -41,27 +41,52 @@ extension MarkdownTextView {
 public struct ReadOnlyMarkdownView: NSViewRepresentable {
     private let markdown: String
     private let style: MarkdownEditorStyle
+    private let noteURL: URL?
+    private let onOpenImagePreview: ((ImagePreviewContent) -> Void)?
+    private let onImageLoadFailure: ((String) -> Void)?
+    @State private var layoutRevision = 0
 
     /// - Parameters:
+    ///   - noteURL: The saved note the Markdown comes from. Relative images
+    ///     resolve against its directory and are read from disk, never from staged bytes.
+    ///   - onOpenImagePreview: Called with the clicked image for the shared preview.
+    ///   - onImageLoadFailure: Called with a message when an image cannot be loaded.
     ///   - fontName: The body font's PostScript name, or `"System"`.
     ///   - colors: Formatting colours; the defaults follow light/dark mode.
     public init(
         markdown: String,
         fontName: String = "System",
         fontSize: CGFloat = 15,
-        colors: MarkdownEditorStyle.Colors = .init()
+        colors: MarkdownEditorStyle.Colors = .init(),
+        noteURL: URL? = nil,
+        onOpenImagePreview: ((ImagePreviewContent) -> Void)? = nil,
+        onImageLoadFailure: ((String) -> Void)? = nil
     ) {
+        self.noteURL = noteURL
+        self.onOpenImagePreview = onOpenImagePreview
+        self.onImageLoadFailure = onImageLoadFailure
         self.markdown = markdown
         self.style = MarkdownEditorStyle(fontName: fontName, fontSize: fontSize, colors: colors)
     }
 
     public func makeNSView(context: Context) -> MarkdownTextView {
         let textView = MarkdownTextViewFactory.makeReadOnlyTextView(style: style)
+        configureImages(in: textView)
         textView.string = markdown
         return textView
     }
 
+    private func configureImages(in textView: MarkdownTextView) {
+        textView.onOpenImagePreview = onOpenImagePreview
+        textView.onImageLoadFailure = onImageLoadFailure
+        let revision = $layoutRevision
+        textView.onInlineImagesLaidOut = { revision.wrappedValue += 1 }
+        textView.noteURL = noteURL
+    }
+
     public func updateNSView(_ textView: MarkdownTextView, context: Context) {
+        _ = layoutRevision
+        configureImages(in: textView)
         if textView.markdownStyle != style {
             textView.markdownStyle = style
         }
