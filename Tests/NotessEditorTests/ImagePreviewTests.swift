@@ -47,10 +47,7 @@ struct ImagePreviewTests {
             source: "attachments/image.png",
             image: try #require(testPreviewImage())
         )
-        var dismissals = 0
-        let harness = PreviewHarness(content: content) {
-            dismissals += 1
-        }
+        let harness = PreviewHarness(content: content)
         harness.window.makeKeyAndOrderFront(nil)
         runMainLoop()
         let closePoint = NSPoint(
@@ -87,7 +84,9 @@ struct ImagePreviewTests {
         harness.window.sendEvent(mouseUp)
         runMainLoop()
 
-        #expect(dismissals == 1)
+        #expect(harness.state.isPresented == false)
+        #expect(harness.state.dismissals == 1)
+        #expect(harness.window.firstResponder === harness.textView)
     }
 
     @Test("Escape dismisses the hosted overlay and it takes focus from the editor")
@@ -96,10 +95,7 @@ struct ImagePreviewTests {
             source: "attachments/image.png",
             image: try #require(testPreviewImage())
         )
-        var dismissals = 0
-        let harness = PreviewHarness(content: content) {
-            dismissals += 1
-        }
+        let harness = PreviewHarness(content: content)
         harness.window.makeKeyAndOrderFront(nil)
         runMainLoop()
         let textView = try #require(harness.textView)
@@ -123,7 +119,8 @@ struct ImagePreviewTests {
         harness.window.sendEvent(escape)
         runMainLoop()
 
-        #expect(dismissals == 1)
+        #expect(harness.state.isPresented == false)
+        #expect(harness.state.dismissals == 1)
         #expect(harness.window.firstResponder === textView)
     }
 }
@@ -132,13 +129,14 @@ struct ImagePreviewTests {
 private final class PreviewHarness {
     let window: NSWindow
     let hostingView: NSHostingView<PreviewInteractionHarnessView>
+    let state = PreviewHarnessState()
     var textView: MarkdownTextView? {
         allSubviews(of: hostingView)
             .compactMap { $0 as? MarkdownTextView }
             .first
     }
 
-    init(content: ImagePreviewContent, onDismiss: @escaping () -> Void) {
+    init(content: ImagePreviewContent) {
         window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 800, height: 600),
             styleMask: [.titled],
@@ -149,7 +147,7 @@ private final class PreviewHarness {
         hostingView = NSHostingView(
             rootView: PreviewInteractionHarnessView(
                 content: content,
-                onDismiss: onDismiss
+                state: state
             )
         )
         hostingView.frame = window.contentLayoutRect
@@ -161,25 +159,34 @@ private final class PreviewHarness {
 }
 
 @MainActor
+private final class PreviewHarnessState: ObservableObject {
+    @Published var isPresented = true
+    private(set) var dismissals = 0
+
+    func dismiss() {
+        isPresented = false
+        dismissals += 1
+    }
+}
+
+@MainActor
 private struct PreviewInteractionHarnessView: View {
     let content: ImagePreviewContent
-    let onDismiss: () -> Void
-    @State private var isPresented = true
+    @ObservedObject var state: PreviewHarnessState
 
     var body: some View {
         ZStack {
             MarkdownEditor(
                 documentID: "preview-test",
                 initialText: { "Poznámka" },
-                isInteractionEnabled: !isPresented,
+                isInteractionEnabled: !state.isPresented,
                 noteURL: URL(filePath: "/tmp/preview-test.md"),
                 onTextChange: { _ in }
             )
 
-            if isPresented {
+            if state.isPresented {
                 ImagePreviewOverlay(content: content) {
-                    isPresented = false
-                    onDismiss()
+                    state.dismiss()
                 }
             }
         }

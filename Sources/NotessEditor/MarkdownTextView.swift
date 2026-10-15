@@ -444,17 +444,6 @@ public final class MarkdownTextView: NSTextView {
         onImageLoadFailure?("Obrázek „\(source)“ se nepodařilo načíst.")
     }
 
-    /// Opens the inline image whose Markdown contains `index`.
-    @discardableResult
-    func openInlineImage(at index: Int) -> Bool {
-        guard let preview = inlineImagePreviews.first(where: {
-            NSLocationInRange(index, $0.range)
-                || index == $0.range.upperBound
-        }) else { return false }
-        open(preview)
-        return true
-    }
-
     private func openInlineImage(atPoint point: NSPoint) -> Bool {
         guard let preview = inlineImagePreviews.first(where: {
             $0.imageView.frame.contains(point)

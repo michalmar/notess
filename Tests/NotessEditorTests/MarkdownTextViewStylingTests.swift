@@ -41,6 +41,50 @@ struct MarkdownTextViewStylingTests {
             textView.setSelectedRange(NSRange(location: location, length: 0))
             textView.insertText(text, replacementRange: textView.selectedRange())
         }
+
+        @discardableResult
+        func clickInlineImage() -> Bool {
+            window.makeKeyAndOrderFront(nil)
+            window.contentView?.layoutSubtreeIfNeeded()
+            RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.05))
+            guard let imageView = textView.subviews.compactMap({ $0 as? NSImageView }).first else {
+                return false
+            }
+            let point = textView.convert(
+                NSPoint(x: imageView.frame.midX, y: imageView.frame.midY),
+                to: nil
+            )
+            guard let mouseDown = NSEvent.mouseEvent(
+                with: .leftMouseDown,
+                location: point,
+                modifierFlags: [],
+                timestamp: 0,
+                windowNumber: window.windowNumber,
+                context: nil,
+                eventNumber: 1,
+                clickCount: 1,
+                pressure: 1
+            ), let mouseUp = NSEvent.mouseEvent(
+                with: .leftMouseUp,
+                location: point,
+                modifierFlags: [],
+                timestamp: 0,
+                windowNumber: window.windowNumber,
+                context: nil,
+                eventNumber: 1,
+                clickCount: 1,
+                pressure: 0
+            ) else {
+                return false
+            }
+            let contentPoint = window.contentView?.convert(point, from: nil) ?? .zero
+            guard let hitView = window.contentView?.hitTest(contentPoint) else {
+                return false
+            }
+            hitView.mouseDown(with: mouseDown)
+            hitView.mouseUp(with: mouseUp)
+            return true
+        }
     }
 
     private let style = MarkdownEditorStyle.standard
@@ -276,7 +320,7 @@ struct MarkdownTextViewStylingTests {
         harness.textView.refreshInlineImages()
         let wasUnsaved = document.hasUnsavedChanges
 
-        #expect(harness.textView.openInlineImage(at: 10))
+        #expect(harness.clickInlineImage())
         #expect(opened?.source == attachment.relativePath)
         #expect(opened?.image.size.width == 2)
         #expect(opened?.image.size.height == 1)
@@ -305,7 +349,7 @@ struct MarkdownTextViewStylingTests {
         harness.textView.onOpenImagePreview = { opened = $0 }
         harness.textView.refreshInlineImages()
 
-        #expect(harness.textView.openInlineImage(at: 3))
+        #expect(harness.clickInlineImage())
         #expect(opened?.source == "attachments/image.png")
         #expect(harness.textView.string == markdown)
         #expect(document.hasUnsavedChanges == false)
@@ -323,7 +367,7 @@ struct MarkdownTextViewStylingTests {
         harness.textView.onOpenImagePreview = { opened = $0 }
         harness.textView.refreshInlineImages()
 
-        #expect(harness.textView.openInlineImage(at: 3))
+        #expect(harness.clickInlineImage())
         #expect(opened?.source == "attachments/image.png")
         #expect(harness.textView.isEditable == false)
     }
