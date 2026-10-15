@@ -214,5 +214,7 @@ private struct SectionCard: View {
         }
         .padding(14)
         .background(.quaternary.opacity(0.4), in: .rect(cornerRadius: 8))
+        .onChange(of: section.markdown) { imageFailures = [] }
+        .onChange(of: noteURL) { imageFailures = [] }
     }
 }

@@ -16,13 +16,13 @@ extension AppModel {
         openSection(relativePath: result.relativePath, title: result.title, ordinal: result.ordinal)
     }
 
-    /// Opens the Daily Entry of a Tag Timeline Section for editing and scrolls to the Section.
     /// The saved file of the note a Tag Timeline Section comes from; its images
     /// resolve against that note's directory.
     func noteURL(for section: TagTimelineSection) -> URL? {
         vault?.rootURL.appending(path: section.relativePath, directoryHint: .notDirectory)
     }
 
+    /// Opens the Daily Entry of a Tag Timeline Section for editing and scrolls to the Section.
     func openTimelineSection(_ section: TagTimelineSection) {
         openSection(relativePath: section.relativePath, title: section.title, ordinal: section.ordinal)
     }

@@ -374,6 +374,15 @@ public final class MarkdownTextView: NSTextView {
         }
     }
 
+    /// Space the last paragraph's images need below it. TextKit does not count
+    /// paragraph spacing after the final paragraph in its usage bounds.
+    var trailingInlineImageHeight: CGFloat {
+        guard let length = textStorage?.length else { return 0 }
+        return inlineImagePreviews
+            .filter { $0.paragraphRange.upperBound >= length }
+            .reduce(0) { $0 + fittedSize(for: $1.image).height + 8 }
+    }
+
     private func updateParagraphSpacing(for paragraphRanges: Set<NSRange>) {
         guard let textStorage else { return }
         for paragraphRange in paragraphRanges where paragraphRange.upperBound <= textStorage.length {

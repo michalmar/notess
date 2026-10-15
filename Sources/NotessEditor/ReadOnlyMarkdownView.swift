@@ -32,7 +32,7 @@ extension MarkdownTextView {
         guard let textLayoutManager else { return 0 }
         textLayoutManager.ensureLayout(for: textLayoutManager.documentRange)
         let textHeight = textLayoutManager.usageBoundsForTextContainer.height
-        return ceil(textHeight + textContainerInset.height * 2)
+        return ceil(textHeight + trailingInlineImageHeight + textContainerInset.height * 2)
     }
 }
 
@@ -44,7 +44,7 @@ public struct ReadOnlyMarkdownView: NSViewRepresentable {
     private let noteURL: URL?
     private let onOpenImagePreview: ((ImagePreviewContent) -> Void)?
     private let onImageLoadFailure: ((String) -> Void)?
-    @State private var layoutRevision = 0
+    @State private var imageLayoutTick = 0
 
     /// - Parameters:
     ///   - noteURL: The saved note the Markdown comes from. Relative images
@@ -79,13 +79,16 @@ public struct ReadOnlyMarkdownView: NSViewRepresentable {
     private func configureImages(in textView: MarkdownTextView) {
         textView.onOpenImagePreview = onOpenImagePreview
         textView.onImageLoadFailure = onImageLoadFailure
-        let revision = $layoutRevision
-        textView.onInlineImagesLaidOut = { revision.wrappedValue += 1 }
+        let tick = $imageLayoutTick
+        // Deferred: this fires during AppKit layout, possibly inside a SwiftUI update.
+        textView.onInlineImagesLaidOut = {
+            DispatchQueue.main.async { tick.wrappedValue += 1 }
+        }
         textView.noteURL = noteURL
     }
 
     public func updateNSView(_ textView: MarkdownTextView, context: Context) {
-        _ = layoutRevision
+        _ = imageLayoutTick // re-measure the height once images changed it
         configureImages(in: textView)
         if textView.markdownStyle != style {
             textView.markdownStyle = style

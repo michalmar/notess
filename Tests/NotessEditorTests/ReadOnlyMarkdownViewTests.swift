@@ -104,6 +104,22 @@ struct ReadOnlyMarkdownViewTests {
         #expect(textView.displayedInlineImageCount == 0)
     }
 
+    @Test("an image makes the Section taller, so it is not cut off")
+    func imageAddsHeight() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appending(path: UUID().uuidString, directoryHint: .isDirectory)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let attachments = root.appending(path: "attachments", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: attachments, withIntermediateDirectories: true)
+        try pngData(width: 100).write(to: attachments.appending(path: "image.png"))
+        let (window, textView) = makeTextView("Text\n![](attachments/image.png)")
+        window.makeKeyAndOrderFront(nil)
+        let before = textView.fittingHeight(forWidth: 400)
+        textView.noteURL = root.appending(path: "2026-10-15.md")
+        textView.refreshInlineImages()
+        #expect(textView.fittingHeight(forWidth: 400) > before)
+    }
+
     private func clickImage(in textView: MarkdownTextView, window: NSWindow) -> Bool {
         window.makeKeyAndOrderFront(nil)
         textView.refreshInlineImages()
