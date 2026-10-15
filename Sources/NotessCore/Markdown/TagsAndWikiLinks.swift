@@ -6,7 +6,9 @@ import Foundation
 /// and a Tag needs at least one letter (`#2026` is not a Tag). Tags are not
 /// hierarchical, compare case-insensitively (`normalizedName`) and are ignored
 /// inside inline code, code blocks, URLs, link targets and wiki-links. A heading (`# Title`)
-/// is not a Tag because of the space after the hash.
+/// is not a Tag because of the space after the hash, but a Tag written in a
+/// heading of any level is one (`## Porada #acme`); which Section it marks is
+/// decided by `SearchSection.split`, the single place that assigns Tags to Sections.
 public struct Tag: Hashable, Sendable {
     /// The name as written, without the leading `#`.
     public let name: String

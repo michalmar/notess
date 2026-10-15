@@ -27,6 +27,16 @@ struct MarkdownSyntaxTests {
         #expect(spans("- položka\n---", .heading(level: 2)).isEmpty)
     }
 
+    @Test("a Tag inside a heading of any level is a Tag token within the heading line")
+    func tagsInHeadings() {
+        #expect(spans("# Den #ranní", .tag) == ["#ranní"])
+        #expect(spans("## Porada #acme #Projekt-X ##", .tag) == ["#acme", "#Projekt-X"])
+        #expect(spans("###### H6 #acme", .tag) == ["#acme"])
+        #expect(spans("Setext #acme\n---", .tag) == ["#acme"])
+        #expect(spans("## Porada #acme", .heading(level: 2)) == ["## Porada #acme"])
+        #expect(spans("## # #1 `#kod` C#", .tag).isEmpty)
+    }
+
     @Test("bold, italic and strikethrough with muted markers")
     func emphasis() {
         let text = "**tučně** *kurzíva* _také_ __tučně__ ~~škrt~~ ***obojí***"

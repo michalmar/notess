@@ -68,6 +68,17 @@ struct MarkdownLexerIncrementalTests {
         #expect(mirror.tokens.filter { $0.kind == .tag }.count == 2)
     }
 
+    @Test("adding and removing a Tag in a heading converges with a full lex")
+    func headingTag() {
+        var mirror = Mirror("# Den\n\n## Porada\ntext\n")
+        mirror.replace(NSRange(location: 16, length: 0), with: " #acme")
+        mirror.expectMatchesFullLex()
+        #expect(mirror.tokens.filter { $0.kind == .tag }.count == 1)
+        mirror.replace(NSRange(location: 16, length: 6), with: "")
+        mirror.expectMatchesFullLex()
+        #expect(mirror.tokens.allSatisfy { $0.kind != .tag })
+    }
+
     @Test("editing a table delimiter row restyles the header above")
     func tableHeader() {
         var mirror = Mirror("| a | b |\n| - | x |\n| c | d |")

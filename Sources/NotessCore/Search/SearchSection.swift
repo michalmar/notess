@@ -18,7 +18,10 @@ public struct SearchSection: Hashable, Sendable {
     public let range: NSRange
     /// The segment's text without its heading line, trimmed.
     public let body: String
-    /// Normalised names (`Tag.normalize`) of the Tags written in the segment.
+    /// Normalised names (`Tag.normalize`) of the Tags written in the segment,
+    /// headings included, each once. A Tag in a deeper heading belongs to the
+    /// enclosing segment; a Tag in the introductory segment stays in it and is
+    /// never inherited by later segments.
     public let tags: Set<String>
 
     /// Splits a note at every second-level heading. Everything before the first
