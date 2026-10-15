@@ -9,11 +9,23 @@ public final class MarkdownTextView: NSTextView {
     let highlighter = MarkdownHighlighter()
     public var onPasteImage: ((Data, String) -> String?)?
     public var inlineImageData: ((String) -> Data?)?
+    public var onOpenImagePreview: ((ImagePreviewContent) -> Void)?
+    public var onImageLoadFailure: ((String) -> Void)?
     public var noteURL: URL? {
         didSet {
             guard oldValue != noteURL else { return }
             imageCache.removeAll()
+            reportedImageFailures.removeAll()
             scheduleInlineImageRefresh()
+        }
+    }
+
+    @MainActor
+    private final class InlineImageView: NSImageView {
+        var onClick: (() -> Void)?
+
+        override func mouseDown(with event: NSEvent) {
+            onClick?()
         }
     }
 
@@ -23,7 +35,7 @@ public final class MarkdownTextView: NSTextView {
         var range: NSRange
         var paragraphRange: NSRange
         let image: NSImage
-        let imageView = NSImageView()
+        let imageView = InlineImageView()
 
         init(source: String, range: NSRange, paragraphRange: NSRange, image: NSImage) {
             self.source = source
@@ -35,6 +47,7 @@ public final class MarkdownTextView: NSTextView {
 
     private var inlineImagePreviews: [InlineImagePreview] = []
     private var imageCache: [String: NSImage] = [:]
+    private var reportedImageFailures: Set<String> = []
 
     var displayedInlineImageCount: Int { inlineImagePreviews.count }
 
@@ -112,6 +125,10 @@ public final class MarkdownTextView: NSTextView {
         let modifiers = event.modifierFlags.intersection([.shift, .command, .option, .control])
         if event.clickCount == 1, modifiers.isEmpty,
            toggleTask(atPoint: convert(event.locationInWindow, from: nil)) {
+            return
+        }
+        if event.clickCount == 1, modifiers.isEmpty,
+           openInlineImage(atPoint: convert(event.locationInWindow, from: nil)) {
             return
         }
         if event.clickCount == 1, modifiers.isEmpty || modifiers == .command,
@@ -344,6 +361,12 @@ public final class MarkdownTextView: NSTextView {
             preview.imageView.image = image
             preview.imageView.imageScaling = .scaleProportionallyUpOrDown
             preview.imageView.isEditable = false
+            preview.imageView.onClick = { [weak self, weak preview] in
+                guard let self, let preview else { return }
+                self.onOpenImagePreview?(
+                    ImagePreviewContent(source: preview.source, image: preview.image)
+                )
+            }
             self.addSubview(preview.imageView)
             self.inlineImagePreviews.append(preview)
         }
@@ -396,7 +419,10 @@ public final class MarkdownTextView: NSTextView {
         }
         let unescaped = unescapeMarkdownPath(source)
         let decoded = unescaped.removingPercentEncoding ?? unescaped
-        guard isSafeRelativePath(decoded) else { return nil }
+        guard isSafeRelativePath(decoded) else {
+            reportImageLoadFailure(source: source)
+            return nil
+        }
         let image: NSImage?
         if let data = inlineImageData?(source) {
             image = NSImage(data: data)
@@ -408,8 +434,35 @@ public final class MarkdownTextView: NSTextView {
         }
         if let image {
             imageCache[source] = image
+            reportedImageFailures.remove(source)
+        } else {
+            reportImageLoadFailure(source: source)
         }
         return image
+    }
+
+    private func reportImageLoadFailure(source: String) {
+        guard reportedImageFailures.insert(source).inserted else { return }
+        onImageLoadFailure?("Obrázek „\(source)“ se nepodařilo načíst.")
+    }
+
+    /// Opens the inline image whose Markdown contains `index`.
+    @discardableResult
+    func openInlineImage(at index: Int) -> Bool {
+        guard let preview = inlineImagePreviews.first(where: {
+            NSLocationInRange(index, $0.range)
+                || index == $0.range.upperBound
+        }) else { return false }
+        onOpenImagePreview?(ImagePreviewContent(source: preview.source, image: preview.image))
+        return true
+    }
+
+    private func openInlineImage(atPoint point: NSPoint) -> Bool {
+        guard let preview = inlineImagePreviews.first(where: {
+            $0.imageView.frame.contains(point)
+        }) else { return false }
+        onOpenImagePreview?(ImagePreviewContent(source: preview.source, image: preview.image))
+        return true
     }
 
     private func isSafeRelativePath(_ path: String) -> Bool {

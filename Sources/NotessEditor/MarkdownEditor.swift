@@ -84,6 +84,8 @@ public struct MarkdownEditor: NSViewRepresentable {
     private let onPasteImage: ((Data, String) -> String?)?
     private let onPasteImageFailure: ((Error) -> Void)?
     private let inlineImageData: ((String) -> Data?)?
+    private let onOpenImagePreview: ((ImagePreviewContent) -> Void)?
+    private let onImageLoadFailure: ((String) -> Void)?
 
     /// - Parameters:
     ///   - fontName: The body font's PostScript name, or `"System"`.
@@ -101,6 +103,8 @@ public struct MarkdownEditor: NSViewRepresentable {
         onPasteImage: ((Data, String) -> String?)? = nil,
         onPasteImageFailure: ((Error) -> Void)? = nil,
         inlineImageData: ((String) -> Data?)? = nil,
+        onOpenImagePreview: ((ImagePreviewContent) -> Void)? = nil,
+        onImageLoadFailure: ((String) -> Void)? = nil,
         onTextChange: @escaping (String) -> Void
     ) {
         self.documentID = documentID
@@ -113,6 +117,8 @@ public struct MarkdownEditor: NSViewRepresentable {
         self.onPasteImage = onPasteImage
         self.onPasteImageFailure = onPasteImageFailure
         self.inlineImageData = inlineImageData
+        self.onOpenImagePreview = onOpenImagePreview
+        self.onImageLoadFailure = onImageLoadFailure
         self.onTextChange = onTextChange
     }
 
@@ -177,6 +183,8 @@ public struct MarkdownEditor: NSViewRepresentable {
         textView.onPasteImage = onPasteImage
         textView.onPasteImageFailure = onPasteImageFailure
         textView.inlineImageData = inlineImageData
+        textView.onOpenImagePreview = onOpenImagePreview
+        textView.onImageLoadFailure = onImageLoadFailure
         textView.noteURL = noteURL
     }
 

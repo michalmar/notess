@@ -248,6 +248,79 @@ struct MarkdownTextViewStylingTests {
         #expect(style.paragraphSpacing > 0)
     }
 
+    @Test("clicking a staged inline image opens the shared preview without changing the note")
+    func clickStagedInlineImage() throws {
+        let markdown = "before\n![](attachments/image.png)\nafter"
+        let harness = Harness(markdown)
+        let png = try #require(testPNG())
+        harness.textView.noteURL = URL(filePath: "/Vault/Notes/Idea.md")
+        harness.textView.inlineImageData = { _ in png }
+        var opened: ImagePreviewContent?
+        harness.textView.onOpenImagePreview = { opened = $0 }
+        var changes = 0
+        let observer = NotificationCenter.default.addObserver(
+            forName: NSText.didChangeNotification, object: harness.textView, queue: nil
+        ) { _ in MainActor.assumeIsolated { changes += 1 } }
+        defer { NotificationCenter.default.removeObserver(observer) }
+        harness.textView.refreshInlineImages()
+
+        #expect(harness.textView.openInlineImage(at: 10))
+        #expect(opened?.source == "attachments/image.png")
+        #expect(opened?.image.size.width == 2)
+        #expect(opened?.image.size.height == 1)
+        #expect(harness.textView.string == markdown)
+        #expect(changes == 0)
+    }
+
+    @Test("clicking a persisted inline image opens the same shared preview")
+    func clickPersistedInlineImage() throws {
+        let markdown = "![](attachments/image.png)"
+        let harness = Harness(markdown)
+        let directory = FileManager.default.temporaryDirectory
+            .appending(path: UUID().uuidString, directoryHint: .isDirectory)
+        let attachmentDirectory = directory.appending(path: "attachments", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: attachmentDirectory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try #require(testPNG()).write(to: attachmentDirectory.appending(path: "image.png"))
+        harness.textView.noteURL = directory.appending(path: "Idea.md")
+        var opened: ImagePreviewContent?
+        harness.textView.onOpenImagePreview = { opened = $0 }
+        harness.textView.refreshInlineImages()
+
+        #expect(harness.textView.openInlineImage(at: 3))
+        #expect(opened?.source == "attachments/image.png")
+        #expect(harness.textView.string == markdown)
+    }
+
+    @Test("read-only notes use the same inline image preview interaction")
+    func clickReadOnlyInlineImage() throws {
+        let harness = Harness("![](attachments/image.png)")
+        let png = try #require(testPNG())
+        harness.textView.isEditable = false
+        harness.textView.noteURL = URL(filePath: "/Vault/_brain/Entity.md")
+        harness.textView.inlineImageData = { _ in png }
+        var opened: ImagePreviewContent?
+        harness.textView.onOpenImagePreview = { opened = $0 }
+        harness.textView.refreshInlineImages()
+
+        #expect(harness.textView.openInlineImage(at: 3))
+        #expect(opened?.source == "attachments/image.png")
+        #expect(harness.textView.isEditable == false)
+    }
+
+    @Test("an unreadable inline image reports a visible loading failure")
+    func inlineImageFailure() {
+        let harness = Harness("![](attachments/missing.png)")
+        harness.textView.noteURL = URL(filePath: "/Vault/Notes/Idea.md")
+        var failures: [String] = []
+        harness.textView.onImageLoadFailure = { failures.append($0) }
+
+        harness.textView.refreshInlineImages()
+
+        #expect(failures == ["Obrázek „attachments/missing.png“ se nepodařilo načíst."])
+        #expect(harness.textView.displayedInlineImageCount == 0)
+    }
+
     @Test("dot, parent, and escaped relative image paths render")
     func relativeImagePaths() throws {
         let markdown = """
