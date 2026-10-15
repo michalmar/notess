@@ -82,7 +82,7 @@ public final class TagTimelineBrowser {
         do { return .success(try await query()) } catch { return .failure(error) }
     }
 
-    private static func state<Value>(of outcome: Result<Value, Error>) -> LoadState<Value> {
+    private static func state<Value: Equatable & Sendable>(of outcome: Result<Value, Error>) -> LoadState<Value> {
         switch outcome {
         case .success(let value): .loaded(value)
         case .failure(let error): .failed(error.localizedDescription)
