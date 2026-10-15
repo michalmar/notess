@@ -49,6 +49,7 @@ extension AppModel {
         searchIndexTask?.cancel()
         let index = SearchIndex(vault: vault, databaseURL: SearchIndex.defaultDatabaseURL(for: vault))
         searchIndex = index
+        searchIndexFailure = nil
         tagTimeline.connect(index)
         refreshTagTimeline()
         runIndexing(index, errorPrefix: "Index hledání se nepodařilo aktualizovat") {
@@ -68,7 +69,7 @@ extension AppModel {
     func updateSearchIndex(for change: VaultChange) {
         guard let index = searchIndex else { return }
         if change.requiresFullRescan {
-            updateSearchIndex(index) { try await index.synchronize() }
+            updateSearchIndex(index, catchesUp: true) { try await index.synchronize() }
         } else {
             let paths = change.relativePaths
             updateSearchIndex(index) { try await index.update(relativePaths: paths) }
@@ -85,10 +86,16 @@ extension AppModel {
     /// fail to start); unchanged files are skipped by their stamps.
     func synchronizeSearchIndex() {
         guard let index = searchIndex, !isIndexing else { return }
-        updateSearchIndex(index) { try await index.synchronize() }
+        updateSearchIndex(index, catchesUp: true) { try await index.synchronize() }
     }
 
-    private func updateSearchIndex(_ index: SearchIndex, _ work: @escaping @Sendable () async throws -> Void) {
+    /// `catchesUp`: the work brings the whole index in line with the Vault, so
+    /// its success clears an earlier failure.
+    private func updateSearchIndex(
+        _ index: SearchIndex,
+        catchesUp: Bool = false,
+        _ work: @escaping @Sendable () async throws -> Void
+    ) {
         Task { [weak self] in
             let failure: Error?
             do {
@@ -100,10 +107,14 @@ extension AppModel {
                 failure = error
             }
             guard let self, self.searchIndex === index else { return }
-            self.searchIndexRevision += 1
             if let failure {
-                self.errorMessage = "Index hledání se nepodařilo aktualizovat: \(failure.localizedDescription)"
+                let message = "Index hledání se nepodařilo aktualizovat: \(failure.localizedDescription)"
+                self.searchIndexFailure = message
+                self.errorMessage = message
+            } else if catchesUp {
+                self.searchIndexFailure = nil
             }
+            self.searchIndexRevision += 1
         }
     }
 
@@ -125,10 +136,14 @@ extension AppModel {
             }
             guard let self, self.searchIndex === index else { return }
             self.isIndexing = false
-            self.searchIndexRevision += 1
             if let failure {
-                self.errorMessage = "\(errorPrefix): \(failure.localizedDescription)"
+                let message = "\(errorPrefix): \(failure.localizedDescription)"
+                self.searchIndexFailure = message
+                self.errorMessage = message
+            } else {
+                self.searchIndexFailure = nil
             }
+            self.searchIndexRevision += 1
         }
     }
 }

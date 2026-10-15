@@ -29,6 +29,7 @@ struct SidebarView: View {
                 TagList(
                     browser: model.tagTimeline,
                     isIndexing: model.isIndexing,
+                    indexFailure: model.searchIndexFailure,
                     select: model.selectTimelineTag
                 )
             }

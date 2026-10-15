@@ -6,12 +6,13 @@ import SwiftUI
 struct TagList: View {
     let browser: TagTimelineBrowser
     let isIndexing: Bool
+    let indexFailure: String?
     let select: (String?) -> Void
 
     var body: some View {
         switch browser.tags {
         case .loading:
-            ProgressView(isIndexing ? "Indexuji poznámky…" : "Načítám Tagy…")
+            ProgressView(isIndexing ? indexingLabel : "Načítám Tagy…")
                 .controlSize(.small)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         case .failed(let message):
@@ -21,17 +22,12 @@ struct TagList: View {
                 description: Text(message)
             )
         case .loaded(let tags) where tags.isEmpty:
-            if isIndexing {
-                ProgressView("Indexuji poznámky…")
-                    .controlSize(.small)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else {
-                ContentUnavailableView(
-                    "Žádné Tagy",
-                    systemImage: "number",
-                    description: Text("Uložené záznamy v Journalu zatím nemají žádný Tag.")
-                )
-            }
+            EmptyIndexedContent(
+                isIndexing: isIndexing,
+                indexFailure: indexFailure,
+                title: "Žádné Tagy",
+                description: "Uložené záznamy v Journalu zatím nemají žádný Tag."
+            )
         case .loaded(let tags):
             List(selection: Binding(
                 get: { browser.selectedTag },
@@ -44,11 +40,7 @@ struct TagList: View {
             }
             .listStyle(.sidebar)
             .safeAreaInset(edge: .bottom) {
-                if isIndexing {
-                    ProgressView("Indexuji poznámky…")
-                        .controlSize(.small)
-                        .padding(8)
-                }
+                IndexStatusFooter(isIndexing: isIndexing, indexFailure: indexFailure)
             }
         }
     }
@@ -59,6 +51,7 @@ struct TagTimelineView: View {
     let browser: TagTimelineBrowser
     @Bindable var settings: AppSettings
     let isIndexing: Bool
+    let indexFailure: String?
     let open: (TagTimelineSection) -> Void
 
     var body: some View {
@@ -81,17 +74,17 @@ struct TagTimelineView: View {
                     description: Text(message)
                 )
             case .loaded(let days) where days.isEmpty:
-                if isIndexing {
-                    ProgressView("Indexuji poznámky…")
-                } else {
-                    ContentUnavailableView(
-                        "Žádné uložené Sekce",
-                        systemImage: "number",
-                        description: Text("Žádná uložená Sekce v Journalu nemá Tag #\(tag).")
-                    )
-                }
+                EmptyIndexedContent(
+                    isIndexing: isIndexing,
+                    indexFailure: indexFailure,
+                    title: "Žádné uložené Sekce",
+                    description: "Žádná uložená Sekce v Journalu nemá Tag #\(tag)."
+                )
             case .loaded(let days):
                 timelineList(days)
+                    .safeAreaInset(edge: .bottom) {
+                        IndexStatusFooter(isIndexing: isIndexing, indexFailure: indexFailure)
+                    }
             }
         } else {
             ContentUnavailableView(
@@ -119,6 +112,58 @@ struct TagTimelineView: View {
             .padding(24)
             .frame(maxWidth: 820, alignment: .leading)
             .frame(maxWidth: .infinity)
+        }
+    }
+}
+
+private let indexingLabel = "Indexuji poznámky…"
+
+/// Stands in for an empty Tag list or timeline, which may be empty only
+/// because indexing is still running or has failed.
+private struct EmptyIndexedContent: View {
+    let isIndexing: Bool
+    let indexFailure: String?
+    let title: String
+    let description: String
+
+    var body: some View {
+        if isIndexing {
+            ProgressView(indexingLabel)
+                .controlSize(.small)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else if let indexFailure {
+            ContentUnavailableView(
+                "Index hledání není úplný",
+                systemImage: "exclamationmark.triangle",
+                description: Text(indexFailure)
+            )
+        } else {
+            ContentUnavailableView(title, systemImage: "number", description: Text(description))
+        }
+    }
+}
+
+/// Under a non-empty Tag list or timeline, which may be incomplete while
+/// indexing runs or after it failed.
+private struct IndexStatusFooter: View {
+    let isIndexing: Bool
+    let indexFailure: String?
+
+    var body: some View {
+        if isIndexing {
+            ProgressView(indexingLabel)
+                .controlSize(.small)
+                .padding(8)
+                .frame(maxWidth: .infinity)
+                .background(.bar)
+        } else if let indexFailure {
+            Label("Index hledání není úplný", systemImage: "exclamationmark.triangle")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .help(indexFailure)
+                .padding(8)
+                .frame(maxWidth: .infinity)
+                .background(.bar)
         }
     }
 }

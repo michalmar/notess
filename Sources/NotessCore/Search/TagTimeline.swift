@@ -10,7 +10,7 @@ public struct TagTimelineSection: Hashable, Sendable, Identifiable {
     /// The Section heading (`SearchSection.title`), used with `ordinal` to
     /// find the Section again in the note's current text (`SearchSection.locate`).
     public let title: String?
-    /// The whole Section as saved, heading, deeper headings and images included.
+    /// The whole Section as saved, heading, deeper headings and image Markdown included.
     public let markdown: String
 
     public var id: String { "\(relativePath)#\(ordinal)" }

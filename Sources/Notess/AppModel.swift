@@ -22,6 +22,8 @@ final class AppModel {
     var isSearchPresented = false
     /// The search index is catching up with the Vault or being rebuilt.
     var isIndexing = false
+    /// Why the search index may be missing saved notes, until a full catch-up succeeds.
+    var searchIndexFailure: String?
     /// Bumped whenever the search index has changed, so open results refresh.
     var searchIndexRevision = 0 {
         didSet { refreshTagTimeline() }
@@ -114,9 +116,8 @@ final class AppModel {
                 on: Day(date: now())
             )
             tabSession.open(document)
-            persistTabs()
+            showOpenedTab()
             backlinks = []
-            sidebarMode = .journal
         } catch {
             errorMessage = "Poznámku se nepodařilo vytvořit: \(error.localizedDescription)"
         }
@@ -124,13 +125,11 @@ final class AppModel {
 
     func openDailyEntry(_ entry: DailyEntry) {
         guard let vault else { return }
-        if openNote(
+        openNote(
             at: vault.url(for: entry),
             newFileContent: entry.initialContent,
             errorPrefix: "Záznam se nepodařilo otevřít"
-        ) != nil {
-            sidebarMode = .journal
-        }
+        )
         refreshVisibleBacklinks()
     }
 
@@ -142,9 +141,6 @@ final class AppModel {
             newFileContent: newFileContent,
             errorPrefix: "Poznámku se nepodařilo otevřít"
         )
-        if document != nil {
-            sidebarMode = .journal
-        }
         refreshVisibleBacklinks()
         return document
     }
@@ -159,8 +155,7 @@ final class AppModel {
         guard let vault else { return nil }
         do {
             let document = tabSession.open(try vault.openNote(relativePath: relativePath))
-            persistTabs()
-            sidebarMode = .journal
+            showOpenedTab()
             refreshVisibleBacklinks()
             return document
         } catch {
@@ -312,12 +307,18 @@ final class AppModel {
                 newFileContent: newFileContent,
                 isReadOnly: isBrainNote(fileURL)
             )
-            persistTabs()
+            showOpenedTab()
             return document
         } catch {
             errorMessage = "\(errorPrefix): \(error.localizedDescription)"
             return nil
         }
+    }
+
+    /// Every note opened in a tab is shown in the editor, so Tags mode gives way to Journal.
+    private func showOpenedTab() {
+        persistTabs()
+        sidebarMode = .journal
     }
 
     private func restoreTabs(from state: TabRestorationState, in vault: Vault) {

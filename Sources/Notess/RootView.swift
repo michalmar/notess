@@ -22,6 +22,7 @@ struct RootView: View {
                             browser: model.tagTimeline,
                             settings: model.settings,
                             isIndexing: model.isIndexing,
+                            indexFailure: model.searchIndexFailure,
                             open: model.openTimelineSection
                         )
                     }
