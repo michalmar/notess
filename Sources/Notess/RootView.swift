@@ -1,5 +1,6 @@
 import AppKit
 import NotessCore
+import NotessEditor
 import SwiftUI
 
 struct RootView: View {
@@ -38,7 +39,12 @@ struct RootView: View {
                                 onOpenBacklink: { model.openBacklink($0) },
                                 onPasteImageFailure: { error in
                                     model.errorMessage = "Obrázek se nepodařilo vložit: \(error.localizedDescription)"
-                                }
+                                },
+                                onOpenImagePreview: model.presentImagePreview,
+                                onImageLoadFailure: {
+                                    model.errorMessage = $0
+                                },
+                                isImagePreviewPresented: model.imagePreview.content != nil
                             )
                         } else {
                             ContentUnavailableView(
@@ -82,6 +88,14 @@ struct RootView: View {
                     open: model.openSearchResult,
                     dismiss: { model.isSearchPresented = false }
                 )
+            }
+
+            if let content = model.imagePreview.content {
+                ImagePreviewOverlay(
+                    content: content,
+                    onDismiss: model.imagePreview.dismiss
+                )
+                .zIndex(10)
             }
         }
         .alert(

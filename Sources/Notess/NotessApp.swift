@@ -42,6 +42,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             guard modifiers == .command,
                   event.charactersIgnoringModifiers?.lowercased() == "w",
                   NSApp.modalWindow == nil,
+                  self?.model.imagePreview.content == nil,
                   self?.model.document != nil else { return event }
             self?.closeActiveTab()
             return nil

@@ -76,6 +76,7 @@ public struct MarkdownEditor: NSViewRepresentable {
     private let documentID: AnyHashable
     private let style: MarkdownEditorStyle
     private let isEditable: Bool
+    private let isInteractionEnabled: Bool
     private let initialText: () -> String
     private let reveal: EditorReveal?
     private let onOpenWikiLink: ((WikiLink) -> Void)?
@@ -84,6 +85,8 @@ public struct MarkdownEditor: NSViewRepresentable {
     private let onPasteImage: ((Data, String) -> String?)?
     private let onPasteImageFailure: ((Error) -> Void)?
     private let inlineImageData: ((String) -> Data?)?
+    private let onOpenImagePreview: ((ImagePreviewContent) -> Void)?
+    private let onImageLoadFailure: ((String) -> Void)?
 
     /// - Parameters:
     ///   - fontName: The body font's PostScript name, or `"System"`.
@@ -97,15 +100,19 @@ public struct MarkdownEditor: NSViewRepresentable {
         reveal: EditorReveal? = nil,
         onOpenWikiLink: ((WikiLink) -> Void)? = nil,
         isEditable: Bool = true,
+        isInteractionEnabled: Bool = true,
         noteURL: URL? = nil,
         onPasteImage: ((Data, String) -> String?)? = nil,
         onPasteImageFailure: ((Error) -> Void)? = nil,
         inlineImageData: ((String) -> Data?)? = nil,
+        onOpenImagePreview: ((ImagePreviewContent) -> Void)? = nil,
+        onImageLoadFailure: ((String) -> Void)? = nil,
         onTextChange: @escaping (String) -> Void
     ) {
         self.documentID = documentID
         self.style = MarkdownEditorStyle(fontName: fontName, fontSize: fontSize, colors: colors)
         self.isEditable = isEditable
+        self.isInteractionEnabled = isInteractionEnabled
         self.initialText = initialText
         self.reveal = reveal
         self.onOpenWikiLink = onOpenWikiLink
@@ -113,6 +120,8 @@ public struct MarkdownEditor: NSViewRepresentable {
         self.onPasteImage = onPasteImage
         self.onPasteImageFailure = onPasteImageFailure
         self.inlineImageData = inlineImageData
+        self.onOpenImagePreview = onOpenImagePreview
+        self.onImageLoadFailure = onImageLoadFailure
         self.onTextChange = onTextChange
     }
 
@@ -127,7 +136,7 @@ public struct MarkdownEditor: NSViewRepresentable {
         configureImages(in: textView)
         context.coordinator.onTextChange = onTextChange
         textView.onWikiLinkClick = onOpenWikiLink
-        textView.isEditable = isEditable
+        configureInteraction(in: textView, coordinator: context.coordinator)
         load(into: textView, coordinator: context.coordinator)
         applyReveal(to: textView, coordinator: context.coordinator)
         return scrollView
@@ -141,7 +150,7 @@ public struct MarkdownEditor: NSViewRepresentable {
         if textView.markdownStyle != style {
             textView.markdownStyle = style
         }
-        textView.isEditable = isEditable
+        configureInteraction(in: textView, coordinator: context.coordinator)
         if context.coordinator.documentID != documentID {
             load(into: textView, coordinator: context.coordinator)
         }
@@ -166,7 +175,7 @@ public struct MarkdownEditor: NSViewRepresentable {
         textView.undoManager?.removeAllActions()
         textView.setSelectedRange(NSRange(location: (textView.string as NSString).length, length: 0))
         textView.scheduleInlineImageRefresh()
-        guard isEditable else { return }
+        guard isEditable && isInteractionEnabled else { return }
         DispatchQueue.main.async {
             textView.window?.makeFirstResponder(textView)
             textView.scrollRangeToVisible(textView.selectedRange())
@@ -177,13 +186,27 @@ public struct MarkdownEditor: NSViewRepresentable {
         textView.onPasteImage = onPasteImage
         textView.onPasteImageFailure = onPasteImageFailure
         textView.inlineImageData = inlineImageData
+        textView.onOpenImagePreview = onOpenImagePreview
+        textView.onImageLoadFailure = onImageLoadFailure
         textView.noteURL = noteURL
+    }
+
+    private func configureInteraction(in textView: MarkdownTextView, coordinator: Coordinator) {
+        let wasInteractionEnabled = coordinator.isInteractionEnabled
+        coordinator.isInteractionEnabled = isInteractionEnabled
+        textView.isEditable = isEditable && isInteractionEnabled
+        textView.isSelectable = isInteractionEnabled
+        guard isInteractionEnabled, wasInteractionEnabled == false else { return }
+        DispatchQueue.main.async {
+            textView.window?.makeFirstResponder(textView)
+        }
     }
 
     @MainActor
     public final class Coordinator: NSObject, NSTextViewDelegate {
         var documentID: AnyHashable?
         var lastRevealID: UUID?
+        var isInteractionEnabled: Bool?
         var onTextChange: (String) -> Void = { _ in }
 
         public func textDidChange(_ notification: Notification) {

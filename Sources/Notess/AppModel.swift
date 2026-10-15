@@ -21,6 +21,7 @@ final class AppModel {
     var errorMessage: String?
     /// Section to scroll the editor to after following a wiki-link.
     var reveal: EditorReveal?
+    let imagePreview = ImagePreviewPresentation()
     private(set) var backlinks: [Backlink] = []
     let settings: AppSettings
     /// Where the Brain Run stands, shown in the toolbar.
@@ -69,6 +70,10 @@ final class AppModel {
 
     var hasUnsavedChanges: Bool {
         tabSession.hasUnsavedChanges
+    }
+
+    func presentImagePreview(_ content: ImagePreviewContent) {
+        imagePreview.present(content)
     }
 
     func chooseVault(at url: URL) {

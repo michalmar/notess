@@ -41,6 +41,50 @@ struct MarkdownTextViewStylingTests {
             textView.setSelectedRange(NSRange(location: location, length: 0))
             textView.insertText(text, replacementRange: textView.selectedRange())
         }
+
+        @discardableResult
+        func clickInlineImage() -> Bool {
+            window.makeKeyAndOrderFront(nil)
+            window.contentView?.layoutSubtreeIfNeeded()
+            RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.05))
+            guard let imageView = textView.subviews.compactMap({ $0 as? NSImageView }).first else {
+                return false
+            }
+            let point = textView.convert(
+                NSPoint(x: imageView.frame.midX, y: imageView.frame.midY),
+                to: nil
+            )
+            guard let mouseDown = NSEvent.mouseEvent(
+                with: .leftMouseDown,
+                location: point,
+                modifierFlags: [],
+                timestamp: 0,
+                windowNumber: window.windowNumber,
+                context: nil,
+                eventNumber: 1,
+                clickCount: 1,
+                pressure: 1
+            ), let mouseUp = NSEvent.mouseEvent(
+                with: .leftMouseUp,
+                location: point,
+                modifierFlags: [],
+                timestamp: 0,
+                windowNumber: window.windowNumber,
+                context: nil,
+                eventNumber: 1,
+                clickCount: 1,
+                pressure: 0
+            ) else {
+                return false
+            }
+            let contentPoint = window.contentView?.convert(point, from: nil) ?? .zero
+            guard let hitView = window.contentView?.hitTest(contentPoint) else {
+                return false
+            }
+            hitView.mouseDown(with: mouseDown)
+            hitView.mouseUp(with: mouseUp)
+            return true
+        }
     }
 
     private let style = MarkdownEditorStyle.standard
@@ -246,6 +290,99 @@ struct MarkdownTextViewStylingTests {
             ) as? NSParagraphStyle
         )
         #expect(style.paragraphSpacing > 0)
+    }
+
+    @Test("clicking a staged inline image opens the shared preview without changing the note")
+    func clickStagedInlineImage() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appending(path: UUID().uuidString, directoryHint: .isDirectory)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let noteURL = directory.appending(path: "Idea.md")
+        let document = try NoteDocument.open(fileURL: noteURL, newFileContent: "before\nafter")
+        let attachment = document.stageAttachment(
+            data: try #require(testPNG()),
+            fileExtension: "png"
+        )
+        let markdown = "before\n\(attachment.markdown)\nafter"
+        document.text = markdown
+        let harness = Harness(markdown)
+        harness.textView.noteURL = noteURL
+        harness.textView.inlineImageData = {
+            document.stagedAttachmentData(relativePath: $0)
+        }
+        var opened: ImagePreviewContent?
+        harness.textView.onOpenImagePreview = { opened = $0 }
+        var changes = 0
+        let observer = NotificationCenter.default.addObserver(
+            forName: NSText.didChangeNotification, object: harness.textView, queue: nil
+        ) { _ in MainActor.assumeIsolated { changes += 1 } }
+        defer { NotificationCenter.default.removeObserver(observer) }
+        harness.textView.refreshInlineImages()
+        let wasUnsaved = document.hasUnsavedChanges
+
+        #expect(harness.clickInlineImage())
+        #expect(opened?.source == attachment.relativePath)
+        #expect(opened?.image.size.width == 2)
+        #expect(opened?.image.size.height == 1)
+        #expect(harness.textView.string == markdown)
+        #expect(changes == 0)
+        #expect(document.hasUnsavedChanges == wasUnsaved)
+        #expect(FileManager.default.fileExists(atPath: attachment.fileURL.path) == false)
+    }
+
+    @Test("clicking a persisted inline image opens the same shared preview")
+    func clickPersistedInlineImage() throws {
+        let markdown = "![](attachments/image.png)"
+        let harness = Harness(markdown)
+        let directory = FileManager.default.temporaryDirectory
+            .appending(path: UUID().uuidString, directoryHint: .isDirectory)
+        let attachmentDirectory = directory.appending(path: "attachments", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: attachmentDirectory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try #require(testPNG()).write(to: attachmentDirectory.appending(path: "image.png"))
+        let noteURL = directory.appending(path: "Idea.md")
+        try markdown.write(to: noteURL, atomically: true, encoding: .utf8)
+        let document = try NoteDocument.open(fileURL: noteURL, newFileContent: "")
+        let diskBefore = try Data(contentsOf: noteURL)
+        harness.textView.noteURL = noteURL
+        var opened: ImagePreviewContent?
+        harness.textView.onOpenImagePreview = { opened = $0 }
+        harness.textView.refreshInlineImages()
+
+        #expect(harness.clickInlineImage())
+        #expect(opened?.source == "attachments/image.png")
+        #expect(harness.textView.string == markdown)
+        #expect(document.hasUnsavedChanges == false)
+        #expect(try Data(contentsOf: noteURL) == diskBefore)
+    }
+
+    @Test("read-only notes use the same inline image preview interaction")
+    func clickReadOnlyInlineImage() throws {
+        let harness = Harness("![](attachments/image.png)")
+        let png = try #require(testPNG())
+        harness.textView.isEditable = false
+        harness.textView.noteURL = URL(filePath: "/Vault/_brain/Entity.md")
+        harness.textView.inlineImageData = { _ in png }
+        var opened: ImagePreviewContent?
+        harness.textView.onOpenImagePreview = { opened = $0 }
+        harness.textView.refreshInlineImages()
+
+        #expect(harness.clickInlineImage())
+        #expect(opened?.source == "attachments/image.png")
+        #expect(harness.textView.isEditable == false)
+    }
+
+    @Test("an unreadable inline image reports a visible loading failure")
+    func inlineImageFailure() {
+        let harness = Harness("![](attachments/missing.png)")
+        harness.textView.noteURL = URL(filePath: "/Vault/Notes/Idea.md")
+        var failures: [String] = []
+        harness.textView.onImageLoadFailure = { failures.append($0) }
+
+        harness.textView.refreshInlineImages()
+
+        #expect(failures == ["Obrázek „attachments/missing.png“ se nepodařilo načíst."])
+        #expect(harness.textView.displayedInlineImageCount == 0)
     }
 
     @Test("dot, parent, and escaped relative image paths render")
