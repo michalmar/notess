@@ -34,7 +34,7 @@ struct NoteCommands: Commands {
                 .disabled(model.vault == nil || model.isIndexing || isPreviewPresented)
             Button("Zavřít tab", action: onCloseActiveTab)
                 .keyboardShortcut("w", modifiers: .command)
-                .disabled(model.document == nil || isPreviewPresented)
+                .disabled(model.document == nil || model.sidebarMode == .tags || isPreviewPresented)
         }
     }
 }

@@ -13,10 +13,34 @@ extension AppModel {
     /// Opens the note of a search result in a tab and scrolls to its Section.
     func openSearchResult(_ result: SearchResult) {
         isSearchPresented = false
-        guard let document = openExistingNote(relativePath: result.relativePath) else { return }
-        let section = SearchSection.locate(title: result.title, ordinal: result.ordinal, in: document.text)
+        openSection(relativePath: result.relativePath, title: result.title, ordinal: result.ordinal)
+    }
+
+    /// Opens the Daily Entry of a Tag Timeline Section for editing and scrolls to the Section.
+    func openTimelineSection(_ section: TagTimelineSection) {
+        openSection(relativePath: section.relativePath, title: section.title, ordinal: section.ordinal)
+    }
+
+    /// Opens a note in Journal mode, reusing its tab (and any unsaved text), and
+    /// reveals the Section as found in the tab's current text.
+    private func openSection(relativePath: String, title: String?, ordinal: Int) {
+        guard let document = openExistingNote(relativePath: relativePath) else { return }
+        let section = SearchSection.locate(title: title, ordinal: ordinal, in: document.text)
         let range = section?.headingRange ?? NSRange(location: section?.range.location ?? 0, length: 0)
         reveal = EditorReveal(documentID: document.id, range: range)
+    }
+
+    /// Reloads the Tags and the selected timeline while Tags mode is shown;
+    /// called whenever the index or the mode changes.
+    func refreshTagTimeline() {
+        guard sidebarMode == .tags else { return }
+        let browser = tagTimeline
+        Task { await browser.refresh() }
+    }
+
+    func selectTimelineTag(_ tag: String?) {
+        let browser = tagTimeline
+        Task { await browser.select(tag) }
     }
 
     /// Opens the Vault's index (a cache outside the Vault) and catches up with
@@ -25,6 +49,8 @@ extension AppModel {
         searchIndexTask?.cancel()
         let index = SearchIndex(vault: vault, databaseURL: SearchIndex.defaultDatabaseURL(for: vault))
         searchIndex = index
+        tagTimeline.connect(index)
+        refreshTagTimeline()
         runIndexing(index, errorPrefix: "Index hledání se nepodařilo aktualizovat") {
             try await index.synchronize()
         }

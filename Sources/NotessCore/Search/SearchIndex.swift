@@ -17,7 +17,8 @@ public actor SearchIndex {
     /// File stamps alone cannot notice such a change.
     ///
     /// - 2: Tags in headings of any level mark their Section.
-    static let schemaVersion = 2
+    /// - 3: Sections keep their complete Markdown for the Tag Timeline.
+    static let schemaVersion = 3
     private static let batchSize = 50
 
     public let vault: Vault
@@ -103,10 +104,11 @@ public actor SearchIndex {
         guard let raw = try? String(contentsOf: url, encoding: .utf8) else { return }
         let text = raw.precomposedStringWithCanonicalMapping
         for section in SearchSection.split(text) {
+            let markdown = (text as NSString).substring(with: section.range).trimmingCharacters(in: .newlines)
             try db.query(
-                "INSERT INTO sections (path, kind, ordinal, title) VALUES (?, ?, ?, ?)",
+                "INSERT INTO sections (path, kind, ordinal, title, markdown) VALUES (?, ?, ?, ?, ?)",
                 [.text(file.relativePath), .int(Int64(file.kind.searchIndexCode)), .int(Int64(section.ordinal)),
-                 section.title.map { .text($0) } ?? .null]
+                 section.title.map { .text($0) } ?? .null, .text(markdown)]
             )
             let id = try db.query("SELECT last_insert_rowid()").first?.first ?? .null
             try db.query(
@@ -198,6 +200,45 @@ public actor SearchIndex {
         }
     }
 
+    // MARK: - Tag Timeline
+
+    /// Every Tag of the indexed (saved) Daily Entries once, as normalised names
+    /// (`Tag.normalize`) in alphabetical order. Free Notes and Brain Notes do not count.
+    public func journalTags() throws -> [String] {
+        let db = try openDatabase()
+        let rows = try db.query("""
+            SELECT DISTINCT t.tag FROM section_tags t JOIN sections s ON s.id = t.section_id
+            WHERE s.kind = ?
+            """, [.int(Int64(NoteKind.dailyEntry.searchIndexCode))])
+        return rows.compactMap { $0[0].text }
+            .sorted { $0.localizedStandardCompare($1) == .orderedAscending }
+    }
+
+    /// The Tag Timeline of `tag` (with or without `#`, compared like any Tag):
+    /// every indexed (saved) Daily Entry Section carrying it, complete, grouped
+    /// by Daily Entry date with the newest day first and each day's Sections
+    /// in their order in the note. Nothing is left out or shortened.
+    public func tagTimeline(for tag: String) throws -> [TagTimelineDay] {
+        let db = try openDatabase()
+        let rows = try db.query("""
+            SELECT path, ordinal, title, markdown FROM sections
+            WHERE kind = ? AND id IN (SELECT section_id FROM section_tags WHERE tag = ?)
+            """, [.int(Int64(NoteKind.dailyEntry.searchIndexCode)), .text(Tag.normalize(tag))])
+        var sectionsByDay: [Day: [TagTimelineSection]] = [:]
+        for row in rows {
+            guard let path = row[0].text, let day = DailyEntry.day(forRelativePath: path) else { continue }
+            sectionsByDay[day, default: []].append(TagTimelineSection(
+                relativePath: path,
+                ordinal: row[1].int ?? 0,
+                title: row[2].text,
+                markdown: row[3].text ?? ""
+            ))
+        }
+        return sectionsByDay.keys.sorted(by: >).map { day in
+            TagTimelineDay(day: day, sections: sectionsByDay[day]!.sorted { $0.ordinal < $1.ordinal })
+        }
+    }
+
     // MARK: - Database
 
     private func openDatabase() throws -> SQLiteDatabase {
@@ -224,7 +265,7 @@ public actor SearchIndex {
                 path TEXT PRIMARY KEY, modified REAL NOT NULL, size INTEGER NOT NULL);
             CREATE TABLE IF NOT EXISTS sections (
                 id INTEGER PRIMARY KEY, path TEXT NOT NULL, kind INTEGER NOT NULL,
-                ordinal INTEGER NOT NULL, title TEXT);
+                ordinal INTEGER NOT NULL, title TEXT, markdown TEXT NOT NULL);
             CREATE INDEX IF NOT EXISTS sections_by_path ON sections (path);
             CREATE TABLE IF NOT EXISTS section_tags (section_id INTEGER NOT NULL, tag TEXT NOT NULL);
             CREATE INDEX IF NOT EXISTS section_tags_by_tag ON section_tags (tag);

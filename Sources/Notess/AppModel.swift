@@ -3,6 +3,14 @@ import NotessCore
 import NotessEditor
 import Observation
 
+/// The two ways to browse the Vault in the sidebar.
+enum SidebarMode: Hashable {
+    /// The day-based workflow: Journal, Notes and Brain, with the note editor.
+    case journal
+    /// Tags of saved Daily Entries, with the selected Tag's timeline.
+    case tags
+}
+
 /// App-wide state: which Vault is open and which note tabs are open.
 @MainActor
 @Observable
@@ -15,7 +23,18 @@ final class AppModel {
     /// The search index is catching up with the Vault or being rebuilt.
     var isIndexing = false
     /// Bumped whenever the search index has changed, so open results refresh.
-    var searchIndexRevision = 0
+    var searchIndexRevision = 0 {
+        didSet { refreshTagTimeline() }
+    }
+    /// What the sidebar and the detail show: the day-based workflow or the Tag Timeline.
+    var sidebarMode: SidebarMode = .journal {
+        didSet {
+            guard sidebarMode != oldValue else { return }
+            refreshTagTimeline()
+        }
+    }
+    /// The Tags of saved Daily Entries and the selected Tag's timeline (Tags mode).
+    let tagTimeline = TagTimelineBrowser()
     /// Vault-relative folder chosen in the Notes section ("" is the Vault root); target for new Free Notes.
     var selectedFolder = ""
     var errorMessage: String?
@@ -97,6 +116,7 @@ final class AppModel {
             tabSession.open(document)
             persistTabs()
             backlinks = []
+            sidebarMode = .journal
         } catch {
             errorMessage = "Poznámku se nepodařilo vytvořit: \(error.localizedDescription)"
         }
@@ -104,11 +124,13 @@ final class AppModel {
 
     func openDailyEntry(_ entry: DailyEntry) {
         guard let vault else { return }
-        openNote(
+        if openNote(
             at: vault.url(for: entry),
             newFileContent: entry.initialContent,
             errorPrefix: "Záznam se nepodařilo otevřít"
-        )
+        ) != nil {
+            sidebarMode = .journal
+        }
         refreshVisibleBacklinks()
     }
 
@@ -120,6 +142,9 @@ final class AppModel {
             newFileContent: newFileContent,
             errorPrefix: "Poznámku se nepodařilo otevřít"
         )
+        if document != nil {
+            sidebarMode = .journal
+        }
         refreshVisibleBacklinks()
         return document
     }
@@ -135,6 +160,7 @@ final class AppModel {
         do {
             let document = tabSession.open(try vault.openNote(relativePath: relativePath))
             persistTabs()
+            sidebarMode = .journal
             refreshVisibleBacklinks()
             return document
         } catch {

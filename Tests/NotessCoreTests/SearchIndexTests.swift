@@ -346,6 +346,143 @@ final class SearchIndexTests {
         #expect(ids(try await reopened.search(SearchQuery("#beta"))) == ["2026-04-02#1"])
     }
 
+    // MARK: - Tag Timeline
+
+    private func writeTimelineNotes() throws {
+        try vault.write("""
+        # 2026-05-03 #intro
+
+        Úvod dne. #acme
+
+        ## Porada #Acme
+        Zápis z porady.
+
+        ### Podrobnosti
+        - [ ] úkol pro #beta
+        ![schéma](attachments/schema.png)
+
+        ## Oběd
+        Bez značek, i když zmíním acme.
+
+        ## Večer
+        Hovor s klientem #ACME #acme
+        """, to: "Journal/2026/05/2026-05-03.md")
+        try vault.write("""
+        # 2026-05-01
+
+        ## Kickoff #acme
+        \(String(repeating: "Dlouhý text bez zkrácení. ", count: 200))konec sekce
+        """, to: "Journal/2026/05/2026-05-01.md")
+        try vault.write("""
+        # 2026-04-30
+
+        ## Jinak #Café
+        """, to: "Journal/2026/04/2026-04-30.md")
+        try vault.write("## Volná #acme\ntext\n", to: "Projekty/Volná.md")
+        try vault.write("# Acme\n\n## Fakta #acme #zakaznik\nfakt\n", to: "_brain/companies/Acme3.md")
+    }
+
+    private func timelineIDs(_ days: [TagTimelineDay]) -> [String] {
+        days.flatMap { day in day.sections.map { "\(day.day.isoString)#\($0.ordinal)" } }
+    }
+
+    @Test("the Tag list holds each normalised Tag of saved Daily Entries once, Free Notes and Brain Notes left out")
+    func journalTags() async throws {
+        try writeTimelineNotes()
+        let index = makeIndex()
+        try await index.synchronize()
+        #expect(try await index.journalTags() == ["acme", "beta", "café", "intro"])
+    }
+
+    @Test("a Tag Timeline holds the complete matching Sections, newest day first and in their order within a day")
+    func tagTimeline() async throws {
+        try writeTimelineNotes()
+        let index = makeIndex()
+        try await index.synchronize()
+
+        let days = try await index.tagTimeline(for: "#ACME")
+        #expect(days.map(\.day.isoString) == ["2026-05-03", "2026-05-01", "2026-03-14"])
+        #expect(timelineIDs(days) == ["2026-05-03#0", "2026-05-03#1", "2026-05-03#3", "2026-05-01#1", "2026-03-14#1"])
+
+        let may3 = days[0].sections
+        #expect(may3.allSatisfy { $0.relativePath == "Journal/2026/05/2026-05-03.md" })
+        #expect(may3[0].title == "2026-05-03 #intro")
+        #expect(may3[0].markdown == "# 2026-05-03 #intro\n\nÚvod dne. #acme")
+        #expect(may3[1].title == "Porada #Acme")
+        #expect(may3[1].markdown == """
+        ## Porada #Acme
+        Zápis z porady.
+
+        ### Podrobnosti
+        - [ ] úkol pro #beta
+        ![schéma](attachments/schema.png)
+        """)
+        #expect(may3[2].markdown == "## Večer\nHovor s klientem #ACME #acme")
+
+        let long = try #require(days[1].sections.first)
+        #expect(long.markdown.hasPrefix("## Kickoff #acme\nDlouhý text"))
+        #expect(long.markdown.hasSuffix("konec sekce"))
+        #expect(long.markdown.count > 5000)
+    }
+
+    @Test("a Tag Timeline matches Tags case-insensitively and Unicode-normalised, and is empty for an unknown Tag")
+    func tagTimelineNormalisation() async throws {
+        try writeTimelineNotes()
+        let index = makeIndex()
+        try await index.synchronize()
+        #expect(timelineIDs(try await index.tagTimeline(for: "CAFE\u{301}")) == ["2026-04-30#1"])
+        #expect(timelineIDs(try await index.tagTimeline(for: "beta")) == ["2026-05-03#1"])
+        #expect(try await index.tagTimeline(for: "zakaznik").isEmpty)
+        #expect(try await index.tagTimeline(for: "neexistuje").isEmpty)
+    }
+
+    @Test("the Tag Timeline shows saved content only and follows saves, outside changes and deletions")
+    @MainActor
+    func tagTimelineFollowsSavedContent() async throws {
+        try writeTimelineNotes()
+        let index = makeIndex()
+        try await index.synchronize()
+        let path = "Journal/2026/05/2026-05-01.md"
+        let url = vault.vault.rootURL.appending(path: path)
+
+        let document = try NoteDocument.open(fileURL: url, newFileContent: "")
+        document.text = "# 2026-05-01\n\n## Kickoff #novy\nneuloženo\n"
+        _ = document.stageAttachment(data: Data([0x89, 0x50]), fileExtension: "png")
+        try await index.update(relativePaths: [""])
+        #expect(try await index.journalTags() == ["acme", "beta", "café", "intro"])
+        #expect(timelineIDs(try await index.tagTimeline(for: "acme")).contains("2026-05-01#1"))
+
+        try document.save()
+        try await index.update(fileAt: url)
+        #expect(try await index.journalTags() == ["acme", "beta", "café", "intro", "novy"])
+        #expect(!timelineIDs(try await index.tagTimeline(for: "acme")).contains("2026-05-01#1"))
+        #expect(try await index.tagTimeline(for: "novy").first?.sections.first?.markdown == "## Kickoff #novy\nneuloženo")
+
+        try vault.write("# 2026-04-30\n\n## Venku #novy\nzměněno mimo Notess\n", to: "Journal/2026/04/2026-04-30.md")
+        try FileManager.default.removeItem(at: url)
+        try await index.update(relativePaths: ["Journal/2026/04/2026-04-30.md", path])
+        #expect(timelineIDs(try await index.tagTimeline(for: "novy")) == ["2026-04-30#1"])
+        #expect(try await index.journalTags() == ["acme", "beta", "intro", "novy"])
+    }
+
+    @Test("reopening and rebuilding the cache reproduce the same Tag Timeline")
+    func tagTimelineSurvivesReopenAndRebuild() async throws {
+        try writeTimelineNotes()
+        let index = makeIndex()
+        try await index.synchronize()
+        let tags = try await index.journalTags()
+        let timeline = try await index.tagTimeline(for: "acme")
+
+        let reopened = makeIndex()
+        try await reopened.synchronize()
+        #expect(try await reopened.journalTags() == tags)
+        #expect(try await reopened.tagTimeline(for: "acme") == timeline)
+
+        try await reopened.rebuild()
+        #expect(try await reopened.journalTags() == tags)
+        #expect(try await reopened.tagTimeline(for: "acme") == timeline)
+    }
+
     @Test("the default index location is a cache outside the Vault")
     func location() {
         let url = SearchIndex.defaultDatabaseURL(for: vault.vault)
