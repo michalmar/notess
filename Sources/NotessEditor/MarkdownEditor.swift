@@ -82,6 +82,7 @@ public struct MarkdownEditor: NSViewRepresentable {
     private let onTextChange: (String) -> Void
     private let noteURL: URL?
     private let onPasteImage: ((Data, String) -> String?)?
+    private let onPasteImageFailure: ((Error) -> Void)?
     private let inlineImageData: ((String) -> Data?)?
 
     /// - Parameters:
@@ -98,6 +99,7 @@ public struct MarkdownEditor: NSViewRepresentable {
         isEditable: Bool = true,
         noteURL: URL? = nil,
         onPasteImage: ((Data, String) -> String?)? = nil,
+        onPasteImageFailure: ((Error) -> Void)? = nil,
         inlineImageData: ((String) -> Data?)? = nil,
         onTextChange: @escaping (String) -> Void
     ) {
@@ -109,6 +111,7 @@ public struct MarkdownEditor: NSViewRepresentable {
         self.onOpenWikiLink = onOpenWikiLink
         self.noteURL = noteURL
         self.onPasteImage = onPasteImage
+        self.onPasteImageFailure = onPasteImageFailure
         self.inlineImageData = inlineImageData
         self.onTextChange = onTextChange
     }
@@ -172,6 +175,7 @@ public struct MarkdownEditor: NSViewRepresentable {
 
     private func configureImages(in textView: MarkdownTextView) {
         textView.onPasteImage = onPasteImage
+        textView.onPasteImageFailure = onPasteImageFailure
         textView.inlineImageData = inlineImageData
         textView.noteURL = noteURL
     }

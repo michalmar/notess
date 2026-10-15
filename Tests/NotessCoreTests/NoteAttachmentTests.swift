@@ -88,4 +88,117 @@ struct NoteAttachmentTests {
 
         #expect(try Data(contentsOf: attachment.fileURL) == Data("image".utf8))
     }
+    @Test("an image gets its own line without disturbing the surrounding text", arguments: [
+        ("", NSRange(location: 0, length: 0), "IMG"),
+        ("text", NSRange(location: 0, length: 0), "IMG\n"),
+        ("text", NSRange(location: 4, length: 0), "\nIMG"),
+        ("ab cd", NSRange(location: 2, length: 0), "\nIMG\n"),
+        ("line\n\nnext", NSRange(location: 5, length: 0), "IMG"),
+        ("line\nnext", NSRange(location: 4, length: 0), "\nIMG"),
+        ("line\nnext", NSRange(location: 5, length: 0), "IMG\n"),
+        ("a sel b", NSRange(location: 2, length: 3), "\nIMG\n"),
+        ("sel\nb", NSRange(location: 0, length: 3), "IMG"),
+        ("a\r\nb", NSRange(location: 3, length: 0), "IMG\n"),
+    ])
+    func standaloneLine(text: String, range: NSRange, expected: String) {
+        #expect(NoteAttachment.standaloneLine("IMG", replacing: range, in: text) == expected)
+    }
+
+    @Test("a saved image survives reopening with readable bytes and its link")
+    func saveAndReopen() throws {
+        let temp = try TemporaryVault()
+        let noteURL = temp.vault.rootURL.appending(path: "Journal/2026/10/2026-10-15.md")
+        let document = try NoteDocument.open(fileURL: noteURL, newFileContent: "# 15. 10.\n")
+        let attachment = document.stageAttachment(data: pngBytes, fileExtension: "png")
+        document.text += attachment.markdown
+
+        try document.save()
+
+        let reopened = try NoteDocument.open(fileURL: noteURL, newFileContent: "")
+        #expect(reopened.text == "# 15. 10.\n\(attachment.markdown)")
+        #expect(reopened.stagedAttachmentData(relativePath: attachment.relativePath) == nil)
+        let imageURL = noteURL.deletingLastPathComponent().appending(path: attachment.relativePath)
+        #expect(try Data(contentsOf: imageURL) == pngBytes)
+        #expect(attachment.relativePath.hasPrefix("attachments/"))
+    }
+
+    @Test("discarding unsaved edits writes no image")
+    func discardWritesNothing() throws {
+        let temp = try TemporaryVault()
+        try temp.write("# Idea\n", to: "Notes/Idea.md")
+        let noteURL = temp.vault.rootURL.appending(path: "Notes/Idea.md")
+        let document = try NoteDocument.open(fileURL: noteURL, newFileContent: "")
+        let attachment = document.stageAttachment(data: pngBytes, fileExtension: "png")
+        document.text += attachment.markdown
+        #expect(document.stagedAttachmentData(relativePath: attachment.relativePath) == pngBytes)
+
+        try document.reloadFromDisk()
+        try document.save()
+
+        #expect(document.text == "# Idea\n")
+        #expect(document.stagedAttachmentData(relativePath: attachment.relativePath) == nil)
+        #expect(temp.fileExists("Notes/attachments") == false)
+    }
+
+    @Test("removing a saved image link keeps the image file")
+    func removingSavedLinkKeepsFile() throws {
+        let temp = try TemporaryVault()
+        let noteURL = temp.vault.rootURL.appending(path: "Notes/Idea.md")
+        let document = try NoteDocument.open(fileURL: noteURL, newFileContent: "# Idea\n")
+        let attachment = document.stageAttachment(data: pngBytes, fileExtension: "png")
+        document.text += attachment.markdown
+        try document.save()
+
+        document.text = "# Idea\n"
+        try document.save()
+
+        #expect(try temp.read("Notes/Idea.md") == "# Idea\n")
+        #expect(try Data(contentsOf: attachment.fileURL) == pngBytes)
+    }
+
+    @Test("a failed image write fails the save and keeps the edit")
+    func imageWriteFailure() throws {
+        let temp = try TemporaryVault()
+        try temp.write("# Idea\n", to: "Notes/Idea.md")
+        // A file where the attachments folder should be makes the image write fail.
+        try temp.write("", to: "Notes/attachments")
+        let noteURL = temp.vault.rootURL.appending(path: "Notes/Idea.md")
+        let document = try NoteDocument.open(fileURL: noteURL, newFileContent: "")
+        let attachment = document.stageAttachment(data: pngBytes, fileExtension: "png")
+        document.text += attachment.markdown
+
+        #expect(throws: (any Error).self) { try document.save() }
+
+        #expect(try temp.read("Notes/Idea.md") == "# Idea\n")
+        #expect(document.hasUnsavedChanges)
+        #expect(document.stagedAttachmentData(relativePath: attachment.relativePath) == pngBytes)
+
+        try FileManager.default.removeItem(at: temp.vault.rootURL.appending(path: "Notes/attachments"))
+        try document.save()
+        #expect(try Data(contentsOf: attachment.fileURL) == pngBytes)
+    }
+
+    @Test("a save conflict writes no image until the user keeps their version")
+    func conflictKeepsImageStaged() throws {
+        let temp = try TemporaryVault()
+        try temp.write("# Idea\n", to: "Notes/Idea.md")
+        let noteURL = temp.vault.rootURL.appending(path: "Notes/Idea.md")
+        let document = try NoteDocument.open(fileURL: noteURL, newFileContent: "")
+        let attachment = document.stageAttachment(data: pngBytes, fileExtension: "png")
+        document.text += attachment.markdown
+        try temp.write("# Idea\n\nchanged elsewhere\n", to: "Notes/Idea.md")
+
+        #expect(throws: NoteDocument.SaveError.changedOnDisk) { try document.save() }
+        #expect(temp.fileExists("Notes/attachments") == false)
+
+        document.keepMine()
+        try document.save()
+        #expect(try Data(contentsOf: attachment.fileURL) == pngBytes)
+        #expect(try temp.read("Notes/Idea.md") == "# Idea\n\(attachment.markdown)")
+    }
 }
+
+/// A 1×1 PNG.
+private let pngBytes = Data(base64Encoded:
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
+)!

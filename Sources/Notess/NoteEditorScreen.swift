@@ -10,6 +10,7 @@ struct NoteEditorScreen: View {
     var backlinks: [Backlink] = []
     var onOpenWikiLink: (WikiLink) -> Void = { _ in }
     var onOpenBacklink: (Backlink) -> Void = { _ in }
+    var onPasteImageFailure: (Error) -> Void = { _ in }
 
     var body: some View {
         // A new revision means the text was reloaded from disk, so the editor reloads too.
@@ -31,6 +32,7 @@ struct NoteEditorScreen: View {
                 onPasteImage: { data, fileExtension in
                     document.stageAttachment(data: data, fileExtension: fileExtension).markdown
                 },
+                onPasteImageFailure: onPasteImageFailure,
                 inlineImageData: { document.stagedAttachmentData(relativePath: $0) },
                 onTextChange: { document.text = $0 }
             )

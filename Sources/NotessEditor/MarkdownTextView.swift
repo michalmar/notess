@@ -1,5 +1,6 @@
 import AppKit
 import NotessCore
+import UniformTypeIdentifiers
 
 /// The editor's `NSTextView`: live Markdown formatting and clickable task boxes.
 ///
@@ -54,9 +55,11 @@ public final class MarkdownTextView: NSTextView {
 
     /// Connects the highlighter to the text storage; called once after creation.
     func attachHighlighter() {
+        observeUndoAndRedo()
         highlighter.didStyleText = { [weak self] range, editedRange, delta in
             guard let self else { return }
             if let editedRange {
+                hasUnreportedTextEdit = true
                 updateInlineImages(in: range, editedRange: editedRange, changeInLength: delta)
             } else {
                 refreshInlineImages()
@@ -65,6 +68,44 @@ public final class MarkdownTextView: NSTextView {
         textStorage?.delegate = highlighter
         font = highlighter.style.font
         typingAttributes = highlighter.baseAttributes
+    }
+
+    // MARK: Change reporting
+
+    /// True after a character edit the delegate has not been told about yet.
+    private var hasUnreportedTextEdit = false
+
+    public override var string: String {
+        get { super.string }
+        set {
+            super.string = newValue
+            hasUnreportedTextEdit = false
+        }
+    }
+
+    public override func didChangeText() {
+        hasUnreportedTextEdit = false
+        super.didChangeText()
+    }
+
+    /// On TextKit 2, undo and redo change the text without `didChangeText()`,
+    /// so the delegate (and the note's unsaved state) would miss them.
+    private func observeUndoAndRedo() {
+        for name in [Notification.Name.NSUndoManagerDidUndoChange, .NSUndoManagerDidRedoChange] {
+            NotificationCenter.default.addObserver(
+                self,
+                selector: #selector(undoManagerDidChangeText(_:)),
+                name: name,
+                object: nil
+            )
+        }
+    }
+
+    @objc private func undoManagerDidChangeText(_ notification: Notification) {
+        guard hasUnreportedTextEdit,
+              let undoManager,
+              notification.object as? UndoManager === undoManager else { return }
+        didChangeText()
     }
 
     public override func mouseDown(with event: NSEvent) {
@@ -97,10 +138,6 @@ public final class MarkdownTextView: NSTextView {
         return nil
     }
 
-    public override func paste(_ sender: Any?) {
-        paste(from: .general, fallback: { super.paste(sender) })
-    }
-
     public override func setFrameSize(_ newSize: NSSize) {
         let widthChanged = abs(frame.size.width - newSize.width) > 0.5
         super.setFrameSize(newSize)
@@ -109,32 +146,106 @@ public final class MarkdownTextView: NSTextView {
         }
     }
 
-    func paste(from pasteboard: NSPasteboard) {
-        paste(from: pasteboard, fallback: {})
+    // MARK: Image paste
+
+    /// Called when clipboard image data cannot be turned into a PNG; nothing is inserted.
+    public var onPasteImageFailure: ((Error) -> Void)?
+
+    /// The pasteboard Paste reads; tests substitute a private one.
+    var pasteboard: NSPasteboard = .general
+
+    /// The Edit ▸ Paste item (and so Cmd+V) is enabled by AppKit only for the
+    /// types a plain-text view reads, which exclude images: without this, Paste
+    /// stays disabled for a screenshot on the clipboard and `paste(_:)` never runs.
+    public override func validateUserInterfaceItem(_ item: NSValidatedUserInterfaceItem) -> Bool {
+        validatePaste(item.action) ?? super.validateUserInterfaceItem(item)
     }
 
-    private func paste(from pasteboard: NSPasteboard, fallback: () -> Void) {
-        guard isEditable else { return }
-        if let data = pngData(from: pasteboard),
-           let markdown = onPasteImage?(data, "png") {
-            insertText(markdown, replacementRange: selectedRange())
-            return
-        }
-        if let text = pasteboard.string(forType: .string) {
-            insertText(text, replacementRange: selectedRange())
-            return
-        }
-        fallback()
+    public override func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        validatePaste(menuItem.action) ?? super.validateMenuItem(menuItem)
     }
 
-    private func pngData(from pasteboard: NSPasteboard) -> Data? {
-        if let data = pasteboard.data(forType: .png) {
+    /// Whether Paste is enabled, or `nil` to leave the decision to AppKit.
+    private func validatePaste(_ action: Selector?) -> Bool? {
+        guard action == #selector(paste(_:)) else { return nil }
+        if canPasteImage { return true }
+        // AppKit validates against the general pasteboard only.
+        guard pasteboard != .general else { return nil }
+        return isEditable && pasteboard.availableType(from: readablePasteboardTypes) != nil
+    }
+
+    /// Pastes clipboard image data as a Markdown image on its own line; text
+    /// (including text that comes with an image preview) pastes as usual.
+    public override func paste(_ sender: Any?) {
+        guard canPasteImage, let onPasteImage else {
+            pasteText(sender)
+            return
+        }
+        guard let png = Self.pngData(from: pasteboard) else {
+            NSSound.beep()
+            onPasteImageFailure?(ImagePasteError.unreadableImage)
+            return
+        }
+        guard let markdown = onPasteImage(png, "png") else {
+            pasteText(sender)
+            return
+        }
+        let range = selectedRange()
+        let replacement = NoteAttachment.standaloneLine(markdown, replacing: range, in: string)
+        replace(range, with: replacement, actionName: "Vložit obrázek")
+    }
+
+    private func pasteText(_ sender: Any?) {
+        if pasteboard == .general {
+            super.paste(sender)
+        } else {
+            readSelection(from: pasteboard)
+        }
+    }
+
+    /// True when Paste would insert an image: the view is editable, has an image
+    /// handler, and the clipboard holds image data but no plain text. Files
+    /// copied in Finder are not images to paste.
+    private var canPasteImage: Bool {
+        guard isEditable, onPasteImage != nil, let types = pasteboard.types else { return false }
+        guard !types.contains(.string), !types.contains(.fileURL) else { return false }
+        return types.contains { Self.isImageType($0) }
+    }
+
+    private static func isImageType(_ type: NSPasteboard.PasteboardType) -> Bool {
+        UTType(type.rawValue)?.conforms(to: .image) == true
+    }
+
+    /// The clipboard image as PNG: PNG data as is, any other image type converted losslessly.
+    private static func pngData(from pasteboard: NSPasteboard) -> Data? {
+        if let data = pasteboard.data(forType: .png), NSBitmapImageRep(data: data) != nil {
             return data
         }
-        guard let image = NSImage(pasteboard: pasteboard),
-              let tiff = image.tiffRepresentation,
-              let bitmap = NSBitmapImageRep(data: tiff) else { return nil }
-        return bitmap.representation(using: .png, properties: [:])
+        for type in pasteboard.types ?? [] where type != .png && isImageType(type) {
+            if let data = pasteboard.data(forType: type),
+               let bitmap = NSBitmapImageRep(data: data),
+               let png = bitmap.representation(using: .png, properties: [:]) {
+                return png
+            }
+        }
+        return nil
+    }
+
+    /// Replaces `range` like typing would (undoable as one step, notifies the
+    /// delegate) and puts the caret after the new text.
+    @discardableResult
+    private func replace(_ range: NSRange, with replacement: String, actionName: String) -> Bool {
+        guard let textStorage, shouldChangeText(in: range, replacementString: replacement) else {
+            return false
+        }
+        breakUndoCoalescing()
+        textStorage.replaceCharacters(in: range, with: replacement)
+        didChangeText()
+        breakUndoCoalescing()
+        setSelectedRange(NSRange(location: range.location + (replacement as NSString).length, length: 0))
+        undoManager?.setActionName(actionName)
+        scrollRangeToVisible(selectedRange())
+        return true
     }
 
     func scheduleInlineImageRefresh() {

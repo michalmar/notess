@@ -211,6 +211,8 @@ public final class NoteDocument: Identifiable {
     }
 
     private func replaceText(with diskContent: String) {
+        // The editor reloads without undo history, so staged images can no longer come back.
+        stagedAttachments.removeAll()
         accept(diskContent)
         text = diskContent
         revision += 1
