@@ -11,9 +11,13 @@ import Foundation
 /// changed notes are read again. All work runs off the main thread on this
 /// actor; long runs yield between batches so searches stay responsive.
 public actor SearchIndex {
-    /// Bump when the schema or the way notes are split changes; an index with
-    /// another version is discarded and rebuilt.
-    static let schemaVersion = 1
+    /// Bump when the schema, the way notes are split into Sections or the way
+    /// Tags are extracted (`SearchSection.split`, `MarkdownLineLexer`) changes;
+    /// an index with another version is discarded and rebuilt from the files.
+    /// File stamps alone cannot notice such a change.
+    ///
+    /// - 2: Tags in headings of any level mark their Section.
+    static let schemaVersion = 2
     private static let batchSize = 50
 
     public let vault: Vault

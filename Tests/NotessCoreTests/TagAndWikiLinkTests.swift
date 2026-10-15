@@ -53,6 +53,11 @@ struct TagTests {
         #expect(names("###### H6") == [])
         #expect(names("## Porada #acme") == ["acme"])
         #expect(names("#Titulek") == ["Titulek"])
+        #expect(names("# Titulek #acme") == ["acme"])
+        #expect(names("### Hlouběji #acme ###") == ["acme"])
+        #expect(names("###### H6 #acme") == ["acme"])
+        #expect(names("Setext #acme\n---") == ["acme"])
+        #expect(names("## `#kod` #acme") == ["acme"])
     }
 
     @Test("Tags inside inline code are ignored")

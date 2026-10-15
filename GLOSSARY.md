@@ -23,12 +23,16 @@ A note the user creates in any folder of the Vault outside the Journal; it is no
 _Avoid_: Page, document
 
 **Section**:
-The span of a note from one second-level heading to the next heading of level 1 or 2; the unit that search returns, Tags apply to, and Brain Notes cite.
+The span of a note from one second-level heading to the next heading of level 1 or 2; the unit that search returns, Tags apply to, and Brain Notes cite. The text before the first second-level heading is one more, introductory Section.
 _Avoid_: Block, chunk, topic, chapter
 
 **Tag**:
-A `#word` token (hash immediately followed by a word, no space) written anywhere in a note outside code; it marks the whole Section it appears in. The word needs at least one letter, so `#2026` is not a Tag.
+A `#word` token (hash immediately followed by a word, no space) written anywhere in a note outside code, including in a heading of any level; it marks the whole Section it appears in. A Tag in an H2 heading marks the Section that heading starts, a Tag in a deeper heading marks its enclosing Section, and a Tag in an H1 heading marks the Section that heading starts. Tags in the introductory text before the first second-level heading mark only that introductory Section; they never apply to later Sections. The word needs at least one letter, so `#2026` is not a Tag. Tags are compared case-insensitively and Unicode-normalised, and repeating a Tag within a Section counts once.
 _Avoid_: Label, category, topic
+
+**Tag Timeline**:
+For one Tag, the complete Sections that carry it in saved Daily Entries, grouped by Daily Entry date with the newest day first and each day's Sections in their original order. It is read-only and built from saved content only; unsaved edits, Free Notes and Brain Notes are not part of it.
+_Avoid_: Tag view, Tag feed, Tag page
 
 **Wiki-link**:
 A `[[Note]]` reference to another note by its file name, optionally to one of its headings with `[[Note#Heading]]`. The note is found by file name anywhere in the Vault, ignoring case; duplicate names resolve by the rule documented on `WikiLinkResolver`.

@@ -198,6 +198,153 @@ final class SearchIndexTests {
         #expect(try await index.search(SearchQuery("káva")).count == 1)
     }
 
+    // MARK: - Tags in headings
+
+    private func ids(_ groups: [SearchResultGroup]) -> [String] {
+        groups.flatMap(\.results).map { "\($0.noteName)#\($0.ordinal)" }
+    }
+
+    private func writeHeadingTagNotes() throws {
+        try vault.write("""
+        # 2026-04-02 #ráno
+
+        Úvod #ukol
+
+        ## Porada #Acme
+        Zápis z porady.
+
+        ### Detail #beta
+        hlouběji
+
+        ## Obědy
+        Bez značek.
+
+        # Odpoledne #acme
+        Odpolední část.
+        """, to: "Journal/2026/04/2026-04-02.md")
+        try vault.write("""
+        # 2026-04-05
+
+        ## Heading only #acme
+        ## Další
+        text bez značky
+        """, to: "Journal/2026/04/2026-04-05.md")
+        try vault.write("## Volná #ACME\ntext\n", to: "Projekty/Volná.md")
+        try vault.write("# Acme\n\n## Fakta #acme\nfakt\n", to: "_brain/companies/Acme2.md")
+    }
+
+    @Test("a Tag in a heading of any level finds exactly the Section it marks")
+    func headingTagsAreSearchable() async throws {
+        try writeHeadingTagNotes()
+        let index = makeIndex()
+        try await index.synchronize()
+
+        let acme = try await index.search(SearchQuery("#acme"))
+        #expect(acme.map(\.kind) == [.dailyEntry, .freeNote, .brainNote])
+        // Journal newest first; the 4-2 note has the H2 Section and the H1 Section, never the introduction.
+        #expect(ids([acme[0]]) == ["2026-04-05#1", "2026-04-02#1", "2026-04-02#3", "2026-03-14#1"])
+        #expect(ids([acme[1]]).sorted() == ["Plán#1", "Volná#0"])
+        #expect(ids([acme[2]]) == ["Acme2#1"])
+
+        // A deeper heading's Tag marks the enclosing H2 Section.
+        #expect(ids(try await index.search(SearchQuery("#beta"))) == ["2026-04-02#1"])
+    }
+
+    @Test("introductory Tags are not propagated to later Sections")
+    func introductoryTagsAreLocal() async throws {
+        try writeHeadingTagNotes()
+        let index = makeIndex()
+        try await index.synchronize()
+        #expect(ids(try await index.search(SearchQuery("#ráno"))) == ["2026-04-02#0"])
+        #expect(ids(try await index.search(SearchQuery("#ukol"))) == ["2026-04-02#0"])
+        #expect(try await index.search(SearchQuery("#ráno obědy")).isEmpty)
+    }
+
+    @Test("a heading-only Section matches by Tag and keeps its title, with the Tag highlighted")
+    func headingOnlySection() async throws {
+        try writeHeadingTagNotes()
+        let index = makeIndex()
+        try await index.synchronize()
+        let result = try #require(try await index.search(SearchQuery("#acme")).first?.results.first)
+        #expect(result.noteName == "2026-04-05")
+        #expect(result.title == "Heading only #acme")
+        #expect(result.snippet.text == "")
+        #expect(result.highlightedTitle.parts.filter(\.isMatch).map(\.text) == ["#acme"])
+        // The next Section of the same note is not marked.
+        #expect(!ids(try await index.search(SearchQuery("#acme"))).contains("2026-04-05#2"))
+    }
+
+    @Test("a heading Tag combines with fulltext terms and is normalised")
+    func headingTagWithTerms() async throws {
+        try writeHeadingTagNotes()
+        try vault.write("## Káva #Café\nx\n", to: "Projekty/Decomposed.md")
+        let index = makeIndex()
+        try await index.synchronize()
+        #expect(ids(try await index.search(SearchQuery("#ACME zápis"))) == ["2026-04-02#1"])
+        #expect(ids(try await index.search(SearchQuery("#café"))) == ["Decomposed#0"])
+        #expect(ids(try await index.search(SearchQuery("#Cafe\u{301}"))) == ["Decomposed#0"])
+    }
+
+    @Test("repeating a Tag in a Section does not duplicate the Section in results")
+    func repeatedTags() async throws {
+        try vault.write("## A #acme #Acme\ntext #ACME\n### D #acme\n## B\n", to: "Projekty/Repeat.md")
+        let index = makeIndex()
+        try await index.synchronize()
+        #expect(ids(try await index.search(SearchQuery("#acme")).filter { $0.kind == .freeNote }).filter { $0.hasPrefix("Repeat") } == ["Repeat#0"])
+    }
+
+    @Test("Tags in code, URLs, link targets and wiki-links of a heading do not mark the Section")
+    func headingExclusions() async throws {
+        try vault.write("""
+        ## `#kod` [a](https://a.cz/#cil) https://b.cz/#url [[Jiná#Sekce]] C#
+        text
+
+        ## Skutečná #ano
+        ```
+        ## Kód #ne
+        ```
+        """, to: "Projekty/Vyjimky.md")
+        let index = makeIndex()
+        try await index.synchronize()
+        for tag in ["#kod", "#cil", "#url", "#sekce", "#ne"] {
+            #expect(try await index.search(SearchQuery(tag)).filter { $0.kind == .freeNote }.isEmpty, "\(tag)")
+        }
+        #expect(ids(try await index.search(SearchQuery("#ano"))) == ["Vyjimky#1"])
+    }
+
+    @Test("saving a heading Tag, changing it or removing it updates the index")
+    func headingTagEdits() async throws {
+        let index = makeIndex()
+        try await index.synchronize()
+        try vault.write("## Kickoff Acme #novy\nx\n", to: "Journal/2026/03/2026-03-14.md")
+        try await index.update(fileAt: vault.vault.rootURL.appending(path: "Journal/2026/03/2026-03-14.md"))
+        #expect(ids(try await index.search(SearchQuery("#novy"))) == ["2026-03-14#0"])
+        try vault.write("## Kickoff Acme #jiny and more text\n", to: "Journal/2026/03/2026-03-14.md")
+        try await index.update(fileAt: vault.vault.rootURL.appending(path: "Journal/2026/03/2026-03-14.md"))
+        #expect(try await index.search(SearchQuery("#novy")).isEmpty)
+        #expect(ids(try await index.search(SearchQuery("#jiny"))) == ["2026-03-14#0"])
+    }
+
+    @Test("a cache built by an older version converges on heading Tags without any edit to the notes")
+    func oldCacheConverges() async throws {
+        try writeHeadingTagNotes()
+        // An index from before heading Tags were recognised: a previous schema version whose
+        // content (and recorded file stamps) would otherwise make every note look up to date.
+        try FileManager.default.createDirectory(at: databaseURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let old = try SQLiteDatabase(url: databaseURL)
+        try old.execute("CREATE TABLE files (path TEXT); PRAGMA user_version = \(SearchIndex.schemaVersion - 1);")
+
+        let index = makeIndex()
+        try await index.synchronize()
+        #expect(ids(try await index.search(SearchQuery("#beta"))) == ["2026-04-02#1"])
+        #expect(ids(try await index.search(SearchQuery("#acme")).filter { $0.kind == .dailyEntry }).prefix(2) == ["2026-04-05#1", "2026-04-02#1"])
+
+        // On a later start the converged cache is kept, not rebuilt again.
+        let reopened = makeIndex()
+        try await reopened.synchronize()
+        #expect(ids(try await reopened.search(SearchQuery("#beta"))) == ["2026-04-02#1"])
+    }
+
     @Test("the default index location is a cache outside the Vault")
     func location() {
         let url = SearchIndex.defaultDatabaseURL(for: vault.vault)
