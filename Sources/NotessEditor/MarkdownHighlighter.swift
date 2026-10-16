@@ -10,13 +10,19 @@ extension NSAttributedString.Key {
 /// Acts as the `NSTextStorage` delegate: after every character edit it asks the
 /// incremental `MarkdownLexer` which lines changed and restyles only those
 /// (ADR 0001: typing must stay instant even in long notes). Markup stays
-/// visible and is only dimmed; nothing is hidden.
+/// visible and is only dimmed, except in tables, which are drawn as a grid
+/// (see `TableLayout`).
 @MainActor
-final class MarkdownHighlighter: NSObject, NSTextStorageDelegate {
+final class MarkdownHighlighter: NSObject, NSTextStorageDelegate, NSTextLayoutManagerDelegate {
     let lexer = MarkdownLexer()
     private(set) var style: MarkdownEditorStyle
     private var fontCache: [FontKey: NSFont] = [:]
     var didStyleText: (NSRange, NSRange?, Int) -> Void = { _, _, _ in }
+    /// The editor's selection, nil in a view that never reports one (read-only).
+    /// A table's delimiter row it touches shows its markup.
+    private var selection: NSRange?
+    /// The line of the delimiter row shown for `selection`.
+    private var shownDelimiterRow: NSRange?
 
     init(style: MarkdownEditorStyle = .standard) {
         self.style = style
@@ -43,9 +49,12 @@ final class MarkdownHighlighter: NSObject, NSTextStorageDelegate {
         [.font: style.font, .foregroundColor: style.colors.text]
     }
 
+    // Styles in `didProcessEditing`, not `willProcessEditing`: on TextKit 2,
+    // attributes set in `willProcessEditing` widen the edited range to the
+    // restyled lines, and NSTextView then moves the caret to the end of them.
     nonisolated func textStorage(
         _ textStorage: NSTextStorage,
-        willProcessEditing editedMask: NSTextStorageEditActions,
+        didProcessEditing editedMask: NSTextStorageEditActions,
         range editedRange: NSRange,
         changeInLength delta: Int
     ) {
@@ -53,16 +62,66 @@ final class MarkdownHighlighter: NSObject, NSTextStorageDelegate {
         // The editor's text storage is only ever edited on the main thread.
         nonisolated(unsafe) let storage = textStorage
         MainActor.assumeIsolated {
+            // The caret ends up after the edit; the editor reports it only later.
+            if selection != nil {
+                selection = NSRange(location: editedRange.upperBound, length: 0)
+            }
             let update = lexer.update(text: storage.mutableString, editedRange: editedRange, changeInLength: delta)
             apply(update, to: storage)
+            // Attribute fixing (font fallback for emoji, CJK, ...) already ran
+            // before this callback, and `apply` reset the fonts.
+            if update.range.length > 0 { storage.fixAttributes(in: update.range) }
             didStyleText(update.range, editedRange, delta)
         }
+    }
+
+    /// Shows the delimiter row the selection moved onto and hides the one it left.
+    func selectionDidChange(to range: NSRange, in storage: NSTextStorage) {
+        selection = range
+        let string = storage.mutableString
+        var stale: [NSRange] = []
+        if let shown = shownDelimiterRow, !TableLayout.selection(range, touches: shown, in: string) {
+            stale.append(shown)
+        }
+        for location in Set([range.location, range.upperBound]) where location <= string.length {
+            let line = string.lineRange(for: NSRange(location: location, length: 0))
+            if line.length > 0,
+               let row = storage.attribute(.notessTableRow, at: line.location, effectiveRange: nil) as? TableRowDecoration,
+               row.kind == .delimiter {
+                stale.append(line)
+            }
+        }
+        for line in stale where line.upperBound <= string.length {
+            let update = lexer.update(text: string, editedRange: line, changeInLength: 0)
+            storage.beginEditing()
+            apply(update, to: storage)
+            if update.range.length > 0 { storage.fixAttributes(in: update.range) }
+            storage.endEditing()
+        }
+    }
+
+    /// Table rows get a fragment that draws the table grid.
+    nonisolated func textLayoutManager(
+        _ textLayoutManager: NSTextLayoutManager,
+        textLayoutFragmentFor location: NSTextLocation,
+        in textElement: NSTextElement
+    ) -> NSTextLayoutFragment {
+        if let paragraph = textElement as? NSTextParagraph,
+           paragraph.attributedString.length > 0,
+           let decoration = paragraph.attributedString.attribute(.notessTableRow, at: 0, effectiveRange: nil) as? TableRowDecoration {
+            return TableRowLayoutFragment(textElement: textElement, range: textElement.elementRange, decoration: decoration)
+        }
+        return NSTextLayoutFragment(textElement: textElement, range: textElement.elementRange)
     }
 
     // MARK: Applying tokens
 
     private func apply(_ update: MarkdownLexer.Update, to storage: NSTextStorage) {
         guard update.range.length > 0 else { return }
+        if let shown = shownDelimiterRow,
+           shown.upperBound > storage.length || NSIntersectionRange(shown, update.range).length > 0 {
+            shownDelimiterRow = nil
+        }
         storage.setAttributes(baseAttributes, range: update.range)
         for layer in 0..<3 {
             for token in update.tokens where Self.layer(of: token.kind) == layer {
@@ -70,7 +129,9 @@ final class MarkdownHighlighter: NSObject, NSTextStorageDelegate {
             }
         }
         for table in update.tables {
-            TableLayout.alignColumns(of: table, in: storage, pipeFont: style.font)
+            if let shown = TableLayout.layOut(table, in: storage, style: style, showingDelimiterRowAt: selection) {
+                shownDelimiterRow = shown
+            }
         }
     }
 

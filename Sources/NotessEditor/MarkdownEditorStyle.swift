@@ -17,6 +17,9 @@ public struct MarkdownEditorStyle: Equatable {
         public var quote: NSColor
         public var completedTask: NSColor
         public var codeBackground: NSColor
+        /// The grid lines of a table.
+        public var tableBorder: NSColor
+        public var tableHeaderBackground: NSColor
 
         public init(
             text: NSColor = .textColor,
@@ -27,7 +30,9 @@ public struct MarkdownEditorStyle: Equatable {
             task: NSColor = .controlAccentColor,
             quote: NSColor = .secondaryLabelColor,
             completedTask: NSColor = .secondaryLabelColor,
-            codeBackground: NSColor = .quaternarySystemFill
+            codeBackground: NSColor = .quaternarySystemFill,
+            tableBorder: NSColor = .separatorColor,
+            tableHeaderBackground: NSColor = .quaternarySystemFill
         ) {
             self.text = text
             self.syntaxMarker = syntaxMarker
@@ -38,6 +43,8 @@ public struct MarkdownEditorStyle: Equatable {
             self.quote = quote
             self.completedTask = completedTask
             self.codeBackground = codeBackground
+            self.tableBorder = tableBorder
+            self.tableHeaderBackground = tableHeaderBackground
         }
     }
 

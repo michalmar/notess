@@ -1,20 +1,39 @@
 import AppKit
 import NotessCore
 
-/// Lines up the columns of a GFM table without changing its text.
+extension NSAttributedString.Key {
+    /// A `TableRowDecoration` on every line of a GFM table.
+    static let notessTableRow = NSAttributedString.Key("NotessTableRow")
+}
+
+/// Shows a GFM table as a table without changing its text.
 ///
 /// Every cell is measured with its current formatting; then each cell that is
 /// narrower than its column gets extra space (`.kern`) after its last
 /// character, so the `|` after it moves to the column's edge. Right- and
 /// centre-aligned columns put some or all of that space after the pipe before
-/// the cell instead. The pipes stay visible and act as the column borders.
+/// the cell instead. The pipes and the delimiter row are hidden (the delimiter
+/// row is also squeezed to a hairline); `TableRowLayoutFragment` draws the grid
+/// from the `TableRowDecoration` set on every row. The delimiter row stays
+/// visible while `selection` touches it, so it can be edited.
+///
+/// Returns the line of the delimiter row left visible, if any.
 @MainActor
 enum TableLayout {
-    static func alignColumns(of table: MarkdownTable, in storage: NSTextStorage, pipeFont: NSFont) {
+    static func layOut(
+        _ table: MarkdownTable,
+        in storage: NSTextStorage,
+        style: MarkdownEditorStyle,
+        showingDelimiterRowAt selection: NSRange?
+    ) -> NSRange? {
         let string = storage.mutableString
-        // Plain pipes in every row, also the bold header, so the borders look alike.
+        let pipeFont = style.font
+        let hidden = NSColor.clear
+        // Each pipe takes its own width plus this much: room around the grid line.
+        let pipeWidth = width(of: "|", font: pipeFont) + cellPadding
+        // Plain pipes in every row, also the bold header, so the columns are alike.
         for pipe in table.rows.flatMap(\.pipes) {
-            storage.addAttribute(.font, value: pipeFont, range: NSRange(location: pipe, length: 1))
+            storage.addAttributes([.font: pipeFont, .foregroundColor: hidden], range: NSRange(location: pipe, length: 1))
         }
 
         struct Measured {
@@ -25,28 +44,35 @@ enum TableLayout {
             /// The width of the pipe after each cell, 0 when there is none.
             var closingPipes: [CGFloat]
         }
-        let rows = table.rows.map { row in
+        // The hidden delimiter row neither sets nor follows the column widths.
+        let rows = table.rows.filter { $0.kind != .delimiter }.map { row in
             let lineStart = string.lineRange(for: NSRange(location: row.range.location, length: 0)).location
             let pipes = Set(row.pipes)
             return Measured(
                 row: row,
-                prefix: width(of: NSRange(location: lineStart, length: row.cells[0].location - lineStart), in: storage),
+                prefix: width(of: NSRange(location: lineStart, length: row.cells[0].location - lineStart), in: storage)
+                    + (pipes.contains(row.cells[0].location - 1) ? cellPadding : 0),
                 cells: row.cells.map { width(of: $0, in: storage) },
-                closingPipes: row.cells.map {
-                    pipes.contains($0.upperBound) ? width(of: NSRange(location: $0.upperBound, length: 1), in: storage) : 0
-                }
+                closingPipes: row.cells.map { pipes.contains($0.upperBound) ? pipeWidth : 0 }
             )
         }
 
         // Where each row's cell starts, and where every column's closing pipe goes.
         var starts = rows.map(\.prefix)
+        var edges: [CGFloat] = []
         var kerns: [NSRange: CGFloat] = [:]
+        for row in table.rows where row.kind != .delimiter {
+            for pipe in row.pipes {
+                kerns[NSRange(location: pipe, length: 1)] = cellPadding
+            }
+        }
         let columnCount = rows.map(\.cells.count).max() ?? 0
         for column in 0..<columnCount {
             let edge = rows.indices.reduce(0) { result, index in
                 guard column < rows[index].cells.count else { return result }
                 return max(result, starts[index] + rows[index].cells[column])
             }
+            edges.append(edge)
             for (index, measured) in rows.enumerated() where column < measured.cells.count {
                 let row = measured.row
                 let cell = row.cells[column]
@@ -55,7 +81,7 @@ enum TableLayout {
                 guard padding > 0.01 else { continue }
                 let hasOpeningPipe = row.pipes.contains(cell.location - 1)
                 var leading: CGFloat = 0
-                if hasOpeningPipe, row.kind != .delimiter, column < table.alignments.count {
+                if hasOpeningPipe, column < table.alignments.count {
                     switch table.alignments[column] {
                     case .left: leading = 0
                     case .center: leading = (padding / 2).rounded()
@@ -77,12 +103,76 @@ enum TableLayout {
         for (range, kern) in kerns {
             storage.addAttribute(.kern, value: kern, range: range)
         }
+
+        guard let header = rows.first else { return nil }
+        let lines = gridLines(header: header.row, prefix: header.prefix, edges: edges, pipeWidth: pipeWidth)
+        let rowStyle = NSMutableParagraphStyle()
+        rowStyle.paragraphSpacingBefore = rowPadding
+        rowStyle.paragraphSpacing = rowPadding
+        let delimiterStyle = NSMutableParagraphStyle()
+        delimiterStyle.minimumLineHeight = 1
+        delimiterStyle.maximumLineHeight = 1
+        var shownDelimiterRow: NSRange?
+        for row in table.rows {
+            let line = string.lineRange(for: NSRange(location: row.range.location, length: 0))
+            if row.kind == .delimiter, let selection, self.selection(selection, touches: line, in: string) {
+                storage.addAttribute(.foregroundColor, value: style.colors.syntaxMarker, range: line)
+                shownDelimiterRow = line
+                continue
+            }
+            let decoration = TableRowDecoration(
+                kind: row.kind,
+                columnLines: lines,
+                border: style.colors.tableBorder,
+                headerBackground: style.colors.tableHeaderBackground
+            )
+            storage.addAttribute(.notessTableRow, value: decoration, range: line)
+            if row.kind == .delimiter {
+                storage.addAttributes([.foregroundColor: hidden, .paragraphStyle: delimiterStyle], range: line)
+            } else {
+                storage.addAttribute(.paragraphStyle, value: rowStyle, range: line)
+            }
+        }
+        return shownDelimiterRow
+    }
+
+    /// Whether `selection` is on `line`, its end included but not the next line's start.
+    static func selection(_ selection: NSRange, touches line: NSRange, in string: NSString) -> Bool {
+        var end = min(line.upperBound, string.length)
+        while end > line.location, let scalar = UnicodeScalar(string.character(at: end - 1)),
+              CharacterSet.newlines.contains(scalar) {
+            end -= 1
+        }
+        return selection.location <= end && selection.upperBound >= line.location
+    }
+
+    /// Space around the text of a cell, on each side of a grid line and above and below a row.
+    nonisolated static let cellPadding: CGFloat = 6
+    /// Space above and below the text of a row, inside its rules.
+    nonisolated static let rowPadding: CGFloat = cellPadding / 2
+
+    /// The x of every vertical line from the line start: through the middle
+    /// of each pipe, or just outside the text where the header has no outer pipe.
+    private static func gridLines(header: MarkdownTable.Row, prefix: CGFloat, edges: [CGFloat], pipeWidth: CGFloat) -> [CGFloat] {
+        guard let first = header.cells.first, let last = header.cells.last else { return [] }
+        let half = pipeWidth / 2
+        let left = header.pipes.contains(first.location - 1) ? prefix - half : prefix - cellPadding
+        let right = header.pipes.contains(last.upperBound) ? edges[edges.count - 1] + half : edges[edges.count - 1] + cellPadding
+        return [left] + edges.dropLast().map { $0 + half } + [right]
     }
 
     /// The typographic width of `range` with its current attributes, trailing spaces included.
     private static func width(of range: NSRange, in storage: NSTextStorage) -> CGFloat {
         guard range.length > 0 else { return 0 }
-        let line = CTLineCreateWithAttributedString(storage.attributedSubstring(from: range))
+        return width(of: storage.attributedSubstring(from: range))
+    }
+
+    private static func width(of text: String, font: NSFont) -> CGFloat {
+        width(of: NSAttributedString(string: text, attributes: [.font: font]))
+    }
+
+    private static func width(of text: NSAttributedString) -> CGFloat {
+        let line = CTLineCreateWithAttributedString(text)
         return CGFloat(CTLineGetTypographicBounds(line, nil, nil, nil))
     }
 }
