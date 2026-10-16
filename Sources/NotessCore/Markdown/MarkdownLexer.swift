@@ -14,10 +14,13 @@ import Foundation
 /// call and must report every edit.
 public final class MarkdownLexer {
     /// The line-aligned range that must be restyled after an edit, and all
-    /// tokens inside it.
+    /// tokens and tables inside it. A table is always complete: an edit
+    /// anywhere in a table restyles the whole table, since every row's layout
+    /// depends on the widest cell of each column.
     public struct Update: Equatable, Sendable {
         public var range: NSRange
         public var tokens: [MarkdownToken]
+        public var tables: [MarkdownTable]
     }
 
     /// UTF-16 offset of the first character of every line.
@@ -32,9 +35,15 @@ public final class MarkdownLexer {
     /// Lexes the whole text from scratch and returns all tokens.
     @discardableResult
     public func reset(text: NSString) -> [MarkdownToken] {
+        relexAll(text: text).tokens
+    }
+
+    /// Lexes the whole text from scratch; the update covers all of it.
+    @discardableResult
+    public func relexAll(text: NSString) -> Update {
         lineStarts = [0] + Self.lineStarts(in: text, from: 0, to: text.length)
         states = Array(repeating: .documentStart, count: lineStarts.count)
-        return relex(text, from: 0, through: lineStarts.count - 1).tokens
+        return relex(text, from: 0, through: lineStarts.count - 1)
     }
 
     /// Updates the lexer after `text` was edited, using the values reported by
@@ -43,8 +52,7 @@ public final class MarkdownLexer {
         let location = editedRange.location
         let oldEnd = location + editedRange.length - delta
         guard location >= 0, oldEnd >= location, editedRange.upperBound <= text.length else {
-            let tokens = reset(text: text)
-            return Update(range: NSRange(location: 0, length: text.length), tokens: tokens)
+            return relexAll(text: text)
         }
 
         // A line starts after a newline. Newlines before the edit stay put,
@@ -62,7 +70,12 @@ public final class MarkdownLexer {
 
         let firstEdited = firstRemoved - 1
         let lastEdited = firstEdited + inserted.count
-        return relex(text, from: max(0, firstEdited - 1), through: lastEdited)
+        // An edit in a table, or on the line right below it, starts at the header.
+        var first = max(0, firstEdited - 1)
+        if states[firstEdited].table != .none {
+            while first > 0 && states[first].table != .none { first -= 1 }
+        }
+        return relex(text, from: first, through: lastEdited)
     }
 
     /// The change that toggles the task box at `index`, or nil when `index` is
@@ -83,6 +96,7 @@ public final class MarkdownLexer {
 
     private func relex(_ text: NSString, from first: Int, through last: Int) -> Update {
         var tokens: [MarkdownToken] = []
+        var tables: [MarkdownTable] = []
         var state = states[first]
         var line = first
         while line < lineStarts.count {
@@ -91,13 +105,24 @@ public final class MarkdownLexer {
             let current = line
             let next = lexer.lex(state: state, isFirstLine: line == 0) { nextLineUnits(after: current, in: text) }
             tokens.append(contentsOf: lexer.tokens)
+            if let row = lexer.tableRow {
+                if row.kind == .header {
+                    tables.append(MarkdownTable(rows: [row], alignments: []))
+                } else if !tables.isEmpty {
+                    tables[tables.count - 1].rows.append(row)
+                    if let alignments = lexer.tableAlignments {
+                        tables[tables.count - 1].alignments = alignments
+                    }
+                }
+            }
             line += 1
-            if line < lineStarts.count && line > last && next == states[line] { break }
+            // Never stop inside a table, so it is always restyled whole.
+            if line < lineStarts.count && line > last && next == states[line] && next.table == .none { break }
             state = next
         }
         let start = lineStarts[first]
         let end = line < lineStarts.count ? lineStarts[line] : text.length
-        return Update(range: NSRange(location: start, length: end - start), tokens: tokens)
+        return Update(range: NSRange(location: start, length: end - start), tokens: tokens, tables: tables)
     }
 
     private func nextLineUnits(after line: Int, in text: NSString) -> [UInt16]? {
