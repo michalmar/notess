@@ -37,6 +37,10 @@ struct MarkdownLineLexer {
     private let c: [UInt16]
     private let offset: Int
     private(set) var tokens: [MarkdownToken] = []
+    /// The line's cells when it is a row of a GFM table.
+    private(set) var tableRow: MarkdownTable.Row?
+    /// The column alignments when the line is a table's delimiter row.
+    private(set) var tableAlignments: [MarkdownTable.Alignment]?
 
     init(line: [UInt16], offset: Int) {
         self.c = line
@@ -100,6 +104,8 @@ struct MarkdownLineLexer {
         switch state.table {
         case .delimiterNext:
             add(.syntaxMarker, first, n)
+            tableRow = makeTableRow(.delimiter, from: first)
+            tableAlignments = tableRow?.cells.map(alignment(of:))
             next.table = .body
             return next
         case .body where containsUnescapedPipe(from: first):
@@ -310,6 +316,7 @@ struct MarkdownLineLexer {
 
     private mutating func lexTableRow(from first: Int, isHeader: Bool) {
         if isHeader { add(.tableHeader, first, c.count) }
+        tableRow = makeTableRow(isHeader ? .header : .body, from: first)
         var cellStart = first
         for pipe in pipePositions(from: first) {
             lexInline(cellStart, pipe)
@@ -317,6 +324,39 @@ struct MarkdownLineLexer {
             cellStart = pipe + 1
         }
         lexInline(cellStart, c.count)
+    }
+
+    private func makeTableRow(_ kind: MarkdownTable.Row.Kind, from first: Int) -> MarkdownTable.Row {
+        let end = trimmedEnd()
+        let pipes = pipePositions(from: first)
+        let hasLeadingPipe = pipes.first == first
+        let hasTrailingPipe = pipes.last == end - 1 && (pipes.count > 1 || !hasLeadingPipe)
+        var separators = pipes[...]
+        if hasLeadingPipe { separators = separators.dropFirst() }
+        if hasTrailingPipe { separators = separators.dropLast() }
+        var cells: [NSRange] = []
+        var cellStart = hasLeadingPipe ? first + 1 : first
+        for pipe in separators {
+            cells.append(NSRange(location: offset + cellStart, length: pipe - cellStart))
+            cellStart = pipe + 1
+        }
+        let lastEnd = hasTrailingPipe ? end - 1 : end
+        cells.append(NSRange(location: offset + cellStart, length: max(0, lastEnd - cellStart)))
+        return MarkdownTable.Row(
+            kind: kind,
+            range: NSRange(location: offset + first, length: end - first),
+            cells: cells,
+            pipes: pipes.map { offset + $0 }
+        )
+    }
+
+    private func alignment(of cell: NSRange) -> MarkdownTable.Alignment {
+        let units = Self.trimmed(c[(cell.location - offset)..<(cell.upperBound - offset)])
+        switch (units.first == Char.colon, units.count > 1 && units.last == Char.colon) {
+        case (true, true): return .center
+        case (false, true): return .right
+        default: return .left
+        }
     }
 
     /// Column count of a GFM table delimiter row such as `| --- | :-: |`, or nil.

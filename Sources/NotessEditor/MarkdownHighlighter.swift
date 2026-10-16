@@ -31,9 +31,9 @@ final class MarkdownHighlighter: NSObject, NSTextStorageDelegate {
 
     /// Re-lexes and restyles the whole text.
     func restyleAll(_ storage: NSTextStorage) {
-        let tokens = lexer.reset(text: storage.mutableString)
+        let update = lexer.relexAll(text: storage.mutableString)
         storage.beginEditing()
-        apply(tokens, in: NSRange(location: 0, length: storage.length), to: storage)
+        apply(update, to: storage)
         storage.endEditing()
         didStyleText(NSRange(location: 0, length: storage.length), nil, 0)
     }
@@ -54,20 +54,23 @@ final class MarkdownHighlighter: NSObject, NSTextStorageDelegate {
         nonisolated(unsafe) let storage = textStorage
         MainActor.assumeIsolated {
             let update = lexer.update(text: storage.mutableString, editedRange: editedRange, changeInLength: delta)
-            apply(update.tokens, in: update.range, to: storage)
+            apply(update, to: storage)
             didStyleText(update.range, editedRange, delta)
         }
     }
 
     // MARK: Applying tokens
 
-    private func apply(_ tokens: [MarkdownToken], in range: NSRange, to storage: NSTextStorage) {
-        guard range.length > 0 else { return }
-        storage.setAttributes(baseAttributes, range: range)
+    private func apply(_ update: MarkdownLexer.Update, to storage: NSTextStorage) {
+        guard update.range.length > 0 else { return }
+        storage.setAttributes(baseAttributes, range: update.range)
         for layer in 0..<3 {
-            for token in tokens where Self.layer(of: token.kind) == layer {
+            for token in update.tokens where Self.layer(of: token.kind) == layer {
                 apply(token, to: storage)
             }
+        }
+        for table in update.tables {
+            TableLayout.alignColumns(of: table, in: storage, pipeFont: style.font)
         }
     }
 

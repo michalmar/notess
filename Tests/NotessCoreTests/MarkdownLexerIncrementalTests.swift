@@ -10,6 +10,7 @@ struct MarkdownLexerIncrementalTests {
         let lexer = MarkdownLexer()
         var text: NSMutableString
         var tokens: [MarkdownToken]
+        var lastUpdate: MarkdownLexer.Update?
 
         init(_ text: String) {
             self.text = NSMutableString(string: text)
@@ -37,12 +38,22 @@ struct MarkdownLexerIncrementalTests {
                 }
                 return nil
             } + update.tokens
+            lastUpdate = update
             return update.range
         }
 
         func expectMatchesFullLex(sourceLocation: SourceLocation = #_sourceLocation) {
             let fresh = MarkdownLexer().reset(text: text)
             #expect(Set(tokens) == Set(fresh), "text: \(text.debugDescription)", sourceLocation: sourceLocation)
+            expectWholeTablesInLastUpdate(sourceLocation: sourceLocation)
+        }
+
+        /// Every table the last update touched is in it, complete and current.
+        func expectWholeTablesInLastUpdate(sourceLocation: SourceLocation = #_sourceLocation) {
+            guard let lastUpdate else { return }
+            let fresh = MarkdownLexer().relexAll(text: text).tables
+            let touched = fresh.filter { NSIntersectionRange($0.range, lastUpdate.range).length > 0 }
+            #expect(lastUpdate.tables == touched, "text: \(text.debugDescription)", sourceLocation: sourceLocation)
         }
     }
 
@@ -86,6 +97,26 @@ struct MarkdownLexerIncrementalTests {
         mirror.replace(NSRange(location: 16, length: 1), with: "-")
         mirror.expectMatchesFullLex()
         #expect(mirror.tokens.contains { $0.kind == .tableHeader })
+    }
+
+    @Test("typing in a table cell restyles the whole table")
+    func wholeTable() throws {
+        var mirror = Mirror("Úvod\n\n| a | b |\n| - | - |\n| c | d |\n| e | f |\n\nkonec")
+        let location = (mirror.text as NSString).range(of: "e").location
+        let range = mirror.replace(NSRange(location: location, length: 0), with: "dlouhé ")
+        let table = try #require(mirror.lastUpdate?.tables.first)
+        #expect(table.rows.count == 4)
+        #expect(NSIntersectionRange(range, table.range) == table.range)
+        #expect((mirror.text as NSString).substring(with: range).hasPrefix("| a | b |"))
+        mirror.expectMatchesFullLex()
+    }
+
+    @Test("typing a pipe below a table adds a row to it")
+    func newRow() throws {
+        var mirror = Mirror("| a | b |\n| - | - |\n| c | d |\nx")
+        mirror.replace(NSRange(location: (mirror.text as NSString).length, length: 0), with: " | y")
+        #expect(mirror.lastUpdate?.tables.first?.rows.count == 4)
+        mirror.expectMatchesFullLex()
     }
 
     @Test("typing a setext underline restyles the line above")
