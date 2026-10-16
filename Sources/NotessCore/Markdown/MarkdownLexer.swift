@@ -99,7 +99,7 @@ public final class MarkdownLexer {
         let target = Self.upperBound(lineStarts, index) - 1
         var line = target
         while line > 0 && states[line].table != .none { line -= 1 }
-        var table: MarkdownTable?
+        var tables: [MarkdownTable] = []
         var state = states[line]
         while line < lineStarts.count {
             var lexer = MarkdownLineLexer(line: lineUnits(line, in: text), offset: lineStarts[line])
@@ -107,21 +107,16 @@ public final class MarkdownLexer {
             state = lexer.lex(state: state, isFirstLine: line == 0) { nextLineUnits(after: current, in: text) }
             guard let row = lexer.tableRow else {
                 if line >= target { break }
-                table = nil
+                tables.removeAll()
                 line += 1
                 continue
             }
-            if row.kind == .header {
-                if line > target { break }
-                table = MarkdownTable(rows: [row], alignments: [])
-            } else {
-                table?.rows.append(row)
-                if let alignments = lexer.tableAlignments { table?.alignments = alignments }
-            }
+            if row.kind == .header && line > target { break }
+            Self.add(row, alignments: lexer.tableAlignments, to: &tables)
             line += 1
             if line > target && state.table == .none { break }
         }
-        guard let table, line > target, table.rows.count > 1 else { return nil }
+        guard let table = tables.last, line > target, table.rows.count > 1 else { return nil }
         return table
     }
 
@@ -139,14 +134,7 @@ public final class MarkdownLexer {
             let next = lexer.lex(state: state, isFirstLine: line == 0) { nextLineUnits(after: current, in: text) }
             tokens.append(contentsOf: lexer.tokens)
             if let row = lexer.tableRow {
-                if row.kind == .header {
-                    tables.append(MarkdownTable(rows: [row], alignments: []))
-                } else if !tables.isEmpty {
-                    tables[tables.count - 1].rows.append(row)
-                    if let alignments = lexer.tableAlignments {
-                        tables[tables.count - 1].alignments = alignments
-                    }
-                }
+                Self.add(row, alignments: lexer.tableAlignments, to: &tables)
             }
             line += 1
             // Never stop inside a table, so it is always restyled whole.
@@ -156,6 +144,17 @@ public final class MarkdownLexer {
         let start = lineStarts[first]
         let end = line < lineStarts.count ? lineStarts[line] : text.length
         return Update(range: NSRange(location: start, length: end - start), tokens: tokens, tables: tables)
+    }
+
+    /// A header row starts a new table; the other rows (and the delimiter
+    /// row's alignments) go to the last one.
+    private static func add(_ row: MarkdownTable.Row, alignments: [MarkdownTable.Alignment]?, to tables: inout [MarkdownTable]) {
+        if row.kind == .header {
+            tables.append(MarkdownTable(rows: [row], alignments: []))
+        } else if !tables.isEmpty {
+            tables[tables.count - 1].rows.append(row)
+            if let alignments { tables[tables.count - 1].alignments = alignments }
+        }
     }
 
     private func nextLineUnits(after line: Int, in text: NSString) -> [UInt16]? {

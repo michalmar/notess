@@ -98,6 +98,12 @@ struct MarkdownTextViewTableEditingTests {
         event { textView.insertTab(nil) }
         #expect(marked == "| a | bb |\n| - | - |\n| c | d |\n| ‸ |  |")
 
+        // Enter after Tab keeps the selected cell's text and adds a row.
+        load("| a‸ | bb |\n| - | - |")
+        event { textView.insertTab(nil) }
+        event { textView.insertNewline(nil) }
+        #expect(marked == "| a | bb |\n| - | - |\n| ‸ |  |")
+
         load("text‸")
         event { textView.insertTab(nil) }
         #expect(marked == "text\t‸")

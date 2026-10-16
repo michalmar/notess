@@ -50,6 +50,7 @@ struct NoteCommands: Commands {
                     .disabled(
                         model.document == nil
                             || model.document?.isReadOnly == true
+                            || model.sidebarMode == .tags
                             || isPreviewPresented
                     )
                 }

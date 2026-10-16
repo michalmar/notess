@@ -82,6 +82,20 @@ struct MarkdownTableEditingTests {
         #expect(command(.insertColumnRight, "a | b‸\n--|--\nc |\n\\| | x") == "| a | b | ‸ |\n| -- | -- | --- |\n| c |  |  |\n| \\| | x |  |")
     }
 
+    @Test("a cell past the header's width counts as the last column")
+    func raggedRows() {
+        #expect(command(.insertColumnLeft, "| a | b |\n| - | - |\n| c | d | e | f‸ |") == "| a |  | b |\n| - | --- | - |\n| c | ‸ | d | e | f |")
+        #expect(command(.insertColumnRight, "| a | b |\n| - | - |\n| c | d | e‸ |") == "| a | b |  |\n| - | - | --- |\n| c | d | ‸ | e |")
+    }
+
+    @Test("new rows and rewritten tables keep the file's CRLF line breaks")
+    func crlf() {
+        #expect(command(.insertRowBelow, "| a |\r\n| - |\r\n| c‸ |\r\nPo") == "| a |\r\n| - |\r\n| c |\r\n| ‸ |\r\nPo")
+        #expect(command(.insertRowAbove, "| a |\r\n| - |\r\n| c‸ |") == "| a |\r\n| - |\r\n| ‸ |\r\n| c |")
+        #expect(command(.insertColumnRight, "| a‸ |\r\n| - |") == "| a | ‸ |\r\n| - | --- |")
+        #expect(command(.deleteRow, "| a |\r\n| - |\r\n| b |\r\n| c‸ |") == "| a |\r\n| - |\r\n| ‸b |")
+    }
+
     @Test("columns are deleted, never the only one")
     func deleteColumns() {
         let table = "| a | b | c |\n| :- | :-: | -: |\n| d | e‸ | f |"

@@ -50,10 +50,10 @@ extension MarkdownTextView {
     @objc public func deleteTableRow(_ sender: Any?) { perform(.deleteRow) }
     @objc public func deleteTableColumn(_ sender: Any?) { perform(.deleteColumn) }
 
-    /// Enter in a table adds a row below (Option+Enter is a plain line break).
+    /// Enter in a table adds a row below, keeping any selected text such as a
+    /// cell selected by Tab (Option+Enter is a plain line break).
     public override func insertNewline(_ sender: Any?) {
-        guard selectedRange().length == 0,
-              let (table, index, text) = tableAtSelection(),
+        guard let (table, index, text) = tableAtSelection(),
               let edit = table.newline(at: index, in: text) else {
             super.insertNewline(sender)
             return
