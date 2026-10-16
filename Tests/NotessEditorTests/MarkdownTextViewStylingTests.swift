@@ -144,6 +144,27 @@ struct MarkdownTextViewStylingTests {
         #expect(try #require(harness.font(at: "Text")).pointSize == style.font.pointSize)
     }
 
+    @Test("typing mid-line keeps the caret after the typed text")
+    func typingKeepsCaret() {
+        let harness = Harness("**a b** c\nnext\n```\ncode\n```")
+        harness.window.makeFirstResponder(harness.textView)
+        harness.type("x", at: 3)
+        harness.textView.insertText("y", replacementRange: harness.textView.selectedRange())
+        #expect(harness.textView.string.hasPrefix("**axy b** c\nnext"))
+        #expect(harness.textView.selectedRange() == NSRange(location: 5, length: 0))
+
+        harness.type("`", at: 0)
+        #expect(harness.textView.selectedRange() == NSRange(location: 1, length: 0))
+    }
+
+    @Test("typed emoji gets a font that can draw it")
+    func typedEmojiFallsBack() throws {
+        let harness = Harness("text")
+        harness.type("🙂", at: 2)
+        let font = try #require(harness.font(at: "🙂"))
+        #expect(font.fontName != style.font.fontName)
+    }
+
     @Test("typing a fence restyles the following lines as code")
     func fenceRestylesFollowingLines() throws {
         let harness = Harness("před\n#tag\npo")

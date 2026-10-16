@@ -88,6 +88,18 @@ struct MarkdownTableLayoutTests {
         #expect(after[2][1] - before[2][1] > 30)
     }
 
+    @Test("typing in a cell keeps the caret after the typed character")
+    func caretStays() {
+        textView.string = "| ab | cd |\n| -- | -- |\n| ef | gh |\n\nkonec"
+        window.makeFirstResponder(textView)
+        textView.setSelectedRange(NSRange(location: 4, length: 0))
+        textView.insertText("x", replacementRange: textView.selectedRange())
+        #expect(textView.selectedRange() == NSRange(location: 5, length: 0))
+        textView.insertText("y", replacementRange: textView.selectedRange())
+        #expect(textView.selectedRange() == NSRange(location: 6, length: 0))
+        #expect(textView.string.hasPrefix("| abxy | cd |"))
+    }
+
     @Test("right- and centre-aligned columns follow the delimiter row")
     func alignment() {
         let text = "| a | b |\n| --: | :-: |\n| dlouhé | dlouhé |"

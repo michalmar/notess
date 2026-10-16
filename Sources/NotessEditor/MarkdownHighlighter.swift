@@ -43,9 +43,12 @@ final class MarkdownHighlighter: NSObject, NSTextStorageDelegate {
         [.font: style.font, .foregroundColor: style.colors.text]
     }
 
+    // Styles in `didProcessEditing`, not `willProcessEditing`: on TextKit 2,
+    // attributes set in `willProcessEditing` widen the edited range to the
+    // restyled lines, and NSTextView then moves the caret to the end of them.
     nonisolated func textStorage(
         _ textStorage: NSTextStorage,
-        willProcessEditing editedMask: NSTextStorageEditActions,
+        didProcessEditing editedMask: NSTextStorageEditActions,
         range editedRange: NSRange,
         changeInLength delta: Int
     ) {
@@ -55,6 +58,9 @@ final class MarkdownHighlighter: NSObject, NSTextStorageDelegate {
         MainActor.assumeIsolated {
             let update = lexer.update(text: storage.mutableString, editedRange: editedRange, changeInLength: delta)
             apply(update, to: storage)
+            // Attribute fixing (font fallback for emoji, CJK, ...) already ran
+            // before this callback, and `apply` reset the fonts.
+            if update.range.length > 0 { storage.fixAttributes(in: update.range) }
             didStyleText(update.range, editedRange, delta)
         }
     }
