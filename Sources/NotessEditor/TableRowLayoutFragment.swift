@@ -4,15 +4,13 @@ import NotessCore
 /// What `TableRowLayoutFragment` draws around one row of a table.
 final class TableRowDecoration: NSObject, @unchecked Sendable {
     let kind: MarkdownTable.Row.Kind
-    let isLast: Bool
     /// The x of every vertical grid line from the line start, outer borders included.
     let columnLines: [CGFloat]
     let border: NSColor
     let headerBackground: NSColor
 
-    init(kind: MarkdownTable.Row.Kind, isLast: Bool, columnLines: [CGFloat], border: NSColor, headerBackground: NSColor) {
+    init(kind: MarkdownTable.Row.Kind, columnLines: [CGFloat], border: NSColor, headerBackground: NSColor) {
         self.kind = kind
-        self.isLast = isLast
         self.columnLines = columnLines
         self.border = border
         self.headerBackground = headerBackground
@@ -20,21 +18,21 @@ final class TableRowDecoration: NSObject, @unchecked Sendable {
 
     override func isEqual(_ object: Any?) -> Bool {
         guard let other = object as? TableRowDecoration else { return false }
-        return kind == other.kind && isLast == other.isLast && columnLines == other.columnLines
+        return kind == other.kind && columnLines == other.columnLines
             && border == other.border && headerBackground == other.headerBackground
     }
 
     override var hash: Int {
         var hasher = Hasher()
         hasher.combine(kind)
-        hasher.combine(isLast)
         hasher.combine(columnLines)
         return hasher.finalize()
     }
 }
 
 /// The layout fragment of one table row: its text plus the table grid, a
-/// shaded header and a rule below the header and every row.
+/// shaded header and a rule below every row. The hidden delimiter row is the
+/// rule below the header.
 ///
 /// Rows of one table share their `columnLines`, so the vertical lines join up.
 final class TableRowLayoutFragment: NSTextLayoutFragment, @unchecked Sendable {
@@ -64,8 +62,15 @@ final class TableRowLayoutFragment: NSTextLayoutFragment, @unchecked Sendable {
     private var rowHeight: CGFloat {
         let lines = textLineFragments.filter { $0.characterRange.length > 0 }
         guard let last = lines.last else { return layoutFragmentFrame.height }
-        let padding = decoration.kind == .delimiter ? 0 : TableLayout.cellPadding / 2
+        let padding = decoration.kind == .delimiter ? 0 : TableLayout.rowPadding
         return last.typographicBounds.maxY + padding
+    }
+
+    /// False for the delimiter row, which is the rule below the header, and
+    /// when the row wraps: the lines are measured on one line, so they would
+    /// cross the wrapped text.
+    var drawsColumnLines: Bool {
+        decoration.kind != .delimiter && textLineFragments.filter { $0.characterRange.length > 0 }.count <= 1
     }
 
     override var renderingSurfaceBounds: CGRect {
@@ -98,13 +103,13 @@ final class TableRowLayoutFragment: NSTextLayoutFragment, @unchecked Sendable {
         NSGraphicsContext.current = NSGraphicsContext(cgContext: context, flipped: true)
         decoration.border.setFill()
         let origin = point.x + span.lowerBound - decoration.columnLines[0].rounded(.down)
-        for x in decoration.columnLines {
+        for x in decoration.columnLines where drawsColumnLines {
             CGRect(x: origin + x.rounded(.down), y: point.y, width: 1, height: height).fill()
         }
-        if decoration.kind == .header {
+        switch decoration.kind {
+        case .header, .delimiter:
             CGRect(x: left, y: point.y, width: width, height: 1).fill()
-        }
-        if decoration.kind != .delimiter {
+        case .body:
             CGRect(x: left, y: point.y + height - 1, width: width, height: 1).fill()
         }
         NSGraphicsContext.restoreGraphicsState()

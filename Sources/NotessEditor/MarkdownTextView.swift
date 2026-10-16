@@ -166,6 +166,16 @@ public final class MarkdownTextView: NSTextView {
         }
     }
 
+    // MARK: Table delimiter rows
+
+    /// A table's delimiter row is hidden except while the caret is on it, so
+    /// it stays visible to edit (alignment colons, a table being typed).
+    public override func setSelectedRanges(_ ranges: [NSValue], affinity: NSSelectionAffinity, stillSelecting: Bool) {
+        super.setSelectedRanges(ranges, affinity: affinity, stillSelecting: stillSelecting)
+        guard isEditable, let textStorage else { return }
+        highlighter.selectionDidChange(to: selectedRange(), in: textStorage)
+    }
+
     // MARK: Image paste
 
     /// Called when clipboard image data cannot be turned into a PNG; nothing is inserted.

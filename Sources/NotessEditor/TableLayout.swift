@@ -14,10 +14,18 @@ extension NSAttributedString.Key {
 /// centre-aligned columns put some or all of that space after the pipe before
 /// the cell instead. The pipes and the delimiter row are hidden (the delimiter
 /// row is also squeezed to a hairline); `TableRowLayoutFragment` draws the grid
-/// from the `TableRowDecoration` set on every row.
+/// from the `TableRowDecoration` set on every row. The delimiter row stays
+/// visible while `selection` touches it, so it can be edited.
+///
+/// Returns the line of the delimiter row left visible, if any.
 @MainActor
 enum TableLayout {
-    static func layOut(_ table: MarkdownTable, in storage: NSTextStorage, style: MarkdownEditorStyle) {
+    static func layOut(
+        _ table: MarkdownTable,
+        in storage: NSTextStorage,
+        style: MarkdownEditorStyle,
+        showingDelimiterRowAt selection: NSRange?
+    ) -> NSRange? {
         let string = storage.mutableString
         let pipeFont = style.font
         let hidden = NSColor.clear
@@ -96,19 +104,24 @@ enum TableLayout {
             storage.addAttribute(.kern, value: kern, range: range)
         }
 
-        guard let header = rows.first else { return }
+        guard let header = rows.first else { return nil }
         let lines = gridLines(header: header.row, prefix: header.prefix, edges: edges, pipeWidth: pipeWidth)
         let rowStyle = NSMutableParagraphStyle()
-        rowStyle.paragraphSpacingBefore = cellPadding / 2
-        rowStyle.paragraphSpacing = cellPadding / 2
+        rowStyle.paragraphSpacingBefore = rowPadding
+        rowStyle.paragraphSpacing = rowPadding
         let delimiterStyle = NSMutableParagraphStyle()
         delimiterStyle.minimumLineHeight = 1
         delimiterStyle.maximumLineHeight = 1
-        for (index, row) in table.rows.enumerated() {
+        var shownDelimiterRow: NSRange?
+        for row in table.rows {
             let line = string.lineRange(for: NSRange(location: row.range.location, length: 0))
+            if row.kind == .delimiter, let selection, self.selection(selection, touches: line, in: string) {
+                storage.addAttribute(.foregroundColor, value: style.colors.syntaxMarker, range: line)
+                shownDelimiterRow = line
+                continue
+            }
             let decoration = TableRowDecoration(
                 kind: row.kind,
-                isLast: index == table.rows.count - 1,
                 columnLines: lines,
                 border: style.colors.tableBorder,
                 headerBackground: style.colors.tableHeaderBackground
@@ -120,10 +133,23 @@ enum TableLayout {
                 storage.addAttribute(.paragraphStyle, value: rowStyle, range: line)
             }
         }
+        return shownDelimiterRow
+    }
+
+    /// Whether `selection` is on `line`, its end included but not the next line's start.
+    static func selection(_ selection: NSRange, touches line: NSRange, in string: NSString) -> Bool {
+        var end = min(line.upperBound, string.length)
+        while end > line.location, let scalar = UnicodeScalar(string.character(at: end - 1)),
+              CharacterSet.newlines.contains(scalar) {
+            end -= 1
+        }
+        return selection.location <= end && selection.upperBound >= line.location
     }
 
     /// Space around the text of a cell, on each side of a grid line and above and below a row.
     nonisolated static let cellPadding: CGFloat = 6
+    /// Space above and below the text of a row, inside its rules.
+    nonisolated static let rowPadding: CGFloat = cellPadding / 2
 
     /// The x of every vertical line from the line start: through the middle
     /// of each pipe, or just outside the text where the header has no outer pipe.
