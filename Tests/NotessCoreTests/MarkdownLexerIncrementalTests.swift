@@ -119,6 +119,15 @@ struct MarkdownLexerIncrementalTests {
         mirror.expectMatchesFullLex()
     }
 
+    @Test("typing in a paragraph below a table leaves the table alone")
+    func belowTable() {
+        var mirror = Mirror("| a | b |\n| - | - |\n| c | d |\n\nodstavec")
+        mirror.replace(NSRange(location: (mirror.text as NSString).length, length: 0), with: "!")
+        #expect(mirror.lastUpdate?.tables.isEmpty == true)
+        #expect(mirror.lastUpdate?.range.location ?? 0 >= 28)
+        mirror.expectMatchesFullLex()
+    }
+
     @Test("typing a setext underline restyles the line above")
     func setext() {
         var mirror = Mirror("Titulek\n")

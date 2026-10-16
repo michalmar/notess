@@ -60,9 +60,4 @@ public enum MarkdownSyntax {
     public static func tokens(in text: String) -> [MarkdownToken] {
         MarkdownLexer().reset(text: text as NSString)
     }
-
-    /// All GFM tables of `text`, in order.
-    public static func tables(in text: String) -> [MarkdownTable] {
-        MarkdownLexer().relexAll(text: text as NSString).tables
-    }
 }

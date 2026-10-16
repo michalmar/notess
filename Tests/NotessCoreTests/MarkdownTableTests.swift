@@ -11,7 +11,7 @@ struct MarkdownTableTests {
     @Test("a table lists its rows, cells between pipes and column alignments")
     func structure() throws {
         let text = "Úvod\n| Jméno | Role | Tým |\n| :--- | ---: | :-: |\n| Jan | PM |\n| a \\| b | `x` | y |\nkonec"
-        let tables = MarkdownSyntax.tables(in: text)
+        let tables = tables(in: text)
         let table = try #require(tables.first)
         #expect(tables.count == 1)
         #expect(table.rows.map(\.kind) == [.header, .delimiter, .body, .body])
@@ -26,7 +26,7 @@ struct MarkdownTableTests {
     @Test("rows without outer pipes and empty cells")
     func outerPipesOptional() throws {
         let text = "a | b\n--|--\n| | d\n||"
-        let table = try #require(MarkdownSyntax.tables(in: text).first)
+        let table = try #require(tables(in: text).first)
         #expect(table.alignments == [.left, .left])
         #expect(cellTexts(table.rows[0], in: text) == ["a ", " b"])
         #expect(cellTexts(table.rows[2], in: text) == [" ", " d"])
@@ -38,8 +38,12 @@ struct MarkdownTableTests {
     @Test("separate tables, and pipes that are not tables")
     func separateTables() {
         let text = "|a|b|\n|-|-|\n\n|c|\n|-|\n\n```\n|x|\n|-|\n```\n|y|z|\n|-|"
-        let tables = MarkdownSyntax.tables(in: text)
+        let tables = tables(in: text)
         #expect(tables.count == 2)
         #expect(tables.map { $0.rows.count } == [2, 2])
+    }
+
+    private func tables(in text: String) -> [MarkdownTable] {
+        MarkdownLexer().relexAll(text: text as NSString).tables
     }
 }

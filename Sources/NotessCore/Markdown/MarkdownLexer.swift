@@ -70,9 +70,11 @@ public final class MarkdownLexer {
 
         let firstEdited = firstRemoved - 1
         let lastEdited = firstEdited + inserted.count
-        // Start at the header of a table the edit is in or below.
+        // An edit in a table, or on the line right below it, starts at the header.
         var first = max(0, firstEdited - 1)
-        while first > 0 && states[first].table != .none { first -= 1 }
+        if states[firstEdited].table != .none {
+            while first > 0 && states[first].table != .none { first -= 1 }
+        }
         return relex(text, from: first, through: lastEdited)
     }
 
