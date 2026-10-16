@@ -10,9 +10,10 @@ extension NSAttributedString.Key {
 /// Acts as the `NSTextStorage` delegate: after every character edit it asks the
 /// incremental `MarkdownLexer` which lines changed and restyles only those
 /// (ADR 0001: typing must stay instant even in long notes). Markup stays
-/// visible and is only dimmed; nothing is hidden.
+/// visible and is only dimmed, except in tables, which are drawn as a grid
+/// (see `TableLayout`).
 @MainActor
-final class MarkdownHighlighter: NSObject, NSTextStorageDelegate {
+final class MarkdownHighlighter: NSObject, NSTextStorageDelegate, NSTextLayoutManagerDelegate {
     let lexer = MarkdownLexer()
     private(set) var style: MarkdownEditorStyle
     private var fontCache: [FontKey: NSFont] = [:]
@@ -65,6 +66,20 @@ final class MarkdownHighlighter: NSObject, NSTextStorageDelegate {
         }
     }
 
+    /// Table rows get a fragment that draws the table grid.
+    nonisolated func textLayoutManager(
+        _ textLayoutManager: NSTextLayoutManager,
+        textLayoutFragmentFor location: NSTextLocation,
+        in textElement: NSTextElement
+    ) -> NSTextLayoutFragment {
+        if let paragraph = textElement as? NSTextParagraph,
+           paragraph.attributedString.length > 0,
+           let decoration = paragraph.attributedString.attribute(.notessTableRow, at: 0, effectiveRange: nil) as? TableRowDecoration {
+            return TableRowLayoutFragment(textElement: textElement, range: textElement.elementRange, decoration: decoration)
+        }
+        return NSTextLayoutFragment(textElement: textElement, range: textElement.elementRange)
+    }
+
     // MARK: Applying tokens
 
     private func apply(_ update: MarkdownLexer.Update, to storage: NSTextStorage) {
@@ -76,7 +91,7 @@ final class MarkdownHighlighter: NSObject, NSTextStorageDelegate {
             }
         }
         for table in update.tables {
-            TableLayout.alignColumns(of: table, in: storage, pipeFont: style.font)
+            TableLayout.layOut(table, in: storage, style: style)
         }
     }
 

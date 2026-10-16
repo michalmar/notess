@@ -81,6 +81,7 @@ public final class MarkdownTextView: NSTextView {
             }
         }
         textStorage?.delegate = highlighter
+        textLayoutManager?.delegate = highlighter
         font = highlighter.style.font
         typingAttributes = highlighter.baseAttributes
     }

@@ -42,12 +42,12 @@ struct MarkdownTableLayoutTests {
         return .nan
     }
 
-    /// Left edges of the `|` characters of every line, line by line.
+    /// Left edges of the `|` characters of every line but the hidden delimiter row, line by line.
     private func pipeColumns() -> [[CGFloat]] {
         let string = textView.string as NSString
         var result: [[CGFloat]] = []
         string.enumerateSubstrings(in: NSRange(location: 0, length: string.length), options: .byLines) { line, range, _, _ in
-            guard let line, line.contains("|") else { return }
+            guard let line, line.contains("|"), !line.allSatisfy({ "|-: ".contains($0) }) else { return }
             var xs: [CGFloat] = []
             for (offset, unit) in (line as NSString).utf16Units.enumerated() where unit == UInt16(UInt8(ascii: "|")) {
                 xs.append(x(at: range.location + offset))
@@ -71,7 +71,7 @@ struct MarkdownTableLayoutTests {
         let text = "| Jméno | Role |\n| --- | --- |\n| Jan Novák | PM |\n| A | Vedoucí **projektu** `x` |"
         textView.string = text
         let columns = pipeColumns()
-        #expect(columns.count == 4)
+        #expect(columns.count == 3)
         expectAligned(columns)
         #expect(columns[0][1] - columns[0][0] > 40)
         #expect(textView.string == text)
@@ -85,7 +85,7 @@ struct MarkdownTableLayoutTests {
         textView.insertText("dlouhý text ", replacementRange: textView.selectedRange())
         let after = pipeColumns()
         expectAligned(after)
-        #expect(after[2][1] - before[2][1] > 30)
+        #expect(after[1][1] - before[1][1] > 30)
     }
 
     @Test("typing in a cell keeps the caret after the typed character")
@@ -118,6 +118,60 @@ struct MarkdownTableLayoutTests {
         #expect(next - b > 10)
     }
 
+    static func layoutFragments(of textView: NSTextView) -> [NSTextLayoutFragment] {
+        guard let layoutManager = textView.textLayoutManager else { return [] }
+        var fragments: [NSTextLayoutFragment] = []
+        layoutManager.enumerateTextLayoutFragments(from: layoutManager.documentRange.location, options: [.ensuresLayout]) {
+            fragments.append($0)
+            return true
+        }
+        return fragments
+    }
+
+    private func attribute(_ key: NSAttributedString.Key, at index: Int) -> Any? {
+        textView.textStorage?.attribute(key, at: index, effectiveRange: nil)
+    }
+
+    @Test("a table is drawn as a grid: pipes and the delimiter row are hidden, the text is not")
+    func grid() throws {
+        let text = "Před\n| Jméno | Role |\n| --- | --: |\n| Jan | PM |\nPo"
+        textView.string = text
+        let string = text as NSString
+
+        #expect(attribute(.foregroundColor, at: string.range(of: "| Jméno").location) as? NSColor == .clear)
+        #expect(attribute(.foregroundColor, at: string.range(of: "--:").location) as? NSColor == .clear)
+        #expect(attribute(.foregroundColor, at: string.range(of: "Jan").location) as? NSColor != .clear)
+        #expect(textView.string == text)
+
+        let fragments = Self.layoutFragments(of: textView)
+        #expect(fragments.map { $0 is TableRowLayoutFragment } == [false, true, true, true, false])
+        let rows = fragments.compactMap { ($0 as? TableRowLayoutFragment)?.decoration }
+        #expect(rows.map(\.kind) == [.header, .delimiter, .body])
+        #expect(rows.map(\.isLast) == [false, false, true])
+        #expect(Set(rows.map(\.columnLines)).count == 1)
+        // The delimiter row is squeezed to a hairline.
+        #expect(fragments[2].layoutFragmentFrame.height < fragments[3].layoutFragmentFrame.height / 4)
+
+        // Every inner grid line runs through its hidden pipe.
+        let lines = try #require(rows.first?.columnLines)
+        #expect(lines.count == 3)
+        let pipe = string.range(of: "| PM").location
+        #expect(lines[1] > x(at: pipe) && lines[1] < x(at: pipe + 1))
+    }
+
+    @Test("breaking a table shows its pipes again and drops the grid")
+    func brokenTable() {
+        textView.string = "| a | b |\n| - | - |\n| c | d |"
+        let delimiter = (textView.string as NSString).range(of: "| - | - |\n")
+        textView.setSelectedRange(delimiter)
+        textView.insertText("", replacementRange: delimiter)
+
+        #expect(textView.string == "| a | b |\n| c | d |")
+        #expect(attribute(.foregroundColor, at: 0) as? NSColor != .clear)
+        #expect(attribute(.notessTableRow, at: 0) == nil)
+        #expect(!Self.layoutFragments(of: textView).contains { $0 is TableRowLayoutFragment })
+    }
+
     @Test("a table in the read-only view lines up too")
     func readOnly() {
         let readOnly = MarkdownTextViewFactory.makeReadOnlyTextView()
@@ -129,6 +183,7 @@ struct MarkdownTableLayoutTests {
         let headerPipe = x(string.range(of: "| Role").location)
         let bodyPipe = x(string.range(of: "| PM").location)
         #expect(abs(headerPipe - bodyPipe) < 1)
+        #expect(Self.layoutFragments(of: readOnly).contains { $0 is TableRowLayoutFragment })
     }
 }
 
