@@ -92,6 +92,39 @@ public final class MarkdownLexer {
         return nil
     }
 
+    /// The table with a row on the line of `index` (`index` may be the end of
+    /// the text), or nil. Uses the stored block states; changes nothing.
+    public func table(containing index: Int, in text: NSString) -> MarkdownTable? {
+        guard index >= 0, index <= text.length else { return nil }
+        let target = Self.upperBound(lineStarts, index) - 1
+        var line = target
+        while line > 0 && states[line].table != .none { line -= 1 }
+        var table: MarkdownTable?
+        var state = states[line]
+        while line < lineStarts.count {
+            var lexer = MarkdownLineLexer(line: lineUnits(line, in: text), offset: lineStarts[line])
+            let current = line
+            state = lexer.lex(state: state, isFirstLine: line == 0) { nextLineUnits(after: current, in: text) }
+            guard let row = lexer.tableRow else {
+                if line >= target { break }
+                table = nil
+                line += 1
+                continue
+            }
+            if row.kind == .header {
+                if line > target { break }
+                table = MarkdownTable(rows: [row], alignments: [])
+            } else {
+                table?.rows.append(row)
+                if let alignments = lexer.tableAlignments { table?.alignments = alignments }
+            }
+            line += 1
+            if line > target && state.table == .none { break }
+        }
+        guard let table, line > target, table.rows.count > 1 else { return nil }
+        return table
+    }
+
     // MARK: Lexing
 
     private func relex(_ text: NSString, from first: Int, through last: Int) -> Update {

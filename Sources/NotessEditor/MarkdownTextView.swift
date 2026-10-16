@@ -188,11 +188,11 @@ public final class MarkdownTextView: NSTextView {
     /// types a plain-text view reads, which exclude images: without this, Paste
     /// stays disabled for a screenshot on the clipboard and `paste(_:)` never runs.
     public override func validateUserInterfaceItem(_ item: NSValidatedUserInterfaceItem) -> Bool {
-        validatePaste(item.action) ?? super.validateUserInterfaceItem(item)
+        validatePaste(item.action) ?? validateTableCommand(item.action) ?? super.validateUserInterfaceItem(item)
     }
 
     public override func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
-        validatePaste(menuItem.action) ?? super.validateMenuItem(menuItem)
+        validatePaste(menuItem.action) ?? validateTableCommand(menuItem.action) ?? super.validateMenuItem(menuItem)
     }
 
     /// Whether Paste is enabled, or `nil` to leave the decision to AppKit.
@@ -262,9 +262,9 @@ public final class MarkdownTextView: NSTextView {
     }
 
     /// Replaces `range` like typing would (undoable as one step, notifies the
-    /// delegate) and puts the caret after the new text.
+    /// delegate) and selects `selection`, by default the caret after the new text.
     @discardableResult
-    private func replace(_ range: NSRange, with replacement: String, actionName: String) -> Bool {
+    func replace(_ range: NSRange, with replacement: String, selection: NSRange? = nil, actionName: String) -> Bool {
         guard let textStorage, shouldChangeText(in: range, replacementString: replacement) else {
             return false
         }
@@ -272,7 +272,7 @@ public final class MarkdownTextView: NSTextView {
         textStorage.replaceCharacters(in: range, with: replacement)
         didChangeText()
         breakUndoCoalescing()
-        setSelectedRange(NSRange(location: range.location + (replacement as NSString).length, length: 0))
+        setSelectedRange(selection ?? NSRange(location: range.location + (replacement as NSString).length, length: 0))
         undoManager?.setActionName(actionName)
         scrollRangeToVisible(selectedRange())
         return true
