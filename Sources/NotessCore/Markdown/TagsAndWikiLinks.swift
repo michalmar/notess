@@ -67,8 +67,13 @@ public struct WikiLink: Hashable, Sendable {
 
     /// All wiki-links in `text` outside code, in order of appearance.
     public static func links(in text: String) -> [WikiLink] {
+        links(in: text, tokens: MarkdownSyntax.tokens(in: text))
+    }
+
+    /// `links(in:)` from tokens already produced for `text`.
+    static func links(in text: String, tokens: [MarkdownToken]) -> [WikiLink] {
         let string = text as NSString
-        return MarkdownSyntax.tokens(in: text).compactMap { token in
+        return tokens.compactMap { token in
             guard token.kind == .wikiLink else { return nil }
             let content = string.substring(with: NSRange(location: token.range.location + 2, length: token.range.length - 4))
             return WikiLink(content: content, range: token.range)

@@ -57,8 +57,9 @@ final class AppModel {
     @ObservationIgnored private let now: () -> Date
     @ObservationIgnored private var watcher: VaultWatcher?
     @ObservationIgnored private var vaultReconciler: VaultReconciler?
-    @ObservationIgnored private var backlinkIndex = BacklinkIndex()
     @ObservationIgnored private var backlinkGeneration = UUID()
+    /// Applies backlink updates for the open Vault one at a time, merging bursts.
+    @ObservationIgnored private var backlinkQueue: CoalescingQueue<BacklinkIndex.Update>?
     @ObservationIgnored var searchIndex: SearchIndex?
     @ObservationIgnored var searchIndexTask: Task<Void, Never>?
     @ObservationIgnored let brainRunStateStore: BrainRunStateStore
@@ -201,7 +202,7 @@ final class AppModel {
     /// gone unreported, e.g. while the app was inactive.
     func reconcileWithDisk() {
         vaultReconciler?.submit(VaultChange(relativePaths: [], requiresFullRescan: true))
-        rebuildBacklinks()
+        scheduleBacklinks(BacklinkIndex.Update(changedPaths: [""]))
     }
 
     /// Where every batch of outside Vault changes lands; features that react to
@@ -213,7 +214,9 @@ final class AppModel {
         updateSearchIndex(for: change)
         checkBrainRunBoundary(after: change)
         vaultReconciler?.submit(change)
-        rebuildBacklinks()
+        scheduleBacklinks(BacklinkIndex.Update(
+            changedPaths: change.requiresFullRescan ? [""] : change.relativePaths
+        ))
     }
 
     /// "Načíst": replaces a tab's unsaved text with the file on disk.
@@ -266,9 +269,7 @@ final class AppModel {
         resetBrainRun(for: vault)
         self.vault = vault
         tabSession = TabSession()
-        backlinks = []
-        backlinkIndex = BacklinkIndex()
-        backlinkGeneration = UUID()
+        startBacklinks(for: vault)
         selectedFolder = ""
         isQuickOpenPresented = false
         isSearchPresented = false
@@ -393,38 +394,45 @@ final class AppModel {
         }
     }
 
+    /// Recovery path: parses every note of the Vault again.
     func rebuildBacklinks() {
-        refreshBacklinks { index, vault in
-            await index.rebuild(in: vault)
-        }
+        scheduleBacklinks(BacklinkIndex.Update(rebuild: true))
     }
 
     private func updateBacklinks(for document: NoteDocument) {
         guard let vault, let relativePath = relativePath(for: document.fileURL, in: vault) else { return }
-        let content = document.text
-        refreshBacklinks { index, vault in
-            await index.update(relativePath: relativePath, content: content, in: vault)
-        }
+        scheduleBacklinks(BacklinkIndex.Update(savedContents: [relativePath: document.text]))
     }
 
     private func refreshVisibleBacklinks() {
-        refreshBacklinks { _, _ in }
+        scheduleBacklinks(BacklinkIndex.Update())
     }
 
-    private func refreshBacklinks(
-        after update: @escaping @Sendable (BacklinkIndex, Vault) async -> Void
-    ) {
-        guard let vault else {
+    /// A fresh index for `vault`; work queued for the previous Vault is dropped.
+    private func startBacklinks(for vault: Vault) {
+        backlinkQueue?.cancel()
+        backlinks = []
+        let index = BacklinkIndex()
+        let generation = UUID()
+        backlinkGeneration = generation
+        backlinkQueue = CoalescingQueue(
+            merge: { $0.merge($1) },
+            perform: { [weak self] update in
+                await index.apply(update, in: vault)
+                guard let self, self.backlinkGeneration == generation else { return }
+                await self.loadVisibleBacklinks(from: index, in: vault, generation: generation)
+            }
+        )
+    }
+
+    /// Applies `update` after the work already queued, then shows the active
+    /// tab's backlinks.
+    private func scheduleBacklinks(_ update: BacklinkIndex.Update) {
+        guard vault != nil, let backlinkQueue else {
             backlinks = []
             return
         }
-        let index = backlinkIndex
-        let generation = backlinkGeneration
-        Task { [weak self] in
-            await update(index, vault)
-            guard let self, self.backlinkGeneration == generation else { return }
-            await self.loadVisibleBacklinks(from: index, in: vault, generation: generation)
-        }
+        backlinkQueue.submit(update)
     }
 
     private func loadVisibleBacklinks(
