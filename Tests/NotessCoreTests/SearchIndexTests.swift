@@ -231,6 +231,118 @@ final class SearchIndexTests {
         try await index.update(fileAt: URL(filePath: "/tmp/elsewhere.md"))
     }
 
+    /// A whole-second date, so that restoring it reproduces the recorded stamp exactly.
+    private static let pinnedDate = Date(timeIntervalSince1970: 1_700_000_000)
+
+    private func pinModificationDate(_ paths: String...) throws {
+        for path in paths {
+            try FileManager.default.setAttributes(
+                [.modificationDate: Self.pinnedDate],
+                ofItemAtPath: vault.vault.rootURL.appending(path: path).path
+            )
+        }
+    }
+
+    /// Replaces a note by `text` of the same byte length and restores its
+    /// pinned modification date, so its stamp equals the one the index recorded.
+    private func replaceKeepingStamp(_ path: String, with text: String) throws {
+        let url = vault.vault.rootURL.appending(path: path)
+        let size = try Data(contentsOf: url).count
+        try vault.write(text, to: path)
+        #expect(try Data(contentsOf: url).count == size)
+        try pinModificationDate(path)
+    }
+
+    @Test("an explicit update reads a note again although its size and date are unchanged")
+    func explicitSingleFileUpdateIgnoresStamp() async throws {
+        let index = makeIndex()
+        try vault.write("# Pořadí\n\n## Řada\nalpha\n", to: "Projekty/Pořadí.md")
+        try vault.write("# Druhé\n\n## Řada\nalpha\n", to: "Projekty/Druhé.md")
+        try pinModificationDate("Projekty/Pořadí.md", "Projekty/Druhé.md")
+        try await index.synchronize()
+        #expect(try await fileIDs("alpha", in: index).sorted() == ["Projekty/Druhé.md", "Projekty/Pořadí.md"])
+
+        try replaceKeepingStamp("Projekty/Pořadí.md", with: "# Pořadí\n\n## Řada\nomega\n")
+        try replaceKeepingStamp("Projekty/Druhé.md", with: "# Druhé\n\n## Řada\nomega\n")
+        // Passive catch-up trusts the matching stamps.
+        try await index.synchronize()
+        #expect(try await fileIDs("omega", in: index).isEmpty)
+
+        try await index.update(fileAt: vault.vault.rootURL.appending(path: "Projekty/Pořadí.md"))
+        #expect(try await fileIDs("omega", in: index) == ["Projekty/Pořadí.md"])
+        #expect(try await fileIDs("alpha", in: index) == ["Projekty/Druhé.md"])
+
+        try await index.update(relativePaths: ["Projekty/Druhé.md"])
+        #expect(try await fileIDs("omega", in: index).sorted() == ["Projekty/Druhé.md", "Projekty/Pořadí.md"])
+        #expect(try await fileIDs("alpha", in: index).isEmpty)
+    }
+
+    @Test("folder and root scopes read the notes they contain again, Tags and Tag Timeline included")
+    func explicitScopesIgnoreStamps() async throws {
+        let index = makeIndex()
+        let journal = "Journal/2026/03/2026-03-14.md"
+        try pinModificationDate(journal, "Projekty/Plán.md")
+        try await index.synchronize()
+        let before = try await index.tagTimeline(for: "acme")
+        #expect(before.first?.sections.first?.markdown == "## Kickoff Acme\nPřehled požadavků od klienta. #acme")
+
+        try replaceKeepingStamp(journal, with: """
+        # 2026-03-14
+
+        Ráno káva.
+
+        ## Kickoff Acme
+        Přehled požadavků od klienta. #beta
+
+        ## Retro
+        Kickoff šel dobře.
+        """)
+        try replaceKeepingStamp("Projekty/Plán.md", with: "# Plán\ncreated: 2026-03-01\n\n## Požadavky\nPřehled a rozpisy #ACME\n")
+        try await index.synchronize()
+        #expect(try await index.tagTimeline(for: "acme") == before)
+
+        try await index.update(relativePaths: ["Journal/2026"])
+        #expect(try await index.tagTimeline(for: "acme").isEmpty)
+        #expect(try await index.journalTags().contains("beta"))
+        #expect(try await index.tagTimeline(for: "beta").first?.sections.first?.markdown
+            == "## Kickoff Acme\nPřehled požadavků od klienta. #beta")
+        #expect(try await fileIDs("kickoff", in: index).contains("Projekty/Plán.md"))
+
+        try await index.update(relativePaths: [""])
+        #expect(try await fileIDs("kickoff", in: index) == [journal, journal])
+        #expect(try await fileIDs("rozpisy", in: index) == ["Projekty/Plán.md"])
+    }
+
+    @Test("a catch-up can reread the paths a watcher reported while skipping everything else by stamp")
+    func synchronizeRereadingReportedPaths() async throws {
+        let index = makeIndex()
+        try vault.write("# Jedna\n\n## Řada\nalpha\n", to: "Projekty/Jedna.md")
+        try vault.write("# Dva\n\n## Řada\nalpha\n", to: "Projekty/Dva.md")
+        try pinModificationDate("Projekty/Jedna.md", "Projekty/Dva.md")
+        try await index.synchronize()
+        try replaceKeepingStamp("Projekty/Jedna.md", with: "# Jedna\n\n## Řada\nomega\n")
+        try replaceKeepingStamp("Projekty/Dva.md", with: "# Dva\n\n## Řada\nomega\n")
+
+        try await index.synchronize(rereading: ["Projekty/Jedna.md"])
+        #expect(try await fileIDs("omega", in: index) == ["Projekty/Jedna.md"])
+        #expect(try await fileIDs("alpha", in: index) == ["Projekty/Dva.md"])
+    }
+
+    @Test("an explicit update still forgets deleted and renamed notes and ignores files outside the Vault")
+    func explicitUpdateDeletionAndRename() async throws {
+        let index = makeIndex()
+        try await index.synchronize()
+        let root = vault.vault.rootURL
+        try FileManager.default.moveItem(at: root.appending(path: "Projekty/Plán.md"), to: root.appending(path: "Projekty/Nový plán.md"))
+        try await index.update(relativePaths: ["Projekty"])
+        #expect(try await fileIDs("požadavky", in: index) == ["Projekty/Nový plán.md"])
+
+        try FileManager.default.removeItem(at: root.appending(path: "Projekty/Nový plán.md"))
+        try await index.update(fileAt: root.appending(path: "Projekty/Nový plán.md"))
+        try await index.update(fileAt: URL(filePath: "/tmp/elsewhere.md"))
+        #expect(try await fileIDs("požadavky", in: index).isEmpty)
+    }
+
     @Test("on start the index catches up with changes made while the app was closed")
     func catchUp() async throws {
         try await makeIndex().synchronize()

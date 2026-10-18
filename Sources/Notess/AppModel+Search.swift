@@ -74,10 +74,12 @@ extension AppModel {
 
     func updateSearchIndex(for change: VaultChange) {
         guard let index = searchIndex else { return }
+        let paths = change.relativePaths
         if change.requiresFullRescan {
-            updateSearchIndex(index, catchesUp: true) { try await index.synchronize() }
+            // Any file may have changed, so catch up passively by stamps; paths
+            // the watcher did report are explicit invalidations and read again.
+            updateSearchIndex(index, catchesUp: true) { try await index.synchronize(rereading: paths) }
         } else {
-            let paths = change.relativePaths
             updateSearchIndex(index) { try await index.update(relativePaths: paths) }
         }
     }

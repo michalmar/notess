@@ -8,7 +8,9 @@ import Foundation
 /// The index is only a cache (ADR 0002): it lives outside the Vault and can be
 /// deleted and rebuilt from the files at any time. `synchronize()` catches up
 /// with the files on disk by comparing modification dates and sizes, so only
-/// changed notes are read again. All work runs off the main thread on this
+/// changed notes are read again. The `update` methods are explicit
+/// invalidations: they read every note in their scope again, whatever its
+/// stamp says. All work runs off the main thread on this
 /// actor; long runs yield between batches so searches stay responsive.
 public actor SearchIndex {
     /// Bump when the schema, the way notes are split into Sections or the way
@@ -41,18 +43,25 @@ public actor SearchIndex {
 
     // MARK: - Keeping the index in sync
 
-    /// Brings the whole index in line with the Vault on disk.
-    public func synchronize() async throws {
-        try await synchronize(scopes: [""])
+    /// Brings the whole index in line with the Vault on disk (passive catch-up):
+    /// a note whose size and modification date match the cache is skipped.
+    ///
+    /// `relativePaths` are files or folders reported as changed (`""` is the
+    /// whole Vault); notes in them are read again whatever their stamps say.
+    public func synchronize(rereading relativePaths: Set<String> = []) async throws {
+        try await synchronize(scopes: [""], rereading: relativePaths)
     }
 
-    /// Re-checks the given Vault-relative files or folders (as reported by
-    /// `VaultWatcher` or after a save); `""` means the whole Vault.
+    /// Reads the given Vault-relative files or folders (as reported by
+    /// `VaultWatcher` or after a save) again, also when their stamps match the
+    /// cache; `""` means the whole Vault.
     public func update(relativePaths: Set<String>) async throws {
-        try await synchronize(scopes: relativePaths.contains("") ? [""] : relativePaths)
+        let scopes = relativePaths.contains("") ? [""] : relativePaths
+        try await synchronize(scopes: scopes, rereading: scopes)
     }
 
-    /// Re-checks one note after the app saved it; a file outside the Vault is ignored.
+    /// Reads one note again after the app saved it, also when its stamp matches
+    /// the cache; a file outside the Vault is ignored.
     public func update(fileAt url: URL) async throws {
         let root = vault.rootURL.standardizedFileURL.resolvingSymlinksInPath().pathComponents
         let file = url.standardizedFileURL.resolvingSymlinksInPath().pathComponents
@@ -67,18 +76,23 @@ public actor SearchIndex {
         try await synchronize()
     }
 
-    private func synchronize(scopes: Set<String>) async throws {
+    private static func scopes(_ scopes: Set<String>, contain path: String) -> Bool {
+        scopes.contains { $0.isEmpty || path == $0 || path.hasPrefix($0 + "/") }
+    }
+
+    /// Notes under `scopes` are read again if their stamp differs from the
+    /// cache or they lie under `rereading` (explicit invalidation).
+    private func synchronize(scopes: Set<String>, rereading: Set<String>) async throws {
         let db = try openDatabase()
         var onDisk: [String: NoteFile] = [:]
         for scope in scopes {
             for file in scanNotes(under: scope) { onDisk[file.relativePath] = file }
         }
-        let indexed = try indexedStamps(in: db).filter { path, _ in
-            scopes.contains { $0.isEmpty || path == $0 || path.hasPrefix($0 + "/") }
-        }
+        let indexed = try indexedStamps(in: db).filter { path, _ in Self.scopes(scopes, contain: path) }
 
         let removed = indexed.keys.filter { onDisk[$0] == nil }
-        let changed = onDisk.values.filter { indexed[$0.relativePath] != $0.stamp }
+        let changed = onDisk.values
+            .filter { indexed[$0.relativePath] != $0.stamp || Self.scopes(rereading, contain: $0.relativePath) }
             .sorted { $0.relativePath < $1.relativePath }
 
         if !removed.isEmpty {
