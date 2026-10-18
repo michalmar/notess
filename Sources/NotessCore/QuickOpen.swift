@@ -17,6 +17,65 @@ public struct QuickOpenFile: Hashable, Sendable, Identifiable {
     public var isReadOnly: Bool { kind == .brainNote }
 }
 
+/// The current Quick Open inputs, ranked results, and valid selection.
+public struct QuickOpenState {
+    public typealias Ranker = (String, [QuickOpenFile]) -> [QuickOpenFile]
+
+    public private(set) var query = ""
+    public private(set) var matches: [QuickOpenFile] = []
+    public private(set) var selection: QuickOpenFile?
+    private var candidates: [QuickOpenFile] = []
+
+    public init() {}
+
+    /// Replaces the candidate set and refreshes the ranking for the current query.
+    public mutating func replaceCandidates(
+        _ candidates: [QuickOpenFile],
+        ranking: Ranker = QuickOpen.rankedFiles
+    ) {
+        self.candidates = candidates
+        refreshMatches(using: ranking)
+    }
+
+    /// Refreshes the ranking only when the query changes.
+    public mutating func updateQuery(
+        _ query: String,
+        ranking: Ranker = QuickOpen.rankedFiles
+    ) {
+        guard self.query != query else { return }
+        self.query = query
+        refreshMatches(using: ranking)
+    }
+
+    /// Keeps the selection within the current result set.
+    public mutating func select(_ selection: QuickOpenFile?) {
+        guard let selection, matches.contains(selection) else {
+            self.selection = matches.first
+            return
+        }
+        self.selection = selection
+    }
+
+    /// Moves the selection while clamping it within the current result set.
+    public mutating func moveSelection(upward: Bool) {
+        guard let selection,
+              let index = matches.firstIndex(of: selection)
+        else {
+            self.selection = matches.first
+            return
+        }
+        let nextIndex = upward
+            ? max(0, index - 1)
+            : min(matches.count - 1, index + 1)
+        self.selection = matches[nextIndex]
+    }
+
+    private mutating func refreshMatches(using ranking: Ranker) {
+        matches = ranking(query, candidates)
+        selection = matches.first
+    }
+}
+
 /// Fuzzy ranking for the Vault's quick file picker.
 public enum QuickOpen {
     /// Returns filename and path matches, ranking exact and prefix filename matches first.

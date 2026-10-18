@@ -6,14 +6,23 @@ struct QuickOpenView: View {
     let open: (String) -> Void
     let dismiss: () -> Void
 
-    @State private var files: [QuickOpenFile] = []
-    @State private var query = ""
-    @State private var selection: QuickOpenFile?
+    @State private var quickOpen = QuickOpenState()
     @State private var isLoading = true
+    @State private var loadToken = UUID()
     @FocusState private var isSearchFocused: Bool
 
-    private var matches: [QuickOpenFile] {
-        QuickOpen.rankedFiles(matching: query, in: files)
+    private var queryBinding: Binding<String> {
+        Binding(
+            get: { quickOpen.query },
+            set: { quickOpen.updateQuery($0) }
+        )
+    }
+
+    private var selectionBinding: Binding<QuickOpenFile?> {
+        Binding(
+            get: { quickOpen.selection },
+            set: { quickOpen.select($0) }
+        )
     }
 
     var body: some View {
@@ -21,7 +30,7 @@ struct QuickOpenView: View {
             HStack(spacing: 10) {
                 Image(systemName: "magnifyingglass")
                     .foregroundStyle(.secondary)
-                TextField("Otevřít soubor…", text: $query)
+                TextField("Otevřít soubor…", text: queryBinding)
                     .textFieldStyle(.plain)
                     .focused($isSearchFocused)
                     .onSubmit(openSelection)
@@ -34,18 +43,14 @@ struct QuickOpenView: View {
                 if isLoading {
                     ProgressView()
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
-                } else if matches.isEmpty {
-                    ContentUnavailableView.search(text: query)
+                } else if quickOpen.matches.isEmpty {
+                    ContentUnavailableView.search(text: quickOpen.query)
                 } else {
-                    List(matches, selection: $selection) { file in
+                    List(quickOpen.matches, selection: selectionBinding) { file in
                         QuickOpenRow(file: file)
                             .tag(file)
                     }
                     .listStyle(.plain)
-                    .onChange(of: selection) { _, selected in
-                        guard selected == nil else { return }
-                        selection = matches.first
-                    }
                 }
             }
             .frame(height: 320)
@@ -57,8 +62,8 @@ struct QuickOpenView: View {
             isSearchFocused = true
             loadFiles()
         }
-        .onChange(of: query) { _, _ in
-            selection = matches.first
+        .onDisappear {
+            loadToken = UUID()
         }
         .onMoveCommand { direction in
             moveSelection(direction)
@@ -67,31 +72,29 @@ struct QuickOpenView: View {
     }
 
     private func loadFiles() {
+        let token = UUID()
+        loadToken = token
         Task {
             let scannedFiles = await Task.detached { vault.quickOpenFiles() }.value
-            files = scannedFiles
-            selection = matches.first
+            guard loadToken == token, !Task.isCancelled else { return }
+            quickOpen.replaceCandidates(scannedFiles)
             isLoading = false
         }
     }
 
     private func moveSelection(_ direction: MoveCommandDirection) {
-        guard let index = selection.flatMap({ matches.firstIndex(of: $0) }) else {
-            selection = matches.first
-            return
-        }
         switch direction {
         case .up:
-            selection = matches[max(0, index - 1)]
+            quickOpen.moveSelection(upward: true)
         case .down:
-            selection = matches[min(matches.count - 1, index + 1)]
+            quickOpen.moveSelection(upward: false)
         default:
             break
         }
     }
 
     private func openSelection() {
-        guard let selection else { return }
+        guard let selection = quickOpen.selection else { return }
         open(selection.relativePath)
         dismiss()
     }
