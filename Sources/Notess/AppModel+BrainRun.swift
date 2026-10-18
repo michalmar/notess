@@ -80,18 +80,39 @@ extension AppModel {
         task.cancel()
     }
 
-    /// On quit: stops Copilot CLI right away.
-    func terminateBrainRun() {
-        brainRunTask?.cancel()
+    /// On quit: waits until the owned Copilot CLI process group is gone.
+    func terminateBrainRun() async {
+        let task = brainRunTask
+        let cleanupTask = brainRunCleanupTask
+        task?.cancel()
+        if let task { _ = await task.result }
+        if let cleanupTask { await cleanupTask.value }
     }
 
     /// A new Vault starts with no run; a run of the previous Vault is cancelled and reports nothing.
     func resetBrainRun(for vault: Vault) {
-        brainRunTask?.cancel()
+        let task = brainRunTask
+        task?.cancel()
         brainRunTask = nil
         brainRun = nil
         brainRunID = UUID()
-        brainRunPhase = .idle
+        if let task {
+            let cleanupID = UUID()
+            brainRunCleanupID = cleanupID
+            brainRunPhase = .cancelling
+            brainRunCleanupTask = Task { [weak self] in
+                _ = await task.result
+                guard let self, self.brainRunCleanupID == cleanupID else { return }
+                self.brainRunCleanupTask = nil
+                if self.brainRunPhase == .cancelling {
+                    self.brainRunPhase = .idle
+                }
+            }
+        } else if brainRunCleanupTask != nil {
+            brainRunPhase = .cancelling
+        } else {
+            brainRunPhase = .idle
+        }
         brainRunLog.reset()
         isBrainRunLogPresented = false
         lastSuccessfulBrainRun = nil

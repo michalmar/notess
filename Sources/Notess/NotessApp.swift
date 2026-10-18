@@ -31,6 +31,7 @@ struct NotessApp: App {
 final class AppDelegate: NSObject, NSApplicationDelegate {
     let model = AppModel()
     private var closeTabEventMonitor: Any?
+    private var isWaitingForBrainRunTermination = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Needed when launched as a bare executable (`swift run`), harmless in the .app bundle.
@@ -54,7 +55,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        guard model.hasUnsavedChanges else { return .terminateNow }
+        guard model.hasUnsavedChanges else { return terminateAfterBrainRun(sender) }
         switch saveDecision(
             message: "Uložit všechny změny?",
             informativeText: "Některé otevřené poznámky obsahují neuložené změny.",
@@ -62,21 +63,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             discardTitle: "Zahodit"
         ) {
         case .save:
-            if model.saveAll() { return .terminateNow }
+            if model.saveAll() { return terminateAfterBrainRun(sender) }
             showSaveError()
             return .terminateCancel
         case .discard:
-            return .terminateNow
+            return terminateAfterBrainRun(sender)
         case .cancel:
             return .terminateCancel
         }
     }
 
     func applicationWillTerminate(_ notification: Notification) {
-        model.terminateBrainRun()
         if let closeTabEventMonitor {
             NSEvent.removeMonitor(closeTabEventMonitor)
         }
+    }
+
+    private func terminateAfterBrainRun(_ application: NSApplication) -> NSApplication.TerminateReply {
+        guard model.isBrainRunActive else { return .terminateNow }
+        guard !isWaitingForBrainRunTermination else { return .terminateLater }
+        isWaitingForBrainRunTermination = true
+        Task { [weak self, weak application] in
+            guard let self else { return }
+            await self.model.terminateBrainRun()
+            application?.reply(toApplicationShouldTerminate: true)
+        }
+        return .terminateLater
     }
 
     func closeActiveTab() {

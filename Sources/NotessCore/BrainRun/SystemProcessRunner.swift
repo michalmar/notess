@@ -106,7 +106,17 @@ public struct SystemProcessRunner: BrainRunProcessRunner {
         var attributes: posix_spawnattr_t?
         try check(posix_spawnattr_init(&attributes))
         defer { posix_spawnattr_destroy(&attributes) }
-        try check(posix_spawnattr_setflags(&attributes, Int16(POSIX_SPAWN_SETPGROUP)))
+        var defaultSignals = sigset_t()
+        sigemptyset(&defaultSignals)
+        sigaddset(&defaultSignals, SIGTERM)
+        try check(posix_spawnattr_setsigdefault(&attributes, &defaultSignals))
+        var signalMask = sigset_t()
+        sigemptyset(&signalMask)
+        try check(posix_spawnattr_setsigmask(&attributes, &signalMask))
+        try check(posix_spawnattr_setflags(
+            &attributes,
+            Int16(POSIX_SPAWN_SETPGROUP | POSIX_SPAWN_SETSIGDEF | POSIX_SPAWN_SETSIGMASK)
+        ))
         try check(posix_spawnattr_setpgroup(&attributes, 0))
 
         var arguments = try cStrings([command.executableURL.path] + command.arguments)
@@ -234,17 +244,18 @@ private final class ProcessGroupControl: @unchecked Sendable {
             guard processGroupID > 1, processGroupID != getpgrp() else { return }
             kill(-processGroupID, SIGTERM)
 
-            let gracefulDeadline = ContinuousClock.now + .seconds(gracePeriod)
-            while Self.groupExists(processGroupID), ContinuousClock.now < gracefulDeadline {
-                try? await Task.sleep(for: .milliseconds(10))
-            }
+            await Self.waitUntilGroupExits(processGroupID, timeout: gracePeriod)
             guard Self.groupExists(processGroupID) else { return }
 
             kill(-processGroupID, SIGKILL)
-            let forcedDeadline = ContinuousClock.now + .seconds(2)
-            while Self.groupExists(processGroupID), ContinuousClock.now < forcedDeadline {
-                try? await Task.sleep(for: .milliseconds(10))
-            }
+            await Self.waitUntilGroupExits(processGroupID, timeout: 2)
+        }
+    }
+
+    private static func waitUntilGroupExits(_ processGroupID: pid_t, timeout: TimeInterval) async {
+        let deadline = ContinuousClock.now + .seconds(timeout)
+        while groupExists(processGroupID), ContinuousClock.now < deadline {
+            try? await Task.sleep(for: .milliseconds(10))
         }
     }
 
