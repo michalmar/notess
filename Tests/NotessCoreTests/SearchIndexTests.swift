@@ -132,18 +132,93 @@ final class SearchIndexTests {
         #expect(try await index.search(SearchQuery("klient")).map(\.kind) == [.dailyEntry])
     }
 
-    @Test("an unreadable note is tried again on the next synchronisation, even with an unchanged stamp")
+    /// Not valid UTF-8, so reading the note as text fails deterministically.
+    private static let invalidUTF8 = Data([0x23, 0x23, 0x20, 0xFF, 0xFE, 0x0A, 0x61])
+
+    private func fileIDs(_ query: String, in index: SearchIndex) async throws -> [String] {
+        try await index.search(SearchQuery(query)).flatMap(\.results).map(\.relativePath)
+    }
+
+    @Test("a new unreadable note reports a failure, is not recorded and is tried again with an unchanged stamp")
     func unreadableNoteRetried() async throws {
         let index = makeIndex()
         let url = vault.vault.rootURL.appending(path: "Rozbitá.md")
-        try Data([0x23, 0x23, 0x20, 0xFF, 0xFE, 0x0A, 0x61]).write(to: url)
+        try Self.invalidUTF8.write(to: url)
         let modified = try #require(try FileManager.default.attributesOfItem(atPath: url.path)[.modificationDate] as? Date)
-        try await index.synchronize()
+
+        let failure = await #expect(throws: SearchIndex.IndexingFailure.self) { try await index.synchronize() }
+        #expect(failure?.files.map(\.relativePath) == ["Rozbitá.md"])
+        // The readable notes of the same run are indexed.
+        #expect(try await fileIDs("přehled", in: index).contains("Projekty/Plán.md"))
+        #expect(!(try await fileIDs("ok", in: index).contains("Rozbitá.md")))
 
         try Data("## Ok\nb".utf8).write(to: url)
         try FileManager.default.setAttributes([.modificationDate: modified], ofItemAtPath: url.path)
         try await index.synchronize()
-        #expect(try await index.search(SearchQuery("ok")).first?.results.first?.relativePath == "Rozbitá.md")
+        #expect(try await fileIDs("ok", in: index) == ["Rozbitá.md"])
+    }
+
+    @Test("a failed replacement keeps the previous Sections, search text, Tags and Tag Timeline, and recovery replaces them")
+    func failedReplacementKeepsPreviousRecords() async throws {
+        let index = makeIndex()
+        try await index.synchronize()
+        let journal = "Journal/2026/03/2026-03-14.md"
+        let timeline = try await index.tagTimeline(for: "acme")
+        let tags = try await index.journalTags()
+        #expect(timeline.isEmpty == false)
+
+        try Self.invalidUTF8.write(to: vault.vault.rootURL.appending(path: journal))
+        try Self.invalidUTF8.write(to: vault.vault.rootURL.appending(path: "Projekty/Plán.md"))
+
+        let failure = await #expect(throws: SearchIndex.IndexingFailure.self) {
+            try await index.update(relativePaths: [journal, "Projekty/Plán.md"])
+        }
+        #expect(failure?.files.map(\.relativePath).sorted() == [journal, "Projekty/Plán.md"])
+        #expect(try await index.tagTimeline(for: "acme") == timeline)
+        #expect(try await index.journalTags() == tags)
+        #expect(try await fileIDs("kickoff", in: index).sorted() == [journal, journal, "Projekty/Plán.md"].sorted())
+        #expect(try await fileIDs("#acme", in: index).sorted() == [journal, "Projekty/Plán.md"].sorted())
+
+        // Reopening the committed cache shows the same consistent data.
+        let reopened = makeIndex()
+        #expect(try await reopened.tagTimeline(for: "acme") == timeline)
+        await #expect(throws: SearchIndex.IndexingFailure.self) { try await reopened.synchronize() }
+        #expect(try await reopened.tagTimeline(for: "acme") == timeline)
+
+        try vault.write("# 2026-03-14\n\n## Nové #novy\nzcela jiné\n", to: journal)
+        try vault.write("## Jiné\nzcela jiné\n", to: "Projekty/Plán.md")
+        try await reopened.synchronize()
+        #expect(try await reopened.tagTimeline(for: "acme").isEmpty)
+        #expect(try await reopened.journalTags() == ["novy"])
+        #expect(try await fileIDs("kickoff", in: reopened).isEmpty)
+        #expect(try await fileIDs("zcela", in: reopened).sorted() == [journal, "Projekty/Plán.md"].sorted())
+    }
+
+    @Test("a confirmed deletion still removes the records of an unreadable note without failing")
+    func deletionRemovesRecords() async throws {
+        let index = makeIndex()
+        try await index.synchronize()
+        let journal = "Journal/2026/03/2026-03-14.md"
+        try Self.invalidUTF8.write(to: vault.vault.rootURL.appending(path: journal))
+        await #expect(throws: SearchIndex.IndexingFailure.self) { try await index.update(relativePaths: [journal]) }
+
+        try FileManager.default.removeItem(at: vault.vault.rootURL.appending(path: journal))
+        try await index.update(relativePaths: [journal])
+        #expect(try await index.tagTimeline(for: "acme").isEmpty)
+        #expect(try await fileIDs("kickoff", in: index) == ["Projekty/Plán.md"])
+    }
+
+    @Test("a source that vanished after the scan is told apart from one that cannot be read")
+    func vanishedSource() throws {
+        let root = vault.vault.rootURL
+        try Self.invalidUTF8.write(to: root.appending(path: "Rozbitá.md"))
+        try vault.write("## Ok\n", to: "Ok.md")
+        #expect(SearchIndex.readSource(at: root.appending(path: "Ok.md")) == .text("## Ok\n"))
+        #expect(SearchIndex.readSource(at: root.appending(path: "Zmizelá.md")) == .vanished)
+        guard case .failed = SearchIndex.readSource(at: root.appending(path: "Rozbitá.md")) else {
+            Issue.record("expected a read failure")
+            return
+        }
     }
 
     @Test("a saved note is re-indexed by its file URL")

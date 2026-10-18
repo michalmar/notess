@@ -84,24 +84,52 @@ public actor SearchIndex {
         if !removed.isEmpty {
             try db.transaction { for path in removed { try removeSections(of: path, in: db) } }
         }
+        var failures: [IndexingFailure.File] = []
         for start in stride(from: 0, to: changed.count, by: Self.batchSize) {
             try Task.checkCancellation()
             // `rebuild()` replaced the database while this run was suspended; it rescans everything.
             guard database === db else { return }
+            // Sources are read before the transaction, so a note that cannot be
+            // read keeps its previous records and stamp instead of losing them.
+            let sources = changed[start..<min(start + Self.batchSize, changed.count)]
+                .map { file in
+                    (file, Self.readSource(at: vault.rootURL.appending(path: file.relativePath, directoryHint: .notDirectory)))
+                }
             try db.transaction {
-                for file in changed[start..<min(start + Self.batchSize, changed.count)] {
-                    try index(file, in: db)
+                for (file, source) in sources {
+                    switch source {
+                    case .text(let text): try index(file, text: text, in: db)
+                    case .vanished: try removeSections(of: file.relativePath, in: db)
+                    case .failed(let reason): failures.append(.init(relativePath: file.relativePath, reason: reason))
+                    }
                 }
             }
             await Task.yield()
         }
+        // The notes that could be read are indexed; the others are tried again
+        // by the next synchronisation because their stamps still differ.
+        if !failures.isEmpty { throw IndexingFailure(files: failures) }
     }
 
-    private func index(_ file: NoteFile, in db: SQLiteDatabase) throws {
+    enum Source: Equatable {
+        case text(String)
+        /// The file disappeared after it was scanned: a deletion, not an error.
+        case vanished
+        case failed(String)
+    }
+
+    static func readSource(at url: URL) -> Source {
+        do {
+            return .text(try String(contentsOf: url, encoding: .utf8))
+        } catch let error as CocoaError where error.code == .fileReadNoSuchFile {
+            return .vanished
+        } catch {
+            return .failed(error.localizedDescription)
+        }
+    }
+
+    private func index(_ file: NoteFile, text raw: String, in db: SQLiteDatabase) throws {
         try removeSections(of: file.relativePath, in: db)
-        let url = vault.rootURL.appending(path: file.relativePath, directoryHint: .notDirectory)
-        // An unreadable file is left unrecorded so the next synchronisation tries it again.
-        guard let raw = try? String(contentsOf: url, encoding: .utf8) else { return }
         let text = raw.precomposedStringWithCanonicalMapping
         for section in SearchSection.split(text) {
             let markdown = (text as NSString).substring(with: section.range).trimmingCharacters(in: .newlines)
@@ -284,6 +312,23 @@ public actor SearchIndex {
     }
 
     // MARK: - Files
+
+    /// Notes whose sources could not be read during an update. Their previous
+    /// index records are kept, and the notes are tried again by the next catch-up.
+    public struct IndexingFailure: Error, LocalizedError, Equatable {
+        public struct File: Equatable, Sendable {
+            public let relativePath: String
+            public let reason: String
+        }
+
+        public let files: [File]
+
+        public var errorDescription: String? {
+            guard let first = files.first else { return nil }
+            let rest = files.count > 1 ? " a dalších \(files.count - 1)" : ""
+            return "poznámku \(first.relativePath)\(rest) se nepodařilo přečíst (\(first.reason))"
+        }
+    }
 
     private struct OutdatedSchema: Error {}
 
