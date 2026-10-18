@@ -111,7 +111,7 @@ extension MarkdownTextView {
     func validateTableCommand(_ action: Selector?) -> Bool? {
         guard let command = TableEditCommand.groups.joined().first(where: { $0.action == action })?.command else { return nil }
         guard let (table, index, text) = tableAtSelection() else { return false }
-        return table.edit(command, at: index, in: text) != nil
+        return table.applies(command, at: index, in: text)
     }
 
     private func perform(_ command: MarkdownTable.Command) {

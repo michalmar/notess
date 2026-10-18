@@ -114,4 +114,27 @@ struct MarkdownTableEditingTests {
         #expect(tab("| a | bb |\n| - | - |\n| c‸ |  |", false) == "| a | [bb] |\n| - | - |\n| c |  |")
         #expect(tab("| a‸ | bb |\n| - | - |", false) == nil)
     }
+
+    @Test("applicability agrees with edit availability at every position, and builds no edit")
+    func applicabilityParity() {
+        let tables = [
+            "| a | b | c |\n| - | - | - |\n| 1 | 2 |\n| 1 | 2 | 3 | 4 |\nx | y | z",
+            "| a |\n| - |\n| 1 |",
+            "a | b\n--- | ---\n1 | 2",
+        ]
+        for text in tables {
+            let string = text as NSString
+            let lexer = MarkdownLexer()
+            lexer.relexAll(text: string)
+            let table = lexer.table(containing: 0, in: string)!
+            for index in 0...string.length {
+                for command in MarkdownTable.Command.allCases {
+                    let before = MarkdownTable.editsBuiltCount
+                    let applies = table.applies(command, at: index, in: string)
+                    #expect(MarkdownTable.editsBuiltCount == before, "validation built an edit")
+                    #expect(applies == (table.edit(command, at: index, in: string) != nil), "\(command) at \(index) in \(text)")
+                }
+            }
+        }
+    }
 }
