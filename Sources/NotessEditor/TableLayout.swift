@@ -12,7 +12,8 @@ extension NSAttributedString.Key {
 /// narrower than its column gets extra space (`.kern`) after its last
 /// character, so the `|` after it moves to the column's edge. Right- and
 /// centre-aligned columns put some or all of that space after the pipe before
-/// the cell instead. The pipes and the delimiter row are hidden (the delimiter
+/// the cell instead (or, in a row without an opening pipe, as the row's first-line
+/// indent). The pipes and the delimiter row are hidden (the delimiter
 /// row is also squeezed to a hairline); `TableRowLayoutFragment` draws the grid
 /// from the `TableRowDecoration` set on every row. The delimiter row stays
 /// visible while `selection` touches it, so it can be edited.
@@ -61,6 +62,7 @@ enum TableLayout {
         var starts = rows.map(\.prefix)
         var edges: [CGFloat] = []
         var kerns: [NSRange: CGFloat] = [:]
+        var indents: [Int: CGFloat] = [:]
         for row in table.rows where row.kind != .delimiter {
             for pipe in row.pipes {
                 kerns[NSRange(location: pipe, length: 1)] = cellPadding
@@ -79,16 +81,18 @@ enum TableLayout {
                 let padding = edge - starts[index] - measured.cells[column]
                 starts[index] = edge + measured.closingPipes[column]
                 guard padding > 0.01 else { continue }
-                let hasOpeningPipe = row.pipes.contains(cell.location - 1)
                 var leading: CGFloat = 0
-                if hasOpeningPipe, column < table.alignments.count {
+                if column < table.alignments.count {
                     switch table.alignments[column] {
                     case .left: leading = 0
                     case .center: leading = (padding / 2).rounded()
                     case .right: leading = padding
                     }
                 }
-                if leading > 0 {
+                if leading > 0, !row.pipes.contains(cell.location - 1) {
+                    // No opening pipe to carry the space: indent the row's first line instead.
+                    indents[row.range.location] = leading
+                } else if leading > 0 {
                     kerns[NSRange(location: cell.location - 1, length: 1), default: 0] += leading
                 }
                 // Without a closing pipe nothing follows the cell that needs to line up.
@@ -130,7 +134,12 @@ enum TableLayout {
             if row.kind == .delimiter {
                 storage.addAttributes([.foregroundColor: hidden, .paragraphStyle: delimiterStyle], range: line)
             } else {
-                storage.addAttribute(.paragraphStyle, value: rowStyle, range: line)
+                var style = rowStyle
+                if let indent = indents[row.range.location] {
+                    style = rowStyle.mutableCopy() as! NSMutableParagraphStyle
+                    style.firstLineHeadIndent = indent
+                }
+                storage.addAttribute(.paragraphStyle, value: style, range: line)
             }
         }
         return shownDelimiterRow

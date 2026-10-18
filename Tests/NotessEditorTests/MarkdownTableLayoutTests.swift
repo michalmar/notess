@@ -29,6 +29,8 @@ struct MarkdownTableLayoutTests {
         guard let storage = textView.textStorage else { return .nan }
         let lineRange = (storage.string as NSString).lineRange(for: NSRange(location: index, length: 0))
         let line = CTLineCreateWithAttributedString(storage.attributedSubstring(from: lineRange))
+        // CoreText knows nothing of the paragraph's indent, which shifts the first line.
+        let indent = (storage.attribute(.paragraphStyle, at: lineRange.location, effectiveRange: nil) as? NSParagraphStyle)?.firstLineHeadIndent ?? 0
         for run in CTLineGetGlyphRuns(line) as! [CTRun] {
             let count = CTRunGetGlyphCount(run)
             var indices = [CFIndex](repeating: 0, count: count)
@@ -36,7 +38,7 @@ struct MarkdownTableLayoutTests {
             CTRunGetStringIndices(run, CFRange(), &indices)
             CTRunGetPositions(run, CFRange(), &positions)
             if let glyph = indices.firstIndex(of: index - lineRange.location) {
-                return positions[glyph].x
+                return positions[glyph].x + indent
             }
         }
         return .nan
@@ -219,6 +221,59 @@ struct MarkdownTableLayoutTests {
         #expect(!Self.layoutFragments(of: textView).contains { $0 is TableRowLayoutFragment })
     }
 
+    /// Glyph x of the last character of `cell` (the `occurrence`-th match), right edge approximated by its start.
+    private func x(of text: String, in view: NSTextView? = nil) -> CGFloat {
+        let view = view ?? textView
+        return Self.x(at: (view.string as NSString).range(of: text).location, in: view)
+    }
+
+    @Test("the first column follows its alignment without an opening pipe")
+    func firstColumnWithoutOpeningPipe() {
+        let tables = [
+            "a | b\n---: | ---\nlonger | c",
+            "a | b |\n---: | --- |\nlonger | c |",
+            "| a | b |\n| ---: | --- |\n| longer | c |",
+            "| a | b\n| ---: | ---\n| longer | c",
+            "a | b\n---: | ---\n| longer | c",
+        ]
+        for text in tables {
+            textView.string = text
+            #expect(textView.string == text)
+            // Right: the single character "a" ends where "longer" ends.
+            let aRight = x(of: "a ") + Self.width("a")
+            let longerRight = x(of: "longer") + Self.width("longer")
+            #expect(abs(aRight - longerRight) < 2, "right edges for \(text)")
+        }
+    }
+
+    @Test("a centred first column without an opening pipe is centred, indented and with unicode")
+    func firstColumnCentred() {
+        let text = "  a | b\n  :---: | ---\n  dlouhé žluťoučký | c"
+        textView.string = text
+        #expect(textView.string == text)
+        let short = x(of: "a ") + Self.width("a") / 2
+        let long = x(of: "dlouhé") + Self.width("dlouhé žluťoučký") / 2
+        #expect(abs(short - long) < 2)
+    }
+
+    @Test("a left-aligned first column without an opening pipe is not moved")
+    func firstColumnLeft() {
+        textView.string = "a | b\n--- | ---\nlonger | c"
+        #expect(abs(x(of: "a ") - x(of: "longer")) < 0.5)
+    }
+
+    @Test("formatting a table without opening pipes leaves no undo entry or edit")
+    func noUndoForAlignment() {
+        textView.string = "a | b\n---: | ---\nlonger | c"
+        #expect(textView.undoManager?.canUndo != true)
+    }
+
+    private static func width(_ text: String) -> CGFloat {
+        let font = MarkdownEditorStyle.standard.font
+        let line = CTLineCreateWithAttributedString(NSAttributedString(string: text, attributes: [.font: font]))
+        return CGFloat(CTLineGetTypographicBounds(line, nil, nil, nil))
+    }
+
     @Test("a table in the read-only view lines up too")
     func readOnly() {
         let readOnly = MarkdownTextViewFactory.makeReadOnlyTextView()
@@ -231,6 +286,17 @@ struct MarkdownTableLayoutTests {
         let bodyPipe = x(string.range(of: "| PM").location)
         #expect(abs(headerPipe - bodyPipe) < 1)
         #expect(Self.layoutFragments(of: readOnly).contains { $0 is TableRowLayoutFragment })
+    }
+
+    @Test("the read-only view aligns a first column without an opening pipe")
+    func readOnlyFirstColumn() {
+        let readOnly = MarkdownTextViewFactory.makeReadOnlyTextView()
+        readOnly.frame = NSRect(x: 0, y: 0, width: 600, height: 200)
+        window.contentView?.addSubview(readOnly)
+        readOnly.string = "a | b\n---: | ---\nlonger | c"
+        let aRight = x(of: "a ", in: readOnly) + Self.width("a")
+        let longerRight = x(of: "longer", in: readOnly) + Self.width("longer")
+        #expect(abs(aRight - longerRight) < 2)
     }
 }
 
