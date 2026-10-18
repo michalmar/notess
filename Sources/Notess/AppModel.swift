@@ -56,6 +56,7 @@ final class AppModel {
     @ObservationIgnored private let tabRestorationStore: TabRestorationStore
     @ObservationIgnored private let now: () -> Date
     @ObservationIgnored private var watcher: VaultWatcher?
+    @ObservationIgnored private var vaultReconciler: VaultReconciler?
     @ObservationIgnored private var backlinkIndex = BacklinkIndex()
     @ObservationIgnored private var backlinkGeneration = UUID()
     @ObservationIgnored var searchIndex: SearchIndex?
@@ -185,6 +186,7 @@ final class AppModel {
     }
 
     func refreshTree() {
+        vaultReconciler?.discardTreeScansInProgress()
         tree = vault?.scanTree() ?? .empty
     }
 
@@ -194,20 +196,24 @@ final class AppModel {
         isQuickOpenPresented = true
     }
 
-    /// Brings the sidebar and open tabs in line with the Vault on disk after
-    /// outside changes (git, other editors, the Agent).
+    /// Brings the sidebar and open tabs in line with the whole Vault on disk
+    /// after outside changes (git, other editors, the Agent) that may have
+    /// gone unreported, e.g. while the app was inactive.
     func reconcileWithDisk() {
-        refreshTree()
-        tabSession.reconcileWithDisk()
+        vaultReconciler?.submit(VaultChange(relativePaths: [], requiresFullRescan: true))
         rebuildBacklinks()
     }
 
     /// Where every batch of outside Vault changes lands; features that react to
     /// new files (e.g. Brain Notes after a Brain Run) hook in here.
+    ///
+    /// Search and the Brain Run boundary get each change at once; the sidebar
+    /// tree and the affected tabs catch up in the background (`VaultReconciler`).
     func handleVaultChange(_ change: VaultChange) {
-        reconcileWithDisk()
         updateSearchIndex(for: change)
         checkBrainRunBoundary(after: change)
+        vaultReconciler?.submit(change)
+        rebuildBacklinks()
     }
 
     /// "Načíst": replaces a tab's unsaved text with the file on disk.
@@ -289,6 +295,11 @@ final class AppModel {
 
     private func watch(_ vault: Vault) {
         watcher?.stop()
+        vaultReconciler?.cancel()
+        vaultReconciler = VaultReconciler(vault: vault, tabSession: tabSession) { [weak self] tree in
+            guard let self, self.tree != tree else { return }
+            self.tree = tree
+        }
         let watcher = VaultWatcher(rootURL: vault.rootURL, queue: .main) { [weak self] change in
             MainActor.assumeIsolated { self?.handleVaultChange(change) }
         }
