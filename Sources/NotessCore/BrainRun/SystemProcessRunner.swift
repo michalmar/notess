@@ -25,8 +25,14 @@ public struct SystemProcessRunner: BrainRunProcessRunner {
         guard pipeResult == 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno)!) }
         let readDescriptor = descriptors[0]
         let writeDescriptor = descriptors[1]
-        _ = fcntl(readDescriptor, F_SETFD, FD_CLOEXEC)
-        _ = fcntl(writeDescriptor, F_SETFD, FD_CLOEXEC)
+        guard fcntl(readDescriptor, F_SETFD, FD_CLOEXEC) != -1,
+              fcntl(writeDescriptor, F_SETFD, FD_CLOEXEC) != -1
+        else {
+            let error = POSIXError(POSIXErrorCode(rawValue: errno)!)
+            Darwin.close(readDescriptor)
+            Darwin.close(writeDescriptor)
+            throw error
+        }
 
         let control = ProcessGroupControl(gracePeriod: terminationGracePeriod)
         let decoder = UTF8StreamDecoder()
@@ -96,8 +102,12 @@ public struct SystemProcessRunner: BrainRunProcessRunner {
         ))
         try check(posix_spawn_file_actions_adddup2(&fileActions, writeDescriptor, STDOUT_FILENO))
         try check(posix_spawn_file_actions_adddup2(&fileActions, writeDescriptor, STDERR_FILENO))
-        try check(posix_spawn_file_actions_addclose(&fileActions, readDescriptor))
-        try check(posix_spawn_file_actions_addclose(&fileActions, writeDescriptor))
+        if readDescriptor > STDERR_FILENO {
+            try check(posix_spawn_file_actions_addclose(&fileActions, readDescriptor))
+        }
+        if writeDescriptor > STDERR_FILENO {
+            try check(posix_spawn_file_actions_addclose(&fileActions, writeDescriptor))
+        }
         try check(posix_spawn_file_actions_addchdir_np(
             &fileActions,
             command.currentDirectoryURL.path
