@@ -40,6 +40,9 @@ public final class TabSession {
         newFileContent: String = "",
         isReadOnly: Bool = false
     ) throws -> NoteDocument {
+        if let existing = selectOpenNote(at: fileURL) {
+            return existing
+        }
         let canonicalURL = Self.canonicalURL(fileURL)
         return open(try NoteDocument.open(
             fileURL: canonicalURL,
@@ -51,16 +54,28 @@ public final class TabSession {
     /// Adds an already loaded note, or selects the tab for the same file.
     @discardableResult
     public func open(_ document: NoteDocument) -> NoteDocument {
-        if let existing = documents.first(where: {
-            Self.refersToSameFile($0.fileURL, document.fileURL)
-        }) {
-            activeDocument = existing
+        if let existing = selectOpenNote(at: document.fileURL) {
             return existing
         }
 
         documents.append(document)
         activeDocument = document
         return document
+    }
+
+    /// Returns the open document for the same file without changing selection.
+    public func document(at fileURL: URL) -> NoteDocument? {
+        documents.first(where: {
+            Self.refersToSameFile($0.fileURL, fileURL)
+        })
+    }
+
+    /// Selects and returns the open document for the same file, if there is one.
+    @discardableResult
+    public func selectOpenNote(at fileURL: URL) -> NoteDocument? {
+        guard let existing = document(at: fileURL) else { return nil }
+        activeDocument = existing
+        return existing
     }
 
     public func select(documentID: NoteDocument.ID) {

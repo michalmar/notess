@@ -16,13 +16,14 @@ extension AppModel {
             document = current
             noteName = current.fileURL.deletingPathExtension().lastPathComponent
         } else {
-            let resolver = WikiLinkResolver(relativePaths: vault.scanNotePaths())
+            let openPaths = tabSession.restorationState(relativeTo: vault.rootURL).relativePaths
+            let resolver = WikiLinkResolver(relativePaths: vault.scanNotePaths() + openPaths)
             guard let relativePath = resolver.resolve(target: link.target) else {
                 errorMessage = "Poznámka „\(link.target)“ ve Vaultu neexistuje."
                 return
             }
             let url = vault.rootURL.appending(path: relativePath, directoryHint: .notDirectory)
-            guard FileManager.default.fileExists(atPath: url.path) else {
+            guard hasOpenOrExistingNote(at: url) else {
                 errorMessage = "Poznámka „\(link.target)“ ve Vaultu neexistuje."
                 return
             }
@@ -50,7 +51,7 @@ extension AppModel {
             path: backlink.sourceRelativePath,
             directoryHint: .notDirectory
         )
-        guard FileManager.default.fileExists(atPath: url.path) else {
+        guard hasOpenOrExistingNote(at: url) else {
             errorMessage = "Zdrojová poznámka už ve Vaultu neexistuje."
             rebuildBacklinks()
             return

@@ -31,5 +31,9 @@ let package = Package(
             name: "NotessEditorTests",
             dependencies: ["NotessEditor"]
         ),
+        .testTarget(
+            name: "NotessTests",
+            dependencies: ["Notess", "NotessCore"]
+        ),
     ]
 )

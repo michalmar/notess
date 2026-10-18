@@ -153,15 +153,14 @@ final class AppModel {
     @discardableResult
     func openExistingNote(relativePath: String) -> NoteDocument? {
         guard let vault else { return nil }
-        do {
-            let document = tabSession.open(try vault.openNote(relativePath: relativePath))
-            showOpenedTab()
-            refreshVisibleBacklinks()
-            return document
-        } catch {
-            errorMessage = "Poznámku se nepodařilo otevřít: \(error.localizedDescription)"
+        let fileURL = vault.rootURL
+            .appending(path: relativePath, directoryHint: .notDirectory)
+            .standardizedFileURL
+        guard vault.contains(fileURL) else {
+            errorMessage = "Poznámku se nepodařilo otevřít: \(CocoaError(.fileReadNoPermission).localizedDescription)"
             return nil
         }
+        return openNote(at: fileURL)
     }
 
     func selectTab(documentID: NoteDocument.ID) {
@@ -176,6 +175,11 @@ final class AppModel {
         tabSession.closeTab(documentID: documentID)
         persistTabs()
         refreshVisibleBacklinks()
+    }
+
+    func hasOpenOrExistingNote(at fileURL: URL) -> Bool {
+        tabSession.document(at: fileURL) != nil
+            || FileManager.default.fileExists(atPath: fileURL.path)
     }
 
     func refreshTree() {
