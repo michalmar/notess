@@ -63,6 +63,8 @@ final class AppModel {
     @ObservationIgnored let brainRunStateStore: BrainRunStateStore
     @ObservationIgnored var brainRun: BrainRun?
     @ObservationIgnored var brainRunTask: Task<Void, Never>?
+    @ObservationIgnored var brainRunCleanupTask: Task<Void, Never>?
+    @ObservationIgnored var brainRunCleanupID = UUID()
     /// Identifies the current Brain Run, so a run of a previous Vault reports nothing.
     @ObservationIgnored var brainRunID = UUID()
     @ObservationIgnored var isCheckingBrainRunBoundary = false
