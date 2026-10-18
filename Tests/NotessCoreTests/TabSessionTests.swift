@@ -39,6 +39,65 @@ struct TabSessionTests {
         #expect(reopened === first)
     }
 
+    @Test("reopening an invalid UTF-8 alias preserves the existing dirty tab")
+    func invalidUTF8AliasPreservesExistingTab() throws {
+        let temp = try TemporaryVault()
+        try temp.write("Plan", to: "Notes/Plan.md")
+        let original = temp.vault.rootURL.appending(path: "Notes/Plan.md")
+        let alias = temp.vault.rootURL.appending(path: "Notes/plan-alias.md")
+        try FileManager.default.linkItem(at: original, to: alias)
+        let session = TabSession()
+        let first = try session.openNote(at: original)
+        let attachmentData = Data("image".utf8)
+        let attachment = first.stageAttachment(data: attachmentData, fileExtension: "png")
+        first.text = "Unsaved\n\(attachment.markdown)"
+        try Data([0xFF]).write(to: original)
+
+        let reopened = try session.openNote(at: alias)
+
+        #expect(reopened === first)
+        #expect(session.documents.map(\.id) == [first.id])
+        #expect(session.activeDocument === first)
+        #expect(reopened.text == "Unsaved\n\(attachment.markdown)")
+        #expect(reopened.hasUnsavedChanges)
+        #expect(reopened.stagedAttachmentData(relativePath: attachment.relativePath) == attachmentData)
+    }
+
+    @Test("reopening a deleted note preserves its deletion state")
+    func deletedNotePreservesExistingTab() throws {
+        let temp = try TemporaryVault()
+        try temp.write("Plan", to: "Notes/Plan.md")
+        let url = temp.vault.rootURL.appending(path: "Notes/Plan.md")
+        let session = TabSession()
+        let document = try session.openNote(at: url)
+        try FileManager.default.removeItem(at: url)
+        document.reconcileWithDisk()
+
+        let reopened = try session.openNote(at: url)
+
+        #expect(reopened === document)
+        #expect(reopened.text == "Plan")
+        #expect(reopened.externalChange == .deleted)
+        #expect(reopened.existsOnDisk == false)
+    }
+
+    @Test("reopening an unsaved Daily Entry does not require or create its file")
+    func unsavedDailyEntryReopensInMemory() throws {
+        let temp = try TemporaryVault()
+        let entry = DailyEntry(day: Day(year: 2026, month: 10, day: 18))
+        let url = temp.vault.url(for: entry)
+        let session = TabSession()
+        let document = try session.openNote(at: url, newFileContent: entry.initialContent)
+        document.text += "In memory\n"
+
+        let reopened = try session.openNote(at: url, newFileContent: entry.initialContent)
+
+        #expect(reopened === document)
+        #expect(reopened.text.hasSuffix("In memory\n"))
+        #expect(reopened.existsOnDisk == false)
+        #expect(FileManager.default.fileExists(atPath: url.path) == false)
+    }
+
     @Test("missing file paths follow their volume's case sensitivity")
     func missingFilePathsUseVolumeCaseSensitivity() throws {
         let temp = try TemporaryVault()
