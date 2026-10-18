@@ -105,12 +105,17 @@ extension AppModel {
         }
     }
 
-    /// Tells the running Brain Run which files the user's last save wrote.
+    /// Tells the running Brain Run which files the user's last save wrote. If they
+    /// cannot be read back, the run fails: stop the Agent.
     func acceptUserWriteDuringBrainRun(of document: NoteDocument) {
         guard let brainRun, let vault else { return }
         let paths = document.lastSaveWrittenFileURLs.compactMap { relativePath(for: $0, in: vault) }
         guard !paths.isEmpty else { return }
-        brainRun.acceptUserWrite(under: paths)
+        do {
+            try brainRun.acceptUserWrite(under: paths)
+        } catch {
+            stopBrainRun(unreadable: error)
+        }
     }
 
     /// Outside changes during a run: if a file outside `_brain/` changed without
@@ -128,17 +133,32 @@ extension AppModel {
         needsBrainRunBoundaryRecheck = false
         let id = brainRunID
         Task { [weak self] in
-            let outside = await Task.detached { brainRun.changesOutsideBrain() }.value
+            let checked = await Task.detached {
+                Result { () throws(VaultSnapshotError) in try brainRun.changesOutsideBrain() }
+            }.value
             guard let self else { return }
             self.isCheckingBrainRunBoundary = false
             guard self.brainRunID == id, self.brainRunPhase == .running else { return }
-            if !outside.isEmpty {
+            switch checked {
+            case .failure(let error):
+                self.stopBrainRun(unreadable: error)
+            case .success(let outside) where !outside.isEmpty:
                 self.brainRunLog.append("\nZměna mimo _brain/: \(outside.joined(separator: ", ")). Zastavuji Agenta.\n")
                 self.cancelBrainRun()
-            } else if self.needsBrainRunBoundaryRecheck {
-                self.checkBrainRunBoundary(after: VaultChange(relativePaths: [], requiresFullRescan: true))
+            case .success:
+                if self.needsBrainRunBoundaryRecheck {
+                    self.checkBrainRunBoundary(after: VaultChange(relativePaths: [], requiresFullRescan: true))
+                }
             }
         }
+    }
+
+    /// A file outside `_brain/` could not be read during the run: the run already
+    /// counts as failed, so stop the Agent; it then reports the failure.
+    private func stopBrainRun(unreadable error: VaultSnapshotError) {
+        guard brainRunPhase == .running else { return }
+        brainRunLog.append("\nNepodařilo se přečíst \(Self.describe(error.relativePath)): \(error.detail). Zastavuji Agenta.\n")
+        cancelBrainRun()
     }
 
     private func finishBrainRun(id: UUID, outcome: BrainRunOutcome) {
@@ -154,7 +174,7 @@ extension AppModel {
         case .failed(let failure):
             let alert: Bool
             switch failure {
-            case .changedOutsideBrain, .launch, .brainFolderUnavailable: alert = true
+            case .changedOutsideBrain, .launch, .brainFolderUnavailable, .vaultUnreadable: alert = true
             default: alert = false
             }
             finishBrainRun(id: id, failure: Self.message(for: failure), alert: alert)
@@ -213,6 +233,12 @@ extension AppModel {
             return "Během Brain Runu se mimo _brain/ změnily soubory, které jste neuložili vy: \(shown)\(more). Zkontrolujte je. Běh se nepočítá jako úspěšný."
         case .stateNotSaved(let detail):
             return "Brain Run doběhl, ale jeho stav se nepodařilo uložit, takže se poznámky zpracují znovu: \(detail)"
+        case .vaultUnreadable(let error):
+            return "Nepodařilo se přečíst \(describe(error.relativePath)): \(error.detail). Zkontrolujte oprávnění a spusťte Zpracovat znovu. Běh se nepočítá jako úspěšný."
         }
+    }
+
+    private static func describe(_ relativePath: String) -> String {
+        relativePath.isEmpty ? "Vault" : "„\(relativePath)“"
     }
 }
