@@ -2,7 +2,7 @@ import Foundation
 @testable import NotessCore
 
 /// A Vault in a fresh temporary directory, deleted on deinit.
-final class TemporaryVault {
+final class TemporaryVault: Sendable {
     let vault: Vault
 
     init() throws {
@@ -28,5 +28,25 @@ final class TemporaryVault {
         let url = vault.rootURL.appendingPathComponent(relativePath)
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         try text.write(to: url, atomically: true, encoding: .utf8)
+    }
+
+    /// Takes all permissions from a file or folder; `restore()` gives them back
+    /// (do so before the Vault is deleted).
+    func makeUnreadable(_ relativePath: String) throws -> UnreadableItem {
+        let path = vault.rootURL.appendingPathComponent(relativePath).path
+        let original = try FileManager.default.attributesOfItem(atPath: path)[.posixPermissions] as? Int ?? 0o755
+        try FileManager.default.setAttributes([.posixPermissions: 0], ofItemAtPath: path)
+        return UnreadableItem(owner: self, path: path, permissions: original)
+    }
+}
+
+struct UnreadableItem: Sendable {
+    /// Keeps the Vault alive until the permissions are restored.
+    let owner: TemporaryVault
+    let path: String
+    let permissions: Int
+
+    func restore() {
+        try? FileManager.default.setAttributes([.posixPermissions: permissions], ofItemAtPath: path)
     }
 }
