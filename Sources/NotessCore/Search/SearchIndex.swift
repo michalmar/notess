@@ -26,6 +26,10 @@ public actor SearchIndex {
     public let vault: Vault
     public let databaseURL: URL
     private var database: SQLiteDatabase?
+    /// Notes whose last read failed. Their stamp in the cache may still match
+    /// the file (an explicit reread failed), so passive catch-up must try them
+    /// again. Not persisted: after a restart only a changed stamp triggers a retry.
+    private var unreadable: Set<String> = []
 
     public init(vault: Vault, databaseURL: URL) {
         self.vault = vault
@@ -72,11 +76,12 @@ public actor SearchIndex {
     /// Throws the index away and builds it again from the files.
     public func rebuild() async throws {
         database = nil
+        unreadable = []
         Self.removeDatabaseFiles(at: databaseURL)
         try await synchronize()
     }
 
-    private static func scopes(_ scopes: Set<String>, contain path: String) -> Bool {
+    private static func isCovered(_ path: String, by scopes: Set<String>) -> Bool {
         scopes.contains { $0.isEmpty || path == $0 || path.hasPrefix($0 + "/") }
     }
 
@@ -88,15 +93,19 @@ public actor SearchIndex {
         for scope in scopes {
             for file in scanNotes(under: scope) { onDisk[file.relativePath] = file }
         }
-        let indexed = try indexedStamps(in: db).filter { path, _ in Self.scopes(scopes, contain: path) }
+        let indexed = try indexedStamps(in: db).filter { path, _ in Self.isCovered(path, by: scopes) }
 
         let removed = indexed.keys.filter { onDisk[$0] == nil }
         let changed = onDisk.values
-            .filter { indexed[$0.relativePath] != $0.stamp || Self.scopes(rereading, contain: $0.relativePath) }
+            .filter {
+                indexed[$0.relativePath] != $0.stamp || unreadable.contains($0.relativePath)
+                    || Self.isCovered($0.relativePath, by: rereading)
+            }
             .sorted { $0.relativePath < $1.relativePath }
 
         if !removed.isEmpty {
             try db.transaction { for path in removed { try removeSections(of: path, in: db) } }
+            unreadable.subtract(removed)
         }
         var failures: [IndexingFailure.File] = []
         for start in stride(from: 0, to: changed.count, by: Self.batchSize) {
@@ -118,10 +127,13 @@ public actor SearchIndex {
                     }
                 }
             }
+            for (file, source) in sources {
+                if case .failed = source { unreadable.insert(file.relativePath) } else { unreadable.remove(file.relativePath) }
+            }
             await Task.yield()
         }
         // The notes that could be read are indexed; the others are tried again
-        // by the next synchronisation because their stamps still differ.
+        // by the next catch-up (see `unreadable`).
         if !failures.isEmpty { throw IndexingFailure(files: failures) }
     }
 

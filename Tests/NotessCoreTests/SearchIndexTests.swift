@@ -194,6 +194,26 @@ final class SearchIndexTests {
         #expect(try await fileIDs("zcela", in: reopened).sorted() == [journal, "Projekty/Plán.md"].sorted())
     }
 
+    @Test("a note whose explicit reread failed is retried by passive catch-up although its stamp matches the cache")
+    func failedExplicitRereadIsRetried() async throws {
+        let index = makeIndex()
+        let path = "Projekty/Plán.md"
+        try pinModificationDate(path)
+        try await index.synchronize()
+
+        let bytes = try Data(contentsOf: vault.vault.rootURL.appending(path: path)).count
+        // Same size and date as the indexed file, but unreadable.
+        try Data(repeating: 0xFF, count: bytes).write(to: vault.vault.rootURL.appending(path: path))
+        try pinModificationDate(path)
+        await #expect(throws: SearchIndex.IndexingFailure.self) { try await index.update(relativePaths: [path]) }
+        await #expect(throws: SearchIndex.IndexingFailure.self) { try await index.synchronize() }
+        #expect(try await fileIDs("požadavky", in: index) == [path])
+
+        try replaceKeepingStamp(path, with: String(repeating: "x", count: bytes))
+        try await index.synchronize()
+        #expect(try await fileIDs("požadavky", in: index).isEmpty)
+    }
+
     @Test("a confirmed deletion still removes the records of an unreadable note without failing")
     func deletionRemovesRecords() async throws {
         let index = makeIndex()
