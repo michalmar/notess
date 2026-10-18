@@ -144,4 +144,27 @@ final class TagTimelineBrowserTests {
             return
         }
     }
+
+    @Test("a failed index update keeps the shown Tags and timeline, and recovery refreshes them")
+    func failedUpdateKeepsTimeline() async throws {
+        let index = try await makeIndex()
+        let browser = TagTimelineBrowser()
+        browser.connect(index)
+        await browser.refresh()
+        await browser.select("acme")
+        let before = sectionIDs(browser)
+
+        let path = "Journal/2026/06/2026-06-02.md"
+        try Data([0x23, 0xFF, 0xFE]).write(to: vault.vault.rootURL.appending(path: path))
+        await #expect(throws: SearchIndex.IndexingFailure.self) { try await index.update(relativePaths: [path]) }
+        await browser.refresh()
+        #expect(browser.tags == .loaded(["acme", "beta"]))
+        #expect(sectionIDs(browser) == before)
+
+        try vault.write("# 2026-06-02\n\n## Porada #gama\nzápis\n", to: path)
+        try await index.synchronize()
+        await browser.refresh()
+        #expect(browser.tags == .loaded(["acme", "gama"]))
+        #expect(sectionIDs(browser) == ["Journal/2026/06/2026-06-01.md#1"])
+    }
 }

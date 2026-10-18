@@ -8,7 +8,9 @@ import Foundation
 /// The index is only a cache (ADR 0002): it lives outside the Vault and can be
 /// deleted and rebuilt from the files at any time. `synchronize()` catches up
 /// with the files on disk by comparing modification dates and sizes, so only
-/// changed notes are read again. All work runs off the main thread on this
+/// changed notes are read again. The `update` methods are explicit
+/// invalidations: they read every note in their scope again, whatever its
+/// stamp says. All work runs off the main thread on this
 /// actor; long runs yield between batches so searches stay responsive.
 public actor SearchIndex {
     /// Bump when the schema, the way notes are split into Sections or the way
@@ -24,6 +26,10 @@ public actor SearchIndex {
     public let vault: Vault
     public let databaseURL: URL
     private var database: SQLiteDatabase?
+    /// Notes whose last read failed. Their stamp in the cache may still match
+    /// the file (an explicit reread failed), so passive catch-up must try them
+    /// again. Not persisted: after a restart only a changed stamp triggers a retry.
+    private var unreadable: Set<String> = []
 
     public init(vault: Vault, databaseURL: URL) {
         self.vault = vault
@@ -41,18 +47,25 @@ public actor SearchIndex {
 
     // MARK: - Keeping the index in sync
 
-    /// Brings the whole index in line with the Vault on disk.
-    public func synchronize() async throws {
-        try await synchronize(scopes: [""])
+    /// Brings the whole index in line with the Vault on disk (passive catch-up):
+    /// a note whose size and modification date match the cache is skipped.
+    ///
+    /// `relativePaths` are files or folders reported as changed (`""` is the
+    /// whole Vault); notes in them are read again whatever their stamps say.
+    public func synchronize(rereading relativePaths: Set<String> = []) async throws {
+        try await synchronize(scopes: [""], rereading: relativePaths)
     }
 
-    /// Re-checks the given Vault-relative files or folders (as reported by
-    /// `VaultWatcher` or after a save); `""` means the whole Vault.
+    /// Reads the given Vault-relative files or folders (as reported by
+    /// `VaultWatcher` or after a save) again, also when their stamps match the
+    /// cache; `""` means the whole Vault.
     public func update(relativePaths: Set<String>) async throws {
-        try await synchronize(scopes: relativePaths.contains("") ? [""] : relativePaths)
+        let scopes = relativePaths.contains("") ? [""] : relativePaths
+        try await synchronize(scopes: scopes, rereading: scopes)
     }
 
-    /// Re-checks one note after the app saved it; a file outside the Vault is ignored.
+    /// Reads one note again after the app saved it, also when its stamp matches
+    /// the cache; a file outside the Vault is ignored.
     public func update(fileAt url: URL) async throws {
         let root = vault.rootURL.standardizedFileURL.resolvingSymlinksInPath().pathComponents
         let file = url.standardizedFileURL.resolvingSymlinksInPath().pathComponents
@@ -63,45 +76,86 @@ public actor SearchIndex {
     /// Throws the index away and builds it again from the files.
     public func rebuild() async throws {
         database = nil
+        unreadable = []
         Self.removeDatabaseFiles(at: databaseURL)
         try await synchronize()
     }
 
-    private func synchronize(scopes: Set<String>) async throws {
+    private static func isCovered(_ path: String, by scopes: Set<String>) -> Bool {
+        scopes.contains { $0.isEmpty || path == $0 || path.hasPrefix($0 + "/") }
+    }
+
+    /// Notes under `scopes` are read again if their stamp differs from the
+    /// cache or they lie under `rereading` (explicit invalidation).
+    private func synchronize(scopes: Set<String>, rereading: Set<String>) async throws {
         let db = try openDatabase()
         var onDisk: [String: NoteFile] = [:]
         for scope in scopes {
             for file in scanNotes(under: scope) { onDisk[file.relativePath] = file }
         }
-        let indexed = try indexedStamps(in: db).filter { path, _ in
-            scopes.contains { $0.isEmpty || path == $0 || path.hasPrefix($0 + "/") }
-        }
+        let indexed = try indexedStamps(in: db).filter { path, _ in Self.isCovered(path, by: scopes) }
 
         let removed = indexed.keys.filter { onDisk[$0] == nil }
-        let changed = onDisk.values.filter { indexed[$0.relativePath] != $0.stamp }
+        let changed = onDisk.values
+            .filter {
+                indexed[$0.relativePath] != $0.stamp || unreadable.contains($0.relativePath)
+                    || Self.isCovered($0.relativePath, by: rereading)
+            }
             .sorted { $0.relativePath < $1.relativePath }
 
         if !removed.isEmpty {
             try db.transaction { for path in removed { try removeSections(of: path, in: db) } }
+            unreadable.subtract(removed)
         }
+        var failures: [IndexingFailure.File] = []
         for start in stride(from: 0, to: changed.count, by: Self.batchSize) {
             try Task.checkCancellation()
             // `rebuild()` replaced the database while this run was suspended; it rescans everything.
             guard database === db else { return }
-            try db.transaction {
-                for file in changed[start..<min(start + Self.batchSize, changed.count)] {
-                    try index(file, in: db)
+            // Sources are read before the transaction, so a note that cannot be
+            // read keeps its previous records and stamp instead of losing them.
+            let sources = changed[start..<min(start + Self.batchSize, changed.count)]
+                .map { file in
+                    (file, Self.readSource(at: vault.rootURL.appending(path: file.relativePath, directoryHint: .notDirectory)))
                 }
+            try db.transaction {
+                for (file, source) in sources {
+                    switch source {
+                    case .text(let text): try index(file, text: text, in: db)
+                    case .vanished: try removeSections(of: file.relativePath, in: db)
+                    case .failed(let reason): failures.append(.init(relativePath: file.relativePath, reason: reason))
+                    }
+                }
+            }
+            for (file, source) in sources {
+                if case .failed = source { unreadable.insert(file.relativePath) } else { unreadable.remove(file.relativePath) }
             }
             await Task.yield()
         }
+        // The notes that could be read are indexed; the others are tried again
+        // by the next catch-up (see `unreadable`).
+        if !failures.isEmpty { throw IndexingFailure(files: failures) }
     }
 
-    private func index(_ file: NoteFile, in db: SQLiteDatabase) throws {
+    enum Source: Equatable {
+        case text(String)
+        /// The file disappeared after it was scanned: a deletion, not an error.
+        case vanished
+        case failed(String)
+    }
+
+    static func readSource(at url: URL) -> Source {
+        do {
+            return .text(try String(contentsOf: url, encoding: .utf8))
+        } catch let error as CocoaError where error.code == .fileReadNoSuchFile {
+            return .vanished
+        } catch {
+            return .failed(error.localizedDescription)
+        }
+    }
+
+    private func index(_ file: NoteFile, text raw: String, in db: SQLiteDatabase) throws {
         try removeSections(of: file.relativePath, in: db)
-        let url = vault.rootURL.appending(path: file.relativePath, directoryHint: .notDirectory)
-        // An unreadable file is left unrecorded so the next synchronisation tries it again.
-        guard let raw = try? String(contentsOf: url, encoding: .utf8) else { return }
         let text = raw.precomposedStringWithCanonicalMapping
         for section in SearchSection.split(text) {
             let markdown = (text as NSString).substring(with: section.range).trimmingCharacters(in: .newlines)
@@ -284,6 +338,23 @@ public actor SearchIndex {
     }
 
     // MARK: - Files
+
+    /// Notes whose sources could not be read during an update. Their previous
+    /// index records are kept, and the notes are tried again by the next catch-up.
+    public struct IndexingFailure: Error, LocalizedError, Equatable {
+        public struct File: Equatable, Sendable {
+            public let relativePath: String
+            public let reason: String
+        }
+
+        public let files: [File]
+
+        public var errorDescription: String? {
+            guard let first = files.first else { return nil }
+            let rest = files.count > 1 ? " a dalších \(files.count - 1)" : ""
+            return "poznámku \(first.relativePath)\(rest) se nepodařilo přečíst (\(first.reason))"
+        }
+    }
 
     private struct OutdatedSchema: Error {}
 

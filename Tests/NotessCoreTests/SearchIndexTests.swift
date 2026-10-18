@@ -132,18 +132,113 @@ final class SearchIndexTests {
         #expect(try await index.search(SearchQuery("klient")).map(\.kind) == [.dailyEntry])
     }
 
-    @Test("an unreadable note is tried again on the next synchronisation, even with an unchanged stamp")
+    /// Not valid UTF-8, so reading the note as text fails deterministically.
+    private static let invalidUTF8 = Data([0x23, 0x23, 0x20, 0xFF, 0xFE, 0x0A, 0x61])
+
+    private func fileIDs(_ query: String, in index: SearchIndex) async throws -> [String] {
+        try await index.search(SearchQuery(query)).flatMap(\.results).map(\.relativePath)
+    }
+
+    @Test("a new unreadable note reports a failure, is not recorded and is tried again with an unchanged stamp")
     func unreadableNoteRetried() async throws {
         let index = makeIndex()
         let url = vault.vault.rootURL.appending(path: "Rozbitá.md")
-        try Data([0x23, 0x23, 0x20, 0xFF, 0xFE, 0x0A, 0x61]).write(to: url)
+        try Self.invalidUTF8.write(to: url)
         let modified = try #require(try FileManager.default.attributesOfItem(atPath: url.path)[.modificationDate] as? Date)
-        try await index.synchronize()
+
+        let failure = await #expect(throws: SearchIndex.IndexingFailure.self) { try await index.synchronize() }
+        #expect(failure?.files.map(\.relativePath) == ["Rozbitá.md"])
+        // The readable notes of the same run are indexed.
+        #expect(try await fileIDs("přehled", in: index).contains("Projekty/Plán.md"))
+        #expect(!(try await fileIDs("ok", in: index).contains("Rozbitá.md")))
 
         try Data("## Ok\nb".utf8).write(to: url)
         try FileManager.default.setAttributes([.modificationDate: modified], ofItemAtPath: url.path)
         try await index.synchronize()
-        #expect(try await index.search(SearchQuery("ok")).first?.results.first?.relativePath == "Rozbitá.md")
+        #expect(try await fileIDs("ok", in: index) == ["Rozbitá.md"])
+    }
+
+    @Test("a failed replacement keeps the previous Sections, search text, Tags and Tag Timeline, and recovery replaces them")
+    func failedReplacementKeepsPreviousRecords() async throws {
+        let index = makeIndex()
+        try await index.synchronize()
+        let journal = "Journal/2026/03/2026-03-14.md"
+        let timeline = try await index.tagTimeline(for: "acme")
+        let tags = try await index.journalTags()
+        #expect(timeline.isEmpty == false)
+
+        try Self.invalidUTF8.write(to: vault.vault.rootURL.appending(path: journal))
+        try Self.invalidUTF8.write(to: vault.vault.rootURL.appending(path: "Projekty/Plán.md"))
+
+        let failure = await #expect(throws: SearchIndex.IndexingFailure.self) {
+            try await index.update(relativePaths: [journal, "Projekty/Plán.md"])
+        }
+        #expect(failure?.files.map(\.relativePath).sorted() == [journal, "Projekty/Plán.md"])
+        #expect(try await index.tagTimeline(for: "acme") == timeline)
+        #expect(try await index.journalTags() == tags)
+        #expect(try await fileIDs("kickoff", in: index).sorted() == [journal, journal, "Projekty/Plán.md"].sorted())
+        #expect(try await fileIDs("#acme", in: index).sorted() == [journal, "Projekty/Plán.md"].sorted())
+
+        // Reopening the committed cache shows the same consistent data.
+        let reopened = makeIndex()
+        #expect(try await reopened.tagTimeline(for: "acme") == timeline)
+        await #expect(throws: SearchIndex.IndexingFailure.self) { try await reopened.synchronize() }
+        #expect(try await reopened.tagTimeline(for: "acme") == timeline)
+
+        try vault.write("# 2026-03-14\n\n## Nové #novy\nzcela jiné\n", to: journal)
+        try vault.write("## Jiné\nzcela jiné\n", to: "Projekty/Plán.md")
+        try await reopened.synchronize()
+        #expect(try await reopened.tagTimeline(for: "acme").isEmpty)
+        #expect(try await reopened.journalTags() == ["novy"])
+        #expect(try await fileIDs("kickoff", in: reopened).isEmpty)
+        #expect(try await fileIDs("zcela", in: reopened).sorted() == [journal, "Projekty/Plán.md"].sorted())
+    }
+
+    @Test("a note whose explicit reread failed is retried by passive catch-up although its stamp matches the cache")
+    func failedExplicitRereadIsRetried() async throws {
+        let index = makeIndex()
+        let path = "Projekty/Plán.md"
+        try pinModificationDate(path)
+        try await index.synchronize()
+
+        let bytes = try Data(contentsOf: vault.vault.rootURL.appending(path: path)).count
+        // Same size and date as the indexed file, but unreadable.
+        try Data(repeating: 0xFF, count: bytes).write(to: vault.vault.rootURL.appending(path: path))
+        try pinModificationDate(path)
+        await #expect(throws: SearchIndex.IndexingFailure.self) { try await index.update(relativePaths: [path]) }
+        await #expect(throws: SearchIndex.IndexingFailure.self) { try await index.synchronize() }
+        #expect(try await fileIDs("požadavky", in: index) == [path])
+
+        try replaceKeepingStamp(path, with: String(repeating: "x", count: bytes))
+        try await index.synchronize()
+        #expect(try await fileIDs("požadavky", in: index).isEmpty)
+    }
+
+    @Test("a confirmed deletion still removes the records of an unreadable note without failing")
+    func deletionRemovesRecords() async throws {
+        let index = makeIndex()
+        try await index.synchronize()
+        let journal = "Journal/2026/03/2026-03-14.md"
+        try Self.invalidUTF8.write(to: vault.vault.rootURL.appending(path: journal))
+        await #expect(throws: SearchIndex.IndexingFailure.self) { try await index.update(relativePaths: [journal]) }
+
+        try FileManager.default.removeItem(at: vault.vault.rootURL.appending(path: journal))
+        try await index.update(relativePaths: [journal])
+        #expect(try await index.tagTimeline(for: "acme").isEmpty)
+        #expect(try await fileIDs("kickoff", in: index) == ["Projekty/Plán.md"])
+    }
+
+    @Test("a source that vanished after the scan is told apart from one that cannot be read")
+    func vanishedSource() throws {
+        let root = vault.vault.rootURL
+        try Self.invalidUTF8.write(to: root.appending(path: "Rozbitá.md"))
+        try vault.write("## Ok\n", to: "Ok.md")
+        #expect(SearchIndex.readSource(at: root.appending(path: "Ok.md")) == .text("## Ok\n"))
+        #expect(SearchIndex.readSource(at: root.appending(path: "Zmizelá.md")) == .vanished)
+        guard case .failed = SearchIndex.readSource(at: root.appending(path: "Rozbitá.md")) else {
+            Issue.record("expected a read failure")
+            return
+        }
     }
 
     @Test("a saved note is re-indexed by its file URL")
@@ -154,6 +249,118 @@ final class SearchIndexTests {
         try await index.update(fileAt: vault.vault.rootURL.appending(path: "Projekty/Plán.md"))
         #expect(try await index.search(SearchQuery("obsah")).first?.results.first?.title == "Po uložení")
         try await index.update(fileAt: URL(filePath: "/tmp/elsewhere.md"))
+    }
+
+    /// A whole-second date, so that restoring it reproduces the recorded stamp exactly.
+    private static let pinnedDate = Date(timeIntervalSince1970: 1_700_000_000)
+
+    private func pinModificationDate(_ paths: String...) throws {
+        for path in paths {
+            try FileManager.default.setAttributes(
+                [.modificationDate: Self.pinnedDate],
+                ofItemAtPath: vault.vault.rootURL.appending(path: path).path
+            )
+        }
+    }
+
+    /// Replaces a note by `text` of the same byte length and restores its
+    /// pinned modification date, so its stamp equals the one the index recorded.
+    private func replaceKeepingStamp(_ path: String, with text: String) throws {
+        let url = vault.vault.rootURL.appending(path: path)
+        let size = try Data(contentsOf: url).count
+        try vault.write(text, to: path)
+        #expect(try Data(contentsOf: url).count == size)
+        try pinModificationDate(path)
+    }
+
+    @Test("an explicit update reads a note again although its size and date are unchanged")
+    func explicitSingleFileUpdateIgnoresStamp() async throws {
+        let index = makeIndex()
+        try vault.write("# Pořadí\n\n## Řada\nalpha\n", to: "Projekty/Pořadí.md")
+        try vault.write("# Druhé\n\n## Řada\nalpha\n", to: "Projekty/Druhé.md")
+        try pinModificationDate("Projekty/Pořadí.md", "Projekty/Druhé.md")
+        try await index.synchronize()
+        #expect(try await fileIDs("alpha", in: index).sorted() == ["Projekty/Druhé.md", "Projekty/Pořadí.md"])
+
+        try replaceKeepingStamp("Projekty/Pořadí.md", with: "# Pořadí\n\n## Řada\nomega\n")
+        try replaceKeepingStamp("Projekty/Druhé.md", with: "# Druhé\n\n## Řada\nomega\n")
+        // Passive catch-up trusts the matching stamps.
+        try await index.synchronize()
+        #expect(try await fileIDs("omega", in: index).isEmpty)
+
+        try await index.update(fileAt: vault.vault.rootURL.appending(path: "Projekty/Pořadí.md"))
+        #expect(try await fileIDs("omega", in: index) == ["Projekty/Pořadí.md"])
+        #expect(try await fileIDs("alpha", in: index) == ["Projekty/Druhé.md"])
+
+        try await index.update(relativePaths: ["Projekty/Druhé.md"])
+        #expect(try await fileIDs("omega", in: index).sorted() == ["Projekty/Druhé.md", "Projekty/Pořadí.md"])
+        #expect(try await fileIDs("alpha", in: index).isEmpty)
+    }
+
+    @Test("folder and root scopes read the notes they contain again, Tags and Tag Timeline included")
+    func explicitScopesIgnoreStamps() async throws {
+        let index = makeIndex()
+        let journal = "Journal/2026/03/2026-03-14.md"
+        try pinModificationDate(journal, "Projekty/Plán.md")
+        try await index.synchronize()
+        let before = try await index.tagTimeline(for: "acme")
+        #expect(before.first?.sections.first?.markdown == "## Kickoff Acme\nPřehled požadavků od klienta. #acme")
+
+        try replaceKeepingStamp(journal, with: """
+        # 2026-03-14
+
+        Ráno káva.
+
+        ## Kickoff Acme
+        Přehled požadavků od klienta. #beta
+
+        ## Retro
+        Kickoff šel dobře.
+        """)
+        try replaceKeepingStamp("Projekty/Plán.md", with: "# Plán\ncreated: 2026-03-01\n\n## Požadavky\nPřehled a rozpisy #ACME\n")
+        try await index.synchronize()
+        #expect(try await index.tagTimeline(for: "acme") == before)
+
+        try await index.update(relativePaths: ["Journal/2026"])
+        #expect(try await index.tagTimeline(for: "acme").isEmpty)
+        #expect(try await index.journalTags().contains("beta"))
+        #expect(try await index.tagTimeline(for: "beta").first?.sections.first?.markdown
+            == "## Kickoff Acme\nPřehled požadavků od klienta. #beta")
+        #expect(try await fileIDs("kickoff", in: index).contains("Projekty/Plán.md"))
+
+        try await index.update(relativePaths: [""])
+        #expect(try await fileIDs("kickoff", in: index) == [journal, journal])
+        #expect(try await fileIDs("rozpisy", in: index) == ["Projekty/Plán.md"])
+    }
+
+    @Test("a catch-up can reread the paths a watcher reported while skipping everything else by stamp")
+    func synchronizeRereadingReportedPaths() async throws {
+        let index = makeIndex()
+        try vault.write("# Jedna\n\n## Řada\nalpha\n", to: "Projekty/Jedna.md")
+        try vault.write("# Dva\n\n## Řada\nalpha\n", to: "Projekty/Dva.md")
+        try pinModificationDate("Projekty/Jedna.md", "Projekty/Dva.md")
+        try await index.synchronize()
+        try replaceKeepingStamp("Projekty/Jedna.md", with: "# Jedna\n\n## Řada\nomega\n")
+        try replaceKeepingStamp("Projekty/Dva.md", with: "# Dva\n\n## Řada\nomega\n")
+
+        try await index.synchronize(rereading: ["Projekty/Jedna.md"])
+        #expect(try await fileIDs("omega", in: index) == ["Projekty/Jedna.md"])
+        #expect(try await fileIDs("alpha", in: index) == ["Projekty/Dva.md"])
+    }
+
+    @Test("an explicit update still forgets deleted and renamed notes and ignores files outside the Vault")
+    func explicitUpdateDeletionAndRename() async throws {
+        let index = makeIndex()
+        try await index.synchronize()
+        let root = vault.vault.rootURL
+        try FileManager.default.moveItem(at: root.appending(path: "Projekty/Plán.md"), to: root.appending(path: "Projekty/Nový plán.md"))
+        try await index.update(relativePaths: ["Projekty"])
+        #expect(try await fileIDs("požadavky", in: index) == ["Projekty/Nový plán.md"])
+
+        try FileManager.default.removeItem(at: root.appending(path: "Projekty/Nový plán.md"))
+        try await index.update(fileAt: root.appending(path: "Projekty/Nový plán.md"))
+        try await index.update(fileAt: URL(filePath: "/tmp/elsewhere.md"))
+        #expect(try await fileIDs("požadavky", in: index).isEmpty)
     }
 
     @Test("on start the index catches up with changes made while the app was closed")
