@@ -6,12 +6,12 @@ import Foundation
 public struct VaultSnapshotError: Error, Equatable, Sendable, CustomStringConvertible {
     /// Vault-relative path of the unreadable file or folder (`""` is the Vault itself).
     public let relativePath: String
-    /// The system's reason.
+    /// The system's reason, without a final period.
     public let detail: String
 
     public init(relativePath: String, detail: String) {
         self.relativePath = relativePath
-        self.detail = detail
+        self.detail = detail.hasSuffix(".") ? String(detail.dropLast()) : detail
     }
 
     public var description: String {
@@ -46,6 +46,15 @@ public struct VaultFileSnapshot: Codable, Equatable, Sendable {
     /// (a file or a folder; `""` is the whole Vault), outside `_brain/`.
     /// A `scope` that does not exist has no files.
     public static func capture(of vault: Vault, under scope: String) throws(VaultSnapshotError) -> VaultFileSnapshot {
+        try capture(of: vault, under: scope, readContents: { try Data(contentsOf: $0) })
+    }
+
+    /// `readContents` reads a note; replaceable in tests to inject read failures.
+    static func capture(
+        of vault: Vault,
+        under scope: String,
+        readContents: (URL) throws -> Data
+    ) throws(VaultSnapshotError) -> VaultFileSnapshot {
         guard !isInBrainFolder(scope) else { return VaultFileSnapshot() }
         let root = vault.rootURL.resolvingSymlinksInPath()
         let rootPath = root.path + "/"
@@ -64,13 +73,13 @@ public struct VaultFileSnapshot: Codable, Equatable, Sendable {
         }
 
         func failure(_ url: URL, _ error: any Error) -> VaultSnapshotError {
-            VaultSnapshotError(relativePath: relativePath(of: url) ?? url.path, detail: error.localizedDescription)
+            VaultSnapshotError(relativePath: relativePath(of: url) ?? scope, detail: error.localizedDescription)
         }
 
         func add(_ url: URL) throws(VaultSnapshotError) {
             guard let relative = relativePath(of: url), !isExcluded(relative) else { return }
             do {
-                if let fingerprint = try fingerprint(of: url, relativePath: relative) {
+                if let fingerprint = try fingerprint(of: url, relativePath: relative, readContents: readContents) {
                     fingerprints[relative] = fingerprint
                 }
             } catch {
@@ -122,13 +131,15 @@ public struct VaultFileSnapshot: Codable, Equatable, Sendable {
     }
 
     /// `nil` for items left out of snapshots: symlinks and anything that is not a regular file.
-    private static func fingerprint(of url: URL, relativePath: String) throws -> String? {
+    private static func fingerprint(
+        of url: URL, relativePath: String, readContents: (URL) throws -> Data
+    ) throws -> String? {
         let values = try url.resourceValues(
             forKeys: [.isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey, .contentModificationDateKey]
         )
         guard values.isRegularFile == true, values.isSymbolicLink != true else { return nil }
         if NoteKind.classify(relativePath: relativePath) != nil {
-            let data = try Data(contentsOf: url)
+            let data = try readContents(url)
             return "sha256:" + SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
         }
         let size = values.fileSize ?? 0

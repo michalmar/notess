@@ -157,7 +157,7 @@ extension AppModel {
     /// counts as failed, so stop the Agent; it then reports the failure.
     private func stopBrainRun(unreadable error: VaultSnapshotError) {
         guard brainRunPhase == .running else { return }
-        brainRunLog.append("\nNepodařilo se přečíst \(Self.describe(error.relativePath)): \(error.detail). Zastavuji Agenta.\n")
+        brainRunLog.append("\n\(Self.unreadableDescription(error)). Zastavuji Agenta.\n")
         cancelBrainRun()
     }
 
@@ -234,11 +234,12 @@ extension AppModel {
         case .stateNotSaved(let detail):
             return "Brain Run doběhl, ale jeho stav se nepodařilo uložit, takže se poznámky zpracují znovu: \(detail)"
         case .vaultUnreadable(let error):
-            return "Nepodařilo se přečíst \(describe(error.relativePath)): \(error.detail). Zkontrolujte oprávnění a spusťte Zpracovat znovu. Běh se nepočítá jako úspěšný."
+            return "\(unreadableDescription(error)). Zkontrolujte oprávnění a spusťte Zpracovat znovu. Běh se nepočítá jako úspěšný."
         }
     }
 
-    private static func describe(_ relativePath: String) -> String {
-        relativePath.isEmpty ? "Vault" : "„\(relativePath)“"
+    private static func unreadableDescription(_ error: VaultSnapshotError) -> String {
+        let item = error.relativePath.isEmpty ? "Vault" : "„\(error.relativePath)“"
+        return "Nepodařilo se přečíst \(item): \(error.detail)"
     }
 }

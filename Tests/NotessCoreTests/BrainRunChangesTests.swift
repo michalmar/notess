@@ -60,25 +60,51 @@ struct BrainRunChangesTests {
         #expect(BrainRunChanges(since: snapshot, current: try VaultFileSnapshot.capture(of: temp.vault)).isEmpty)
     }
 
-    @Test(
-        "an unreadable note fails the capture instead of looking deleted",
-        .enabled(if: geteuid() != 0, "root ignores file permissions")
-    )
+    @Test("an unreadable note fails the capture instead of looking deleted")
     func unreadableNoteFailsCapture() throws {
         let temp = try TemporaryVault()
         try temp.write("# Plan\n", to: "Projects/Plan.md")
         try temp.write("# Other\n", to: "Other.md")
+        let read = { (url: URL) throws -> Data in
+            if url.lastPathComponent == "Plan.md" { throw CocoaError(.fileReadNoPermission) }
+            return try Data(contentsOf: url)
+        }
+
+        for scope in ["", "Projects", "Projects/Plan.md"] {
+            #expect {
+                try VaultFileSnapshot.capture(of: temp.vault, under: scope, readContents: read)
+            } throws: { ($0 as? VaultSnapshotError)?.relativePath == "Projects/Plan.md" }
+        }
+        #expect(try VaultFileSnapshot.capture(of: temp.vault, under: "Other.md", readContents: read)
+            .fingerprints.keys.sorted() == ["Other.md"])
+    }
+
+    @Test("a note deleted between listing and reading is absent, not a failure")
+    func noteDeletedWhileCapturing() throws {
+        let temp = try TemporaryVault()
+        try temp.write("# Plan\n", to: "Projects/Plan.md")
+        try temp.write("# Other\n", to: "Other.md")
+
+        let snapshot = try VaultFileSnapshot.capture(of: temp.vault, under: "", readContents: { url in
+            if url.lastPathComponent == "Plan.md" { try FileManager.default.removeItem(at: url) }
+            return try Data(contentsOf: url)
+        })
+
+        #expect(snapshot.fingerprints.keys.sorted() == ["Other.md"])
+    }
+
+    @Test(
+        "an unreadable note on disk fails the capture",
+        .enabled(if: geteuid() != 0, "root ignores file permissions; covered by the injected reader above")
+    )
+    func unreadableNoteOnDiskFailsCapture() throws {
+        let temp = try TemporaryVault()
+        try temp.write("# Plan\n", to: "Projects/Plan.md")
         let unreadable = try temp.makeUnreadable("Projects/Plan.md")
         defer { unreadable.restore() }
 
         #expect {
             try VaultFileSnapshot.capture(of: temp.vault)
-        } throws: { ($0 as? VaultSnapshotError)?.relativePath == "Projects/Plan.md" }
-        #expect {
-            try VaultFileSnapshot.capture(of: temp.vault, under: "Projects")
-        } throws: { ($0 as? VaultSnapshotError)?.relativePath == "Projects/Plan.md" }
-        #expect {
-            try VaultFileSnapshot.capture(of: temp.vault, under: "Projects/Plan.md")
         } throws: { ($0 as? VaultSnapshotError)?.relativePath == "Projects/Plan.md" }
     }
 
@@ -138,19 +164,18 @@ struct BrainRunChangesTests {
         #expect(try VaultFileSnapshot.capture(of: temp.vault).fingerprints.keys.sorted() == ["Projects/Plan.md"])
     }
 
-    @Test(
-        "a note readable again after a failed capture is processed, and real deletion is still detected",
-        .enabled(if: geteuid() != 0, "root ignores file permissions")
-    )
+    @Test("a note readable again after a failed capture is processed, and real deletion is still detected")
     func recoveryAfterFailedCapture() throws {
         let temp = try TemporaryVault()
         try temp.write("# Plan\n", to: "Projects/Plan.md")
         try temp.write("# Old\n", to: "Old.md")
         let previous = try VaultFileSnapshot.capture(of: temp.vault)
         try temp.write("# Plan\n\nMore\n", to: "Projects/Plan.md")
-        let unreadable = try temp.makeUnreadable("Projects/Plan.md")
-        #expect(throws: VaultSnapshotError.self) { try VaultFileSnapshot.capture(of: temp.vault) }
-        unreadable.restore()
+        #expect(throws: VaultSnapshotError.self) {
+            try VaultFileSnapshot.capture(of: temp.vault, under: "", readContents: { _ in
+                throw CocoaError(.fileReadNoPermission)
+            })
+        }
         try FileManager.default.removeItem(at: temp.vault.rootURL.appending(path: "Old.md"))
 
         let changes = BrainRunChanges(since: previous, current: try VaultFileSnapshot.capture(of: temp.vault))
@@ -159,4 +184,3 @@ struct BrainRunChangesTests {
         #expect(changes.deleted == ["Old.md"])
     }
 }
-

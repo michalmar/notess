@@ -48,6 +48,8 @@ public final class BrainRun: @unchecked Sendable {
     private let store: BrainRunStateStore
     private let runner: any BrainRunProcessRunner
     private let now: @Sendable () -> Date
+    /// `VaultFileSnapshot.capture(of:under:)`; replaceable in tests to inject read failures.
+    private let capture: @Sendable (Vault, String) throws(VaultSnapshotError) -> VaultFileSnapshot
 
     private let lock = NSLock()
     private var isRunning = false
@@ -59,18 +61,35 @@ public final class BrainRun: @unchecked Sendable {
     /// The first file outside `_brain/` that could not be read during the run: the run fails.
     private var unreadable: VaultSnapshotError?
 
-    public init(
+    public convenience init(
         vault: Vault,
         executableURL: URL,
         store: BrainRunStateStore = BrainRunStateStore(),
         runner: any BrainRunProcessRunner = SystemProcessRunner(),
         now: @escaping @Sendable () -> Date = Date.init
     ) {
+        self.init(
+            vault: vault, executableURL: executableURL, store: store, runner: runner, now: now,
+            capture: { vault, scope throws(VaultSnapshotError) in
+                try VaultFileSnapshot.capture(of: vault, under: scope)
+            }
+        )
+    }
+
+    init(
+        vault: Vault,
+        executableURL: URL,
+        store: BrainRunStateStore,
+        runner: any BrainRunProcessRunner,
+        now: @escaping @Sendable () -> Date,
+        capture: @escaping @Sendable (Vault, String) throws(VaultSnapshotError) -> VaultFileSnapshot
+    ) {
         self.vault = vault
         self.executableURL = executableURL
         self.store = store
         self.runner = runner
         self.now = now
+        self.capture = capture
     }
 
     /// Runs once. Cancel the calling task to cancel the run.
@@ -100,10 +119,9 @@ public final class BrainRun: @unchecked Sendable {
 
         let baseline: VaultFileSnapshot
         do {
-            baseline = try VaultFileSnapshot.capture(of: vault)
+            baseline = try capture(vault, "")
         } catch {
-            log("\(error). Copilot CLI was not started.\n")
-            return .failed(.vaultUnreadable(error))
+            return notStarted(error, log: log)
         }
         let previous: BrainRunRecord?
         do {
@@ -125,17 +143,17 @@ public final class BrainRun: @unchecked Sendable {
             vault: vault,
             prompt: BrainRunPrompt.make(instructions: instructions, changes: changes)
         )
-        let started = lock.withLock {
-            let result = Result { () throws(VaultSnapshotError) in
+        // With the user's saves while the baseline was taken, as one step so none is missed.
+        let initialExpectation = lock.withLock {
+            let overlaid = Result { () throws(VaultSnapshotError) in
                 try overlay(baseline, with: scopesAcceptedBeforeSnapshot)
             }
-            expected = try? result.get()
+            expected = try? overlaid.get()
             scopesAcceptedBeforeSnapshot = []
-            return result
+            return overlaid
         }
-        if case .failure(let error) = started {
-            log("\(error). Copilot CLI was not started.\n")
-            return .failed(.vaultUnreadable(error))
+        if case .failure(let error) = initialExpectation {
+            return notStarted(error, log: log)
         }
 
         var launchError: String?
@@ -206,7 +224,7 @@ public final class BrainRun: @unchecked Sendable {
     private func overlay(_ snapshot: VaultFileSnapshot, with scopes: [String]) throws(VaultSnapshotError) -> VaultFileSnapshot {
         var snapshot = snapshot
         for scope in scopes where !VaultFileSnapshot.isInBrainFolder(scope) {
-            let current = try VaultFileSnapshot.capture(of: vault, under: scope)
+            let current = try capture(vault, scope)
             snapshot.fingerprints = snapshot.fingerprints.filter {
                 $0.key != scope && !$0.key.hasPrefix(scope + "/")
             }
@@ -224,7 +242,7 @@ public final class BrainRun: @unchecked Sendable {
     public func changesOutsideBrain() throws(VaultSnapshotError) -> [String] {
         guard let expected = lock.withLock({ expected }) else { return [] }
         do {
-            let current = try VaultFileSnapshot.capture(of: vault).fingerprints
+            let current = try capture(vault, "").fingerprints
             let suspects = Set(expected.fingerprints.keys).union(current.keys)
                 .filter { expected.fingerprints[$0] != current[$0] }
             guard !suspects.isEmpty else { return [] }
@@ -234,7 +252,7 @@ public final class BrainRun: @unchecked Sendable {
             var changed: [String] = []
             for suspect in suspects.sorted()
             where try latest.fingerprints[suspect]
-                != VaultFileSnapshot.capture(of: vault, under: suspect).fingerprints[suspect] {
+                != capture(vault, suspect).fingerprints[suspect] {
                 changed.append(suspect)
             }
             return changed
@@ -244,6 +262,11 @@ public final class BrainRun: @unchecked Sendable {
             }
             throw error
         }
+    }
+
+    private func notStarted(_ error: VaultSnapshotError, log: (String) -> Void) -> BrainRunOutcome {
+        log("\(error). Copilot CLI was not started.\n")
+        return .failed(.vaultUnreadable(error))
     }
 
     private func createEntityFolders() throws {

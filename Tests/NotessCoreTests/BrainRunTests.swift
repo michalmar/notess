@@ -26,6 +26,8 @@ struct BrainRunTests {
     let temp: TemporaryVault
     let store: BrainRunStateStore
     let storeDirectory: URL
+    /// Vault-relative paths the run cannot read (injected read failures).
+    fileprivate let unreadable = Box<Set<String>>([])
 
     init() throws {
         temp = try TemporaryVault()
@@ -39,12 +41,21 @@ struct BrainRunTests {
     private func brainRun(
         _ body: @escaping @Sendable (BrainRunCommand, @Sendable (String) -> Void) async throws -> Int32
     ) -> BrainRun {
-        BrainRun(
+        let unreadable = self.unreadable
+        return BrainRun(
             vault: temp.vault,
             executableURL: URL(filePath: "/usr/local/bin/copilot"),
             store: store,
             runner: FakeRunner(body: body),
-            now: { Date(timeIntervalSinceReferenceDate: 800_000_000) }
+            now: { Date(timeIntervalSinceReferenceDate: 800_000_000) },
+            capture: { vault, scope throws(VaultSnapshotError) in
+                if let path = unreadable.current.sorted().first(where: {
+                    scope.isEmpty || $0 == scope || $0.hasPrefix(scope + "/")
+                }) {
+                    throw VaultSnapshotError(relativePath: path, detail: "Permission denied")
+                }
+                return try VaultFileSnapshot.capture(of: vault, under: scope)
+            }
         )
     }
 
@@ -234,15 +245,12 @@ struct BrainRunTests {
         return error.relativePath
     }
 
-    @Test(
-        "an unreadable note stops the run before Copilot CLI starts and keeps the last successful run",
-        .enabled(if: geteuid() != 0, "root ignores file permissions")
-    )
+    @Test("an unreadable note stops the run before Copilot CLI starts and keeps the last successful run")
     func unreadableNoteBeforeLaunch() async throws {
         #expect(await brainRun { _, _ in 0 }.run(log: { _ in }) == .succeeded(processed: 2))
         let before = try #require(try store.lastSuccessfulRun(for: temp.vault))
-        let unreadable = try temp.makeUnreadable("Projects/Plan.md")
-        defer { unreadable.restore() }
+        write("# Plan\n\nMore\n", "Projects/Plan.md")
+        unreadable.current = ["Projects/Plan.md"]
 
         let launched = Box(false)
         let outcome = await brainRun { _, _ in
@@ -253,44 +261,65 @@ struct BrainRunTests {
         #expect(unreadableFailurePath(outcome) == "Projects/Plan.md")
         #expect(!launched.current)
         #expect(try store.lastSuccessfulRun(for: temp.vault) == before)
-    }
 
-    @Test(
-        "a folder that cannot be listed stops the run instead of its notes counting as deleted",
-        .enabled(if: geteuid() != 0, "root ignores file permissions")
-    )
-    func unlistableFolderBeforeLaunch() async throws {
-        #expect(await brainRun { _, _ in 0 }.run(log: { _ in }) == .succeeded(processed: 2))
-        let unreadable = try temp.makeUnreadable("Projects")
-        defer { unreadable.restore() }
-
-        let outcome = await brainRun { _, _ in
-            Issue.record("must not run")
+        unreadable.current = []
+        let prompt = Box("")
+        #expect(await brainRun { command, _ in
+            prompt.current = command.arguments[1]
             return 0
-        }.run(log: { _ in })
-
-        #expect(unreadableFailurePath(outcome) == "Projects")
+        }.run(log: { _ in }) == .succeeded(processed: 1))
+        #expect(prompt.current.contains("`Projects/Plan.md`"))
     }
 
-    @Test(
-        "a save that cannot be read back during the run fails the run and keeps the expected fingerprints",
-        .enabled(if: geteuid() != 0, "root ignores file permissions")
-    )
+    @Test("a save during the start snapshot that cannot be read back stops the run before launch")
+    func unreadableSaveBeforeLaunch() async throws {
+        let holder = Box<BrainRun?>(nil)
+        let unreadable = self.unreadable
+        let run = BrainRun(
+            vault: temp.vault,
+            executableURL: URL(filePath: "/usr/local/bin/copilot"),
+            store: store,
+            runner: FakeRunner { _, _ in
+                Issue.record("must not run")
+                return 0
+            },
+            now: Date.init,
+            capture: { vault, scope throws(VaultSnapshotError) in
+                if unreadable.current.contains(scope) {
+                    throw VaultSnapshotError(relativePath: scope, detail: "Permission denied")
+                }
+                let snapshot = try VaultFileSnapshot.capture(of: vault, under: scope)
+                if scope.isEmpty {
+                    // The user saves while the start snapshot is taken; the file then turns unreadable.
+                    try? holder.current?.acceptUserWrite(under: ["Projects/Plan.md"])
+                    unreadable.current = ["Projects/Plan.md"]
+                }
+                return snapshot
+            }
+        )
+        holder.current = run
+
+        let outcome = await run.run(log: { _ in })
+
+        #expect(unreadableFailurePath(outcome) == "Projects/Plan.md")
+        #expect(try store.lastSuccessfulRun(for: temp.vault) == nil)
+    }
+
+    @Test("a save that cannot be read back during the run fails the run and keeps the expected fingerprints")
     func unreadableUserSaveDuringRun() async throws {
         let root = temp.vault.rootURL
         let holder = Box<BrainRun?>(nil)
         let thrown = Box<VaultSnapshotError?>(nil)
-        let unreadable = Box<UnreadableItem?>(nil)
-        let temp = self.temp
+        let unreadable = self.unreadable
         let run = brainRun { _, _ in
             try "# Plan\n\nMine\n".write(to: root.appending(path: "Projects/Plan.md"), atomically: true, encoding: .utf8)
-            unreadable.current = try temp.makeUnreadable("Projects/Plan.md")
+            unreadable.current = ["Projects/Plan.md"]
             do throws(VaultSnapshotError) {
                 try holder.current?.acceptUserWrite(under: ["Projects/Plan.md"])
             } catch {
                 thrown.current = error
             }
-            unreadable.current?.restore()
+            unreadable.current = []
             // The failed overlay did not replace the start fingerprint, so the save looks foreign.
             #expect(try holder.current?.changesOutsideBrain() == ["Projects/Plan.md"])
             return 0
@@ -304,22 +333,19 @@ struct BrainRunTests {
         #expect(try store.lastSuccessfulRun(for: temp.vault) == nil)
     }
 
-    @Test(
-        "an unreadable file during the run fails the boundary check and the run",
-        .enabled(if: geteuid() != 0, "root ignores file permissions")
-    )
+    @Test("an unreadable file during the run fails the boundary check and the run, even if readable again")
     func unreadableFileDuringRun() async throws {
         let holder = Box<BrainRun?>(nil)
         let thrown = Box<VaultSnapshotError?>(nil)
-        let temp = self.temp
+        let unreadable = self.unreadable
         let run = brainRun { _, _ in
-            let unreadable = try temp.makeUnreadable("Journal/2026/03/2026-03-14.md")
+            unreadable.current = ["Journal/2026/03/2026-03-14.md"]
             do throws(VaultSnapshotError) {
                 _ = try holder.current?.changesOutsideBrain()
             } catch {
                 thrown.current = error
             }
-            unreadable.restore()
+            unreadable.current = []
             return 0
         }
         holder.current = run
@@ -331,18 +357,13 @@ struct BrainRunTests {
         #expect(try store.lastSuccessfulRun(for: temp.vault) == nil)
     }
 
-    @Test(
-        "a file still unreadable at the final check fails the run instead of succeeding",
-        .enabled(if: geteuid() != 0, "root ignores file permissions")
-    )
+    @Test("a file unreadable at the final check fails the run instead of succeeding")
     func unreadableFileAtFinalCheck() async throws {
-        let unreadable = Box<UnreadableItem?>(nil)
-        let temp = self.temp
+        let unreadable = self.unreadable
         let outcome = await brainRun { _, _ in
-            unreadable.current = try temp.makeUnreadable("Projects/Plan.md")
+            unreadable.current = ["Projects/Plan.md"]
             return 0
         }.run(log: { _ in })
-        unreadable.current?.restore()
 
         #expect(unreadableFailurePath(outcome) == "Projects/Plan.md")
         #expect(try store.lastSuccessfulRun(for: temp.vault) == nil)
@@ -363,4 +384,3 @@ struct BrainRunTests {
         #expect(prompt.current.contains("`Projects/Plan.md`"))
     }
 }
-
