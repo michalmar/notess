@@ -15,6 +15,31 @@ public struct VaultChange: Equatable, Sendable {
         self.requiresFullRescan = requiresFullRescan
     }
 
+    /// One change covering both: used to coalesce bursts of changes.
+    public func merging(_ other: VaultChange) -> VaultChange {
+        VaultChange(
+            relativePaths: relativePaths.union(other.relativePaths),
+            requiresFullRescan: requiresFullRescan || other.requiresFullRescan
+        )
+    }
+
+    /// Whether the file at `relativePath` may have changed: it changed itself,
+    /// a folder containing it changed (`""` is the Vault root), or everything
+    /// must be rescanned. Paths compare ignoring case and Unicode normalisation,
+    /// so an uncertain match costs an extra read rather than a missed change.
+    public func affects(relativePath: String) -> Bool {
+        guard !requiresFullRescan else { return true }
+        let path = Self.comparable(relativePath)
+        return relativePaths.contains { changed in
+            let changed = Self.comparable(changed)
+            return changed.isEmpty || changed == path || path.hasPrefix(changed + "/")
+        }
+    }
+
+    private static func comparable(_ path: String) -> String {
+        path.precomposedStringWithCanonicalMapping.lowercased()
+    }
+
     /// The Vault-relative form of an absolute event path, or `nil` if the path
     /// lies outside the Vault or inside a hidden item.
     static func relativePath(ofEventPath path: String, inRoot rootPath: String) -> String? {

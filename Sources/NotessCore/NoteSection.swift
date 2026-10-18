@@ -42,8 +42,13 @@ public struct NoteSection: Hashable, Sendable {
 
     /// All headings of `text` in order, each with the range it spans.
     static func headings(in text: String) -> [NoteSection] {
+        headings(in: text, tokens: MarkdownSyntax.tokens(in: text))
+    }
+
+    /// `headings(in:)` from tokens already produced for `text`.
+    static func headings(in text: String, tokens: [MarkdownToken]) -> [NoteSection] {
         let string = text as NSString
-        let headingTokens = MarkdownSyntax.tokens(in: text).compactMap { token -> (level: Int, range: NSRange)? in
+        let headingTokens = tokens.compactMap { token -> (level: Int, range: NSRange)? in
             guard case .heading(let level) = token.kind else { return nil }
             return (level, token.range)
         }

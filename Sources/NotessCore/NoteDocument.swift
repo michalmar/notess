@@ -20,7 +20,10 @@ public final class NoteDocument: Identifiable {
 
     /// The current, possibly unsaved, text.
     public var text: String {
-        didSet { refreshUnsavedChanges() }
+        didSet {
+            editGeneration &+= 1
+            refreshUnsavedChanges()
+        }
     }
 
     /// True when `text` differs from what was last loaded, saved or accepted from disk,
@@ -47,6 +50,12 @@ public final class NoteDocument: Identifiable {
     /// disk, the content the note started from.
     @ObservationIgnored private var baseline: String
     @ObservationIgnored private var stagedAttachments: [NoteAttachment] = []
+    /// Bumped by every change to `text`.
+    @ObservationIgnored private var editGeneration = 0
+    /// Bumped whenever what the note knows about its file changes (load, save,
+    /// accept, reload, a recorded outside change), so a disk read made earlier
+    /// is never applied on top of it.
+    @ObservationIgnored private var diskGeneration = 0
 
     /// The files the most recent `save()` wrote, including those written before
     /// it failed; empty when it wrote nothing.
@@ -159,14 +168,50 @@ public final class NoteDocument: Identifiable {
     /// Unreadable files are ignored until they can be read again.
     @discardableResult
     public func reconcileWithDisk() -> ReconcileOutcome {
-        let disk: String
+        // A read made just now cannot be stale.
+        applyDiskRead(Self.readDiskState(at: fileURL), ticket: diskReadTicket()) ?? .unchanged
+    }
+
+    /// Identifies this note's state before its file is read elsewhere (off the
+    /// main actor) with `readDiskState(at:)`; pass both to `applyDiskRead`.
+    public func diskReadTicket() -> DiskReadTicket {
+        DiskReadTicket(
+            documentID: id,
+            fileURL: fileURL,
+            diskGeneration: diskGeneration,
+            editGeneration: editGeneration
+        )
+    }
+
+    /// Reads a note's file without touching any note; safe off the main actor.
+    public nonisolated static func readDiskState(at fileURL: URL) -> DiskRead {
         do {
-            guard let content = try Self.readDisk(fileURL) else {
-                return existsOnDisk ? recordExternalChange(nil) : .unchanged
-            }
-            disk = content
+            guard let content = try readDisk(fileURL) else { return .missing }
+            return .content(content)
         } catch {
+            return .unreadable
+        }
+    }
+
+    /// Reacts to a read made for `ticket`, as `reconcileWithDisk()` does.
+    ///
+    /// Returns `nil` without changing anything when the read is stale: it was
+    /// made for another note or file, the note was saved, reloaded or accepted
+    /// a disk change since (a read made before a save never becomes the clean
+    /// baseline), or it would replace text typed since. Read the file again then.
+    /// Typing that left unsaved changes is kept: the change shows as a conflict.
+    public func applyDiskRead(_ read: DiskRead, ticket: DiskReadTicket) -> ReconcileOutcome? {
+        guard ticket.documentID == id,
+              ticket.fileURL == fileURL,
+              ticket.diskGeneration == diskGeneration else { return nil }
+        let disk: String
+        switch read {
+        case .unreadable:
             return .unchanged
+        case .missing:
+            return existsOnDisk ? recordExternalChange(nil) : .unchanged
+        case .content(let content):
+            disk = content
         }
         guard disk != knownDiskContent else {
             externalChange = nil
@@ -177,6 +222,7 @@ public final class NoteDocument: Identifiable {
             return .unchanged
         }
         if !hasUnsavedChanges {
+            guard ticket.editGeneration == editGeneration else { return nil }
             replaceText(with: disk)
             return .reloaded
         }
@@ -204,6 +250,7 @@ public final class NoteDocument: Identifiable {
     }
 
     private func accept(_ diskContent: String) {
+        diskGeneration &+= 1
         baseline = diskContent
         existsOnDisk = true
         externalChange = nil
@@ -220,6 +267,7 @@ public final class NoteDocument: Identifiable {
 
     @discardableResult
     private func recordExternalChange(_ diskContent: String?) -> ReconcileOutcome {
+        diskGeneration &+= 1
         guard let diskContent else {
             existsOnDisk = false
             externalChange = .deleted
@@ -256,7 +304,7 @@ public final class NoteDocument: Identifiable {
     }
 
     /// The file's text, or `nil` if there is no file.
-    private static func readDisk(_ url: URL) throws -> String? {
+    private nonisolated static func readDisk(_ url: URL) throws -> String? {
         do {
             return try String(contentsOf: url, encoding: .utf8)
         } catch let error as CocoaError where error.code == .fileReadNoSuchFile {
@@ -271,6 +319,23 @@ extension NoteDocument {
         case modified(String)
         /// The file was deleted (or moved away) outside Notess.
         case deleted
+    }
+
+    /// A note's file as read from disk.
+    public enum DiskRead: Equatable, Sendable {
+        case content(String)
+        /// There is no file.
+        case missing
+        /// The file exists but could not be read; it is ignored until it can be.
+        case unreadable
+    }
+
+    /// The note state a disk read was made for; see `applyDiskRead(_:ticket:)`.
+    public struct DiskReadTicket: Equatable, Sendable {
+        public let documentID: NoteDocument.ID
+        public let fileURL: URL
+        fileprivate let diskGeneration: Int
+        fileprivate let editGeneration: Int
     }
 
     public enum ReconcileOutcome: Equatable, Sendable {

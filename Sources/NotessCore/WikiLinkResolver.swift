@@ -51,10 +51,7 @@ public struct WikiLinkResolver: Sendable {
     /// The Vault-relative path of the note `target` refers to, or nil if there
     /// is none. `target` is the part of a Wiki-link before `#`.
     public func resolve(target: String) -> String? {
-        var wanted = target.trimmingCharacters(in: .whitespaces).precomposedStringWithCanonicalMapping
-        if wanted.lowercased().hasSuffix(".md") { wanted = String(wanted.dropLast(3)) }
-        while wanted.hasPrefix("/") { wanted.removeFirst() }
-        guard !wanted.isEmpty else { return nil }
+        guard let wanted = Self.wanted(target) else { return nil }
         let folded = wanted.lowercased()
 
         let matches = candidates.filter { candidate in
@@ -62,6 +59,35 @@ public struct WikiLinkResolver: Sendable {
                 || candidate.foldedKey.hasSuffix("/" + folded)
         }
         return matches.min(by: { Self.precedes($0, $1, wanted: wanted) })?.relativePath
+    }
+
+    /// The key `resolve(target:)` matches notes by, or nil if `target` can
+    /// match none. Links with equal keys always resolve to the same note.
+    static func matchKey(forTarget target: String) -> String? {
+        wanted(target)?.lowercased()
+    }
+
+    /// The match keys of all links that may resolve to the note at
+    /// `relativePath`: its folded path without `.md` and every shorter
+    /// suffix starting after a `/`. Adding or removing that note can only
+    /// change where links with one of these keys resolve.
+    static func matchKeys(forPath relativePath: String) -> [String] {
+        guard NoteKind.classify(relativePath: relativePath) != nil else { return [] }
+        let folded = String(relativePath.precomposedStringWithCanonicalMapping.dropLast(3)).lowercased()
+        var keys = [folded]
+        var rest = Substring(folded)
+        while let slash = rest.firstIndex(of: "/") {
+            rest = rest[rest.index(after: slash)...]
+            keys.append(String(rest))
+        }
+        return keys
+    }
+
+    private static func wanted(_ target: String) -> String? {
+        var wanted = target.trimmingCharacters(in: .whitespaces).precomposedStringWithCanonicalMapping
+        if wanted.lowercased().hasSuffix(".md") { wanted = String(wanted.dropLast(3)) }
+        while wanted.hasPrefix("/") { wanted.removeFirst() }
+        return wanted.isEmpty ? nil : wanted
     }
 
     private static func precedes(_ a: Candidate, _ b: Candidate, wanted: String) -> Bool {
