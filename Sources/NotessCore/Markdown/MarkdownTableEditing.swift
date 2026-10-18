@@ -46,18 +46,41 @@ extension MarkdownTable {
         return Position(row: row, column: column)
     }
 
-    /// The edit `command` makes at `index`, nil when it does not apply there
+    /// Where `command` would act at `index`, nil when it does not apply there
     /// (a row above the header, deleting the header, the only column, …).
-    public func edit(_ command: Command, at index: Int, in text: NSString) -> Edit? {
+    /// Uses only the table's metadata: no replacement text is built. `edit`
+    /// and `applies` share it, so menu validation and execution cannot differ.
+    private func target(of command: Command, at index: Int, in text: NSString) -> (position: Position, column: Int)? {
         guard let position = position(of: index, in: text) else { return nil }
-        // Cells past the header's width (a ragged row) count as its last column.
-        let column = min(position.column, columnCount - 1)
+        let kind = rows[position.row].kind
         switch command {
         case .insertRowAbove:
-            guard rows[position.row].kind == .body else {
-                return rows[position.row].kind == .delimiter ? insertingRow(below: 1, in: text) : nil
-            }
-            return insertingRow(above: position.row, in: text)
+            guard kind != .header else { return nil }
+        case .deleteRow:
+            guard kind == .body else { return nil }
+        case .deleteColumn:
+            guard columnCount > 1 else { return nil }
+        case .insertRowBelow, .insertColumnLeft, .insertColumnRight:
+            break
+        }
+        // Cells past the header's width (a ragged row) count as its last column.
+        return (position, min(position.column, columnCount - 1))
+    }
+
+    /// Whether `command` applies at `index`; `edit` is non-nil exactly then.
+    public func applies(_ command: Command, at index: Int, in text: NSString) -> Bool {
+        target(of: command, at: index, in: text) != nil
+    }
+
+    /// The edit `command` makes at `index`, nil when it does not apply there.
+    public func edit(_ command: Command, at index: Int, in text: NSString) -> Edit? {
+        guard let (position, column) = target(of: command, at: index, in: text) else { return nil }
+        EditCounter.increment()
+        switch command {
+        case .insertRowAbove:
+            return rows[position.row].kind == .delimiter
+                ? insertingRow(below: 1, in: text)
+                : insertingRow(above: position.row, in: text)
         case .insertRowBelow:
             return insertingRow(below: max(position.row, 1), in: text)
         case .insertColumnLeft:
@@ -70,6 +93,9 @@ extension MarkdownTable {
             return deletingColumn(column, row: position.row, in: text)
         }
     }
+
+    /// How many edits `edit` has built on this thread, so tests can show that validation builds none.
+    package static var editsBuiltCount: Int { EditCounter.value }
 
     /// What Enter does at `index`: a new empty row below the caret's row (below
     /// the delimiter row in the header), or, on an empty last row, leaving the
@@ -131,8 +157,7 @@ extension MarkdownTable {
         "|" + Array(repeating: "  ", count: columnCount).joined(separator: "|") + "|"
     }
 
-    private func deletingRow(_ row: Int, column: Int, in text: NSString) -> Edit? {
-        guard rows[row].kind == .body else { return nil }
+    private func deletingRow(_ row: Int, column: Int, in text: NSString) -> Edit {
         let line = text.lineRange(for: NSRange(location: rows[row].range.location, length: 0))
         var removed = line
         let isLastLine = line.upperBound == text.length && !text.substring(with: line).hasSuffix("\n")
@@ -158,8 +183,7 @@ extension MarkdownTable {
         }
     }
 
-    private func deletingColumn(_ column: Int, row: Int, in text: NSString) -> Edit? {
-        guard columnCount > 1 else { return nil }
+    private func deletingColumn(_ column: Int, row: Int, in text: NSString) -> Edit {
         return rewritingColumns(in: text, caretRow: row, caretColumn: min(column, columnCount - 2)) { cells, _ in
             if column < cells.count { cells.remove(at: column) }
         }
@@ -251,4 +275,12 @@ extension MarkdownTable {
     private static func isSpace(_ unit: unichar) -> Bool {
         unit == 0x20 || unit == 0x09
     }
+}
+
+/// Counted per thread, so tests running in parallel do not see each other's edits.
+private enum EditCounter {
+    private static let key = "NotessCore.MarkdownTable.editsBuilt"
+
+    static var value: Int { Thread.current.threadDictionary[key] as? Int ?? 0 }
+    static func increment() { Thread.current.threadDictionary[key] = value + 1 }
 }

@@ -132,6 +132,22 @@ struct MarkdownTextViewTableEditingTests {
         }
     }
 
+    @Test("validating table commands builds no edit and changes nothing")
+    func validationBuildsNoEdit() {
+        load("| a | b |\n| - | - |\n| c‸ | d |")
+        let text = textView.string
+        let selection = textView.selectedRange()
+        let before = MarkdownTable.editsBuiltCount
+        for command in MarkdownTable.Command.allCases {
+            let item = NSMenuItem(title: "", action: action(for: command), keyEquivalent: "")
+            for _ in 0..<5 { #expect(textView.validateMenuItem(item)) }
+        }
+        #expect(MarkdownTable.editsBuiltCount == before)
+        #expect(textView.string == text)
+        #expect(textView.selectedRange() == selection)
+        #expect(undoManager.canUndo == false)
+    }
+
     @Test("table commands are disabled outside a table and in a read-only view")
     func disabledCommands() {
         let item = NSMenuItem(title: "", action: #selector(MarkdownTextView.insertTableRowBelow(_:)), keyEquivalent: "")
