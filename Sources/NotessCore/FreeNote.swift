@@ -23,18 +23,40 @@ public enum FreeNote {
     }
 
     /// Text of the first level-one heading after any front-matter, or `nil`.
+    /// Reads lines lazily and stops as soon as the answer is known.
     public static func title(in text: String) -> String? {
-        var lines = text.split(separator: "\n", omittingEmptySubsequences: false)
-            .map { $0.trimmingCharacters(in: CharacterSet(charactersIn: "\r")) }
-        if lines.first == "---", let end = lines.dropFirst().firstIndex(of: "---") {
-            lines = Array(lines[(end + 1)...])
+        var lines = LineReader(text: text)
+        return title(scanning: &lines)
+    }
+
+    /// Same result as `title(in:)` over the given lines, consuming only as
+    /// many lines as needed. Unclosed front-matter has no known answer until
+    /// EOF, so it reads to the end.
+    static func title<Lines: IteratorProtocol>(scanning lines: inout Lines) -> String?
+    where Lines.Element == String {
+        guard let first = lines.next() else { return nil }
+        guard first == "---" else {
+            return heading(in: first) ?? firstHeading(in: &lines)
         }
-        for line in lines {
-            if line.hasPrefix("# ") || line == "#" {
-                return String(line.dropFirst(1)).trimmingCharacters(in: .whitespaces)
-            }
+        var pending: String?
+        while let line = lines.next() {
+            if line == "---" { return firstHeading(in: &lines) }
+            pending = pending ?? heading(in: line)
+        }
+        return pending
+    }
+
+    private static func firstHeading<Lines: IteratorProtocol>(in lines: inout Lines) -> String?
+    where Lines.Element == String {
+        while let line = lines.next() {
+            if let title = heading(in: line) { return title }
         }
         return nil
+    }
+
+    private static func heading(in line: String) -> String? {
+        guard line.hasPrefix("# ") || line == "#" else { return nil }
+        return String(line.dropFirst(1)).trimmingCharacters(in: .whitespaces)
     }
 
     /// A file name stem (no extension) that is safe on the file system.
@@ -70,6 +92,31 @@ public enum FreeNote {
             number += 1
         }
         return candidate
+    }
+}
+
+/// Lazily yields the lines `text.split(separator: "\n", omittingEmptySubsequences: false)`
+/// would produce, each with trailing `\r` trimmed. Splitting on `Character`
+/// keeps a `\r\n` pair together, matching the eager split this replaces.
+private struct LineReader: IteratorProtocol {
+    private var characters: String.Iterator
+    private var isFinished = false
+
+    init(text: String) {
+        characters = text.makeIterator()
+    }
+
+    mutating func next() -> String? {
+        guard !isFinished else { return nil }
+        var line = ""
+        while let character = characters.next() {
+            if character == "\n" {
+                return line.trimmingCharacters(in: CharacterSet(charactersIn: "\r"))
+            }
+            line.append(character)
+        }
+        isFinished = true
+        return line.trimmingCharacters(in: CharacterSet(charactersIn: "\r"))
     }
 }
 
