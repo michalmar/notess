@@ -177,6 +177,11 @@ final class AppModel {
         refreshVisibleBacklinks()
     }
 
+    func hasOpenOrExistingNote(at fileURL: URL) -> Bool {
+        tabSession.document(at: fileURL) != nil
+            || FileManager.default.fileExists(atPath: fileURL.path)
+    }
+
     func refreshTree() {
         tree = vault?.scanTree() ?? .empty
     }

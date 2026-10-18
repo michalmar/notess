@@ -23,8 +23,7 @@ extension AppModel {
                 return
             }
             let url = vault.rootURL.appending(path: relativePath, directoryHint: .notDirectory)
-            guard tabSession.document(at: url) != nil
-                    || FileManager.default.fileExists(atPath: url.path) else {
+            guard hasOpenOrExistingNote(at: url) else {
                 errorMessage = "Poznámka „\(link.target)“ ve Vaultu neexistuje."
                 return
             }
@@ -52,8 +51,7 @@ extension AppModel {
             path: backlink.sourceRelativePath,
             directoryHint: .notDirectory
         )
-        guard tabSession.document(at: url) != nil
-                || FileManager.default.fileExists(atPath: url.path) else {
+        guard hasOpenOrExistingNote(at: url) else {
             errorMessage = "Zdrojová poznámka už ve Vaultu neexistuje."
             rebuildBacklinks()
             return
