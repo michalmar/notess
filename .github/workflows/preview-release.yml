@@ -1,0 +1,106 @@
+name: Main preview
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: main-preview
+  cancel-in-progress: false
+  queue: max
+
+jobs:
+  preview:
+    if: github.ref == 'refs/heads/main'
+    runs-on: macos-15
+    permissions:
+      contents: write
+    env:
+      BUILD_NUMBER: ${{ github.run_number }}.${{ github.run_attempt }}
+      CODESIGN_IDENTITY: "-"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Test
+        run: swift test
+
+      - name: Build and verify disk image
+        run: scripts/build-dmg.sh
+
+      - name: Publish rolling preview
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          head_sha="$(gh api "repos/$GH_REPO/git/ref/heads/main" --jq '.object.sha')"
+          if [[ "$head_sha" != "$GITHUB_SHA" ]]; then
+              echo "Not publishing $GITHUB_SHA: main has advanced to $head_sha." | tee -a "$GITHUB_STEP_SUMMARY"
+              exit 0
+          fi
+
+          tag=main-preview
+          version="$(plutil -extract CFBundleShortVersionString raw -o - build/Notess.app/Contents/Info.plist)"
+          asset="build/Notess-${version}-${BUILD_NUMBER}-arm64.dmg"
+          asset_name="$(basename "$asset")"
+          checksum="$(shasum -a 256 "$asset" | awk '{print $1}')"
+          built_at="$(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+          notes=build/preview-notes.md
+
+          cat > "$notes" <<EOF
+          Development preview of main for Apple Silicon Macs running macOS 15 or later.
+
+          - App version: $version (build $BUILD_NUMBER)
+          - Commit: [$GITHUB_SHA](https://github.com/$GH_REPO/commit/$GITHUB_SHA)
+          - Built: $built_at
+
+          Download **$asset_name**, open it, and drag Notess into Applications.
+          This app is ad-hoc-signed, not Developer ID-signed or Apple-notarized.
+          Read the [installation and first-launch instructions](https://github.com/$GH_REPO/blob/main/README.md#install-a-preview).
+          Installed copies do not update automatically.
+
+          SHA-256 ($asset_name): \`$checksum\`
+          EOF
+
+          release_id="$(gh api --paginate "repos/$GH_REPO/releases?per_page=100" \
+              --jq '.[] | select(.tag_name == "main-preview") | .id')"
+          if [[ -z "$release_id" ]]; then
+              release_id="$(gh api --method POST "repos/$GH_REPO/releases" \
+                  -f tag_name="$tag" -f target_commitish="$GITHUB_SHA" \
+                  -f name="Notess main preview" -F draft=true -F prerelease=true --jq '.id')"
+          fi
+
+          # Upload a uniquely named asset before changing the previous working release.
+          gh release upload "$tag" "$asset"
+
+          tag_ref="$(gh api "repos/$GH_REPO/git/matching-refs/tags/$tag" \
+              --jq '.[] | select(.ref == "refs/tags/main-preview") | .ref')"
+          if [[ -z "$tag_ref" ]]; then
+              gh api --method POST "repos/$GH_REPO/git/refs" \
+                  -f ref="refs/tags/$tag" -f sha="$GITHUB_SHA"
+          else
+              gh api --method PATCH "repos/$GH_REPO/git/refs/tags/$tag" \
+                  -f sha="$GITHUB_SHA" -F force=true
+          fi
+
+          gh release edit "$tag" --title "Notess main preview" --notes-file "$notes" \
+              --draft=false --prerelease --latest=false
+
+          gh api --paginate "repos/$GH_REPO/releases/$release_id/assets?per_page=100" \
+              --jq '.[] | [.id, .name] | @tsv' |
+          while IFS=$'\t' read -r asset_id previous_name; do
+              if [[ "$previous_name" == Notess-*-arm64.dmg && "$previous_name" != "$asset_name" ]]; then
+                  gh api --method DELETE "repos/$GH_REPO/releases/assets/$asset_id"
+              fi
+          done
+
+          echo "Published [$asset_name](https://github.com/$GH_REPO/releases/tag/$tag) from $GITHUB_SHA." \
+              >> "$GITHUB_STEP_SUMMARY"

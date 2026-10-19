@@ -5,7 +5,28 @@ A native macOS Markdown journal: every day gets one **Daily Entry** in a user-ch
 ## Requirements
 
 - macOS 15 or later
-- Xcode 16+ command-line tools (Swift 6 toolchain)
+- Apple Silicon (M1 or later) for downloaded preview builds
+- Xcode 16+ command-line tools (Swift 6 toolchain), only when building from source
+
+## Install a preview
+
+Download the DMG from the [main preview release](https://github.com/michalmar/notess/releases/tag/main-preview). These are development snapshots, not stable releases. Installing a preview does not require Xcode.
+
+1. Open the downloaded `Notess-<version>-<build>-arm64.dmg`.
+2. Drag **Notess** onto **Applications**. When updating, quit Notess before replacing the existing app.
+3. Eject the disk image and open Notess from Applications.
+
+**First launch:** previews are ad-hoc-signed, not signed with an Apple Developer ID or notarized by Apple. macOS may block the app because it cannot verify the developer or check it for malicious software. Only if you trust this download, try opening it, then go to **System Settings → Privacy & Security → Open Anyway** and confirm. See [Apple's guidance for apps downloaded outside the App Store](https://support.apple.com/en-us/102445). Do not disable Gatekeeper globally or override a warning that the app contains malware or has been damaged.
+
+To update, download and install the new preview the same way; there is no in-app automatic updater. Replacing the app does not replace your Vault.
+
+### How previews are published
+
+The [Main preview workflow](.github/workflows/preview-release.yml) runs on every push to `main` and can also be run manually on `main`. It runs the full unit test suite, builds a release-mode Apple Silicon app on macOS 15, verifies the signature and disk image, then updates one rolling `main-preview` prerelease. Runs are serialized with up to 100 pending runs rather than replacing waiting pushes. The tag moves to the published commit. Failed tests or packaging leave the previous download available; runs for commits that are no longer at the tip of `main` skip publication.
+
+The app version comes from `Support/Info.plist`. CI stamps only the packaged app's build number as `<workflow run number>.<run attempt>`; it does not commit version changes. Release notes identify the source commit, build date and DMG SHA-256. A new uniquely named DMG is uploaded before older preview DMGs are removed, so a failed upload does not delete the working download.
+
+The workflow uses GitHub's automatic `GITHUB_TOKEN` with repository-content write permission; no Apple signing credentials are required. Stable-release automation and Developer ID signing/notarization are not configured.
 
 ## Build, test and run
 
@@ -16,10 +37,13 @@ Everything is a Swift package and runs from the command line; no Xcode project i
 | Build (debug) | `swift build` (or `make build`) |
 | Run unit tests | `swift test` (or `make test`) |
 | Build `build/Notess.app` | `scripts/build-app.sh` (or `make app`) |
+| Build an Apple Silicon preview DMG | `scripts/build-dmg.sh` |
 | Build and open the app | `make run` |
 | Clean | `make clean` |
 
 `scripts/build-app.sh [debug|release]` wraps the `Notess` executable into an app bundle using [`Support/Info.plist`](Support/Info.plist) and signs it with [`Support/Notess.entitlements`](Support/Notess.entitlements), which disables App Sandbox (ADR 0004). It signs ad-hoc by default; set `CODESIGN_IDENTITY="Developer ID Application: …"` to sign for distribution (hardened runtime is enabled automatically).
+
+Set `BUILD_ARCH=arm64` or `BUILD_ARCH=x86_64` to override the host architecture, and `BUILD_NUMBER=123.1` to override the built app's `CFBundleVersion` without editing the source plist. `OUTPUT_DIR` changes the output directory (default `build/`). `scripts/build-dmg.sh` always builds `arm64` in release mode and creates `Notess-<version>-<build>-arm64.dmg` with an Applications shortcut; it accepts the same output-directory, build-number and signing-identity overrides.
 
 `swift run Notess` also works for quick iteration, but the bundled app is what users run.
 
@@ -40,7 +64,7 @@ Tests/
   NotessEditorTests/  Tests for the editor view (TextKit 2, formatting, tasks)
   NotessTests/        Tests for app-level orchestration
 Support/          Info.plist and entitlements for the .app bundle
-scripts/          build-app.sh
+scripts/          App bundle and preview DMG packaging
 ```
 
 Dependencies point inwards: `Notess` → `NotessEditor` → `NotessCore`. `NotessCore` must not import AppKit or SwiftUI so it stays fast to test; Markdown parsing (formatting, Tags, wiki-links) lives there so search and backlinks can reuse it, while `NotessEditor` only turns tokens into fonts and colours.
