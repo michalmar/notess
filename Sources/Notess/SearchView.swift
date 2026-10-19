@@ -104,7 +104,12 @@ struct SearchView: View {
             if debounce {
                 do { try await Task.sleep(for: .milliseconds(120)) } catch { return }
             }
-            let outcome = await Result { try await index.search(query) }
+            let outcome: Result<[SearchResultGroup], Error>
+            do {
+                outcome = .success(try await index.search(query))
+            } catch {
+                outcome = .failure(error)
+            }
             guard !Task.isCancelled else { return }
             let found = (try? outcome.get()) ?? []
             if case .failure(let error) = outcome {
