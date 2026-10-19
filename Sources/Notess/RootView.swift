@@ -73,6 +73,7 @@ struct RootView: View {
                 .zIndex(10)
             }
         }
+        .background(KeyWindowObserver { model.isNoteWindowKey = $0 })
         .alert(
             "Chyba",
             isPresented: Binding(
@@ -149,5 +150,48 @@ struct VaultSetupView: View {
         }
         .padding(40)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+/// Reports whether the window hosting this view is the key window; a Settings
+/// window, sheet or alert in front makes it false.
+private struct KeyWindowObserver: NSViewRepresentable {
+    let onChange: (Bool) -> Void
+
+    func makeNSView(context: Context) -> ObserverView {
+        let view = ObserverView()
+        view.onChange = onChange
+        return view
+    }
+
+    func updateNSView(_ view: ObserverView, context: Context) {
+        view.onChange = onChange
+    }
+
+    final class ObserverView: NSView {
+        var onChange: (Bool) -> Void = { _ in }
+        private var observers: [NSObjectProtocol] = []
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            observers.forEach(NotificationCenter.default.removeObserver)
+            observers = []
+            guard let window else {
+                report(false)
+                return
+            }
+            for name in [NSWindow.didBecomeKeyNotification, NSWindow.didResignKeyNotification] {
+                observers.append(NotificationCenter.default.addObserver(
+                    forName: name, object: window, queue: .main
+                ) { [weak self, weak window] _ in
+                    self?.report(window?.isKeyWindow ?? false)
+                })
+            }
+            report(window.isKeyWindow)
+        }
+
+        private func report(_ isKey: Bool) {
+            DispatchQueue.main.async { [onChange] in onChange(isKey) }
+        }
     }
 }

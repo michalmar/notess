@@ -20,6 +20,8 @@ final class AppModel {
     private(set) var tree: VaultTree = .empty
     var isQuickOpenPresented = false
     var isSearchPresented = false
+    /// Whether the main note window is the key window (not Settings or a dialog).
+    var isNoteWindowKey = false
     /// The search index is catching up with the Vault or being rebuilt.
     var isIndexing = false
     /// Why the search index may be missing saved notes, until a full catch-up succeeds.

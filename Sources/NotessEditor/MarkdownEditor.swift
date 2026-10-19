@@ -87,9 +87,12 @@ public struct MarkdownEditor: NSViewRepresentable {
     private let inlineImageData: ((String) -> Data?)?
     private let onOpenImagePreview: ((ImagePreviewContent) -> Void)?
     private let onImageLoadFailure: ((String) -> Void)?
+    private let onMagnify: ((CGFloat) -> Void)?
 
     /// - Parameters:
     ///   - fontName: The body font's PostScript name, or `"System"`.
+    ///   - fontSize: The body font size to display, i.e. already scaled by any text zoom.
+    ///   - onMagnify: Receives the incremental magnification of a trackpad pinch over the editor.
     ///   - colors: Formatting colours; the defaults follow light/dark mode.
     public init(
         documentID: AnyHashable,
@@ -107,6 +110,7 @@ public struct MarkdownEditor: NSViewRepresentable {
         inlineImageData: ((String) -> Data?)? = nil,
         onOpenImagePreview: ((ImagePreviewContent) -> Void)? = nil,
         onImageLoadFailure: ((String) -> Void)? = nil,
+        onMagnify: ((CGFloat) -> Void)? = nil,
         onTextChange: @escaping (String) -> Void
     ) {
         self.documentID = documentID
@@ -122,6 +126,7 @@ public struct MarkdownEditor: NSViewRepresentable {
         self.inlineImageData = inlineImageData
         self.onOpenImagePreview = onOpenImagePreview
         self.onImageLoadFailure = onImageLoadFailure
+        self.onMagnify = onMagnify
         self.onTextChange = onTextChange
     }
 
@@ -136,6 +141,7 @@ public struct MarkdownEditor: NSViewRepresentable {
         configureImages(in: textView)
         context.coordinator.onTextChange = onTextChange
         textView.onWikiLinkClick = onOpenWikiLink
+        textView.onMagnify = onMagnify
         configureInteraction(in: textView, coordinator: context.coordinator)
         load(into: textView, coordinator: context.coordinator)
         applyReveal(to: textView, coordinator: context.coordinator)
@@ -146,6 +152,7 @@ public struct MarkdownEditor: NSViewRepresentable {
         context.coordinator.onTextChange = onTextChange
         guard let textView = scrollView.documentView as? MarkdownTextView else { return }
         textView.onWikiLinkClick = onOpenWikiLink
+        textView.onMagnify = onMagnify
         configureImages(in: textView)
         if textView.markdownStyle != style {
             textView.markdownStyle = style
