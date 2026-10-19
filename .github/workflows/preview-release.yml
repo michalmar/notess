@@ -17,6 +17,7 @@ jobs:
   preview:
     if: github.ref == 'refs/heads/main'
     runs-on: macos-15
+    timeout-minutes: 15
     permissions:
       contents: write
     env:
@@ -34,7 +35,8 @@ jobs:
           swift --version
 
       - name: Test
-        run: swift test
+        timeout-minutes: 5
+        run: swift test --no-parallel
 
       - name: Build and verify disk image
         run: scripts/build-dmg.sh
