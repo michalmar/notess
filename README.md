@@ -6,7 +6,7 @@ A native macOS Markdown journal: every day gets one **Daily Entry** in a user-ch
 
 - macOS 15 or later
 - Apple Silicon (M1 or later) for downloaded preview builds
-- Xcode 16+ command-line tools (Swift 6 toolchain), only when building from source
+- Xcode 26.3+ toolchain (Swift 6), only when building from source
 
 ## Install a preview
 
@@ -22,7 +22,7 @@ To update, download and install the new preview the same way; there is no in-app
 
 ### How previews are published
 
-The [Main preview workflow](.github/workflows/preview-release.yml) runs on every push to `main` and can also be run manually on `main`. It runs the full unit test suite, builds a release-mode Apple Silicon app on macOS 15, verifies the signature and disk image, then updates one rolling `main-preview` prerelease. Runs are serialized with up to 100 pending runs rather than replacing waiting pushes. The tag moves to the published commit. Failed tests or packaging leave the previous download available; runs for commits that are no longer at the tip of `main` skip publication.
+The [Main preview workflow](.github/workflows/preview-release.yml) runs on every push to `main` and can also be run manually on `main`. It explicitly selects Xcode 26.3 instead of the runner's older default toolchain, runs the full unit test suite, builds a release-mode Apple Silicon app on macOS 15, verifies the signature and disk image, then updates one rolling `main-preview` prerelease. Runs are serialized with up to 100 pending runs rather than replacing waiting pushes. The tag moves to the published commit. Failed tests or packaging leave the previous download available; runs for commits that are no longer at the tip of `main` skip publication.
 
 The app version comes from `Support/Info.plist`. CI stamps only the packaged app's build number as `<workflow run number>.<run attempt>`; it does not commit version changes. Release notes identify the source commit, build date and DMG SHA-256. A new uniquely named DMG is uploaded before older preview DMGs are removed, so a failed upload does not delete the working download.
 

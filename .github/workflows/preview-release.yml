@@ -22,10 +22,16 @@ jobs:
     env:
       BUILD_NUMBER: ${{ github.run_number }}.${{ github.run_attempt }}
       CODESIGN_IDENTITY: "-"
+      DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           persist-credentials: false
+
+      - name: Show toolchain
+        run: |
+          xcodebuild -version
+          swift --version
 
       - name: Test
         run: swift test
