@@ -104,7 +104,7 @@ public actor SearchIndex {
             .sorted { $0.relativePath < $1.relativePath }
 
         if !removed.isEmpty {
-            try db.transaction { for path in removed { try removeSections(of: path, in: db) } }
+            try db.transaction { for path in removed { try Self.removeSections(of: path, in: db) } }
             unreadable.subtract(removed)
         }
         var failures: [IndexingFailure.File] = []
@@ -121,8 +121,8 @@ public actor SearchIndex {
             try db.transaction {
                 for (file, source) in sources {
                     switch source {
-                    case .text(let text): try index(file, text: text, in: db)
-                    case .vanished: try removeSections(of: file.relativePath, in: db)
+                    case .text(let text): try Self.index(file, text: text, in: db)
+                    case .vanished: try Self.removeSections(of: file.relativePath, in: db)
                     case .failed(let reason): failures.append(.init(relativePath: file.relativePath, reason: reason))
                     }
                 }
@@ -154,8 +154,8 @@ public actor SearchIndex {
         }
     }
 
-    private func index(_ file: NoteFile, text raw: String, in db: SQLiteDatabase) throws {
-        try removeSections(of: file.relativePath, in: db)
+    private static func index(_ file: NoteFile, text raw: String, in db: SQLiteDatabase) throws {
+        try Self.removeSections(of: file.relativePath, in: db)
         let text = raw.precomposedStringWithCanonicalMapping
         for section in SearchSection.split(text) {
             let markdown = (text as NSString).substring(with: section.range).trimmingCharacters(in: .newlines)
@@ -179,7 +179,7 @@ public actor SearchIndex {
         )
     }
 
-    private func removeSections(of path: String, in db: SQLiteDatabase) throws {
+    private static func removeSections(of path: String, in db: SQLiteDatabase) throws {
         let ids = "SELECT id FROM sections WHERE path = ?"
         try db.query("DELETE FROM sections_fts WHERE rowid IN (\(ids))", [.text(path)])
         try db.query("DELETE FROM section_tags WHERE section_id IN (\(ids))", [.text(path)])
