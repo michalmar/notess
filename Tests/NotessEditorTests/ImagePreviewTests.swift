@@ -42,7 +42,7 @@ struct ImagePreviewTests {
     }
 
     @Test("the visible Close control dismisses the hosted overlay")
-    func closeButtonDismissal() throws {
+    func closeButtonDismissal() async throws {
         let content = ImagePreviewContent(
             source: "attachments/image.png",
             image: try #require(testPreviewImage())
@@ -83,6 +83,7 @@ struct ImagePreviewTests {
         harness.window.sendEvent(mouseDown)
         harness.window.sendEvent(mouseUp)
         runMainLoop()
+        await flushMainQueue()
 
         #expect(harness.state.isPresented == false)
         #expect(harness.state.dismissals == 1)
@@ -90,7 +91,7 @@ struct ImagePreviewTests {
     }
 
     @Test("Escape dismisses the hosted overlay and it takes focus from the editor")
-    func escapeDismissalAndFocus() throws {
+    func escapeDismissalAndFocus() async throws {
         let content = ImagePreviewContent(
             source: "attachments/image.png",
             image: try #require(testPreviewImage())
@@ -118,6 +119,7 @@ struct ImagePreviewTests {
         )
         harness.window.sendEvent(escape)
         runMainLoop()
+        await flushMainQueue()
 
         #expect(harness.state.isPresented == false)
         #expect(harness.state.dismissals == 1)
@@ -201,6 +203,14 @@ private func allSubviews(of view: NSView) -> [NSView] {
 @MainActor
 private func runMainLoop() {
     RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.1))
+}
+
+@MainActor
+private func flushMainQueue() async {
+    // A nested run loop cannot execute the editor's queued focus restoration.
+    await withCheckedContinuation { continuation in
+        DispatchQueue.main.async { continuation.resume() }
+    }
 }
 
 private func testPreviewImage() -> NSImage? {
