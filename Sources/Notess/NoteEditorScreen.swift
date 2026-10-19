@@ -23,7 +23,7 @@ struct NoteEditorScreen: View {
                 documentID: contentID,
                 initialText: { document.text },
                 fontName: settings.editorFont.name,
-                fontSize: CGFloat(settings.editorFont.size),
+                fontSize: CGFloat(settings.effectiveEditorFontSize),
                 reveal: reveal.flatMap { reveal in
                     reveal.documentID == AnyHashable(document.id)
                         ? EditorReveal(id: reveal.id, documentID: contentID, range: reveal.range)
@@ -40,6 +40,7 @@ struct NoteEditorScreen: View {
                 inlineImageData: { document.stagedAttachmentData(relativePath: $0) },
                 onOpenImagePreview: onOpenImagePreview,
                 onImageLoadFailure: onImageLoadFailure,
+                onMagnify: { settings.pinchTextZoom(by: Double($0)) },
                 onTextChange: { document.text = $0 }
             )
             BacklinksBar(backlinks: backlinks, onOpen: onOpenBacklink)
@@ -56,11 +57,54 @@ struct NoteEditorScreen: View {
                         .help("Brain Note spravuje Agent – nelze ji upravit")
                 }
             }
+            ToolbarItem(placement: .primaryAction) {
+                TextZoomControls(settings: settings)
+            }
             ToolbarItem(placement: .status) {
                 UnsavedChangesIndicator(isVisible: document.hasUnsavedChanges)
             }
         }
         .background(WindowDocumentEditedMarker(isEdited: document.hasUnsavedChanges))
+    }
+}
+
+/// Compact minus / percentage / plus controls for the shared note text zoom;
+/// the percentage resets to 100%.
+struct TextZoomControls: View {
+    @Bindable var settings: AppSettings
+
+    var body: some View {
+        HStack(spacing: 0) {
+            Button {
+                settings.zoomOut()
+            } label: {
+                Image(systemName: "minus")
+            }
+            .disabled(!settings.canZoomOut)
+            .help("Zmenšit text (⌘−)")
+            .accessibilityLabel("Zmenšit text")
+
+            Button {
+                settings.resetTextZoom()
+            } label: {
+                Text("\(settings.textZoomPercent) %")
+                    .monospacedDigit()
+                    .frame(minWidth: 44)
+            }
+            .help("Obnovit skutečnou velikost textu (⌘0)")
+            .accessibilityLabel("Velikost textu")
+            .accessibilityValue("\(settings.textZoomPercent) procent")
+            .accessibilityHint("Obnoví 100 %")
+
+            Button {
+                settings.zoomIn()
+            } label: {
+                Image(systemName: "plus")
+            }
+            .disabled(!settings.canZoomIn)
+            .help("Zvětšit text (⌘+)")
+            .accessibilityLabel("Zvětšit text")
+        }
     }
 }
 

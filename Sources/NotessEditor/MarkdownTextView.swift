@@ -60,12 +60,84 @@ public final class MarkdownTextView: NSTextView {
     public var markdownStyle: MarkdownEditorStyle {
         get { highlighter.style }
         set {
+            let anchor = readingAnchor()
             font = newValue.font
             if let textStorage {
                 highlighter.setStyle(newValue, for: textStorage)
             }
             typingAttributes = highlighter.baseAttributes
+            restore(anchor)
         }
+    }
+
+    /// Called with the incremental magnification of a trackpad pinch over the
+    /// editor (0.1 is 10% bigger); the owner decides what zoom that means.
+    public var onMagnify: ((CGFloat) -> Void)?
+
+    public override func magnify(with event: NSEvent) {
+        handleMagnification(event.magnification)
+    }
+
+    func handleMagnification(_ magnification: CGFloat) {
+        onMagnify?(magnification)
+    }
+
+    // MARK: Reading anchor
+
+    /// The first visible character and how far its line sits below the top of
+    /// the viewport, so the same text stays in view when relayout moves it.
+    private struct ReadingAnchor {
+        var location: Int
+        var offset: CGFloat
+        var lineHeight: CGFloat
+    }
+
+    private func readingAnchor() -> ReadingAnchor? {
+        guard let scrollView = enclosingScrollView, window != nil,
+              let textLayoutManager, let content = textLayoutManager.textContentManager,
+              textStorage?.length ?? 0 > 0 else { return nil }
+        let top = scrollView.contentView.bounds.minY
+        // Scrolled to the top, the top stays the top.
+        guard top > 0.5 else { return nil }
+        let probe = NSPoint(x: textContainerOrigin.x + 1, y: top + 1)
+        let location = min(characterIndexForInsertion(at: probe), textStorage!.length - 1)
+        guard let frame = lineFrame(ofCharacterAt: location, textLayoutManager, content) else { return nil }
+        return ReadingAnchor(location: location, offset: frame.minY - top, lineHeight: frame.height)
+    }
+
+    private func restore(_ anchor: ReadingAnchor?) {
+        guard let anchor, let scrollView = enclosingScrollView,
+              let textLayoutManager, let content = textLayoutManager.textContentManager else { return }
+        // Fragment positions below unlaid-out text are estimates: lay out everything above the anchor.
+        if let end = content.location(content.documentRange.location, offsetBy: min(anchor.location + 1, textStorage?.length ?? 0)),
+           let range = NSTextRange(location: content.documentRange.location, end: end) {
+            textLayoutManager.ensureLayout(for: range)
+        }
+        guard let frame = lineFrame(ofCharacterAt: anchor.location, textLayoutManager, content) else { return }
+        scrollView.layoutSubtreeIfNeeded()
+        let scale = anchor.lineHeight > 0 ? frame.height / anchor.lineHeight : 1
+        let clip = scrollView.contentView
+        let maxY = max(0, bounds.height - clip.bounds.height)
+        let y = min(max(0, frame.minY - anchor.offset * scale), maxY)
+        clip.scroll(to: NSPoint(x: clip.bounds.origin.x, y: y))
+        scrollView.reflectScrolledClipView(clip)
+    }
+
+    /// The frame of the line holding the character at `location`, in view coordinates.
+    private func lineFrame(
+        ofCharacterAt location: Int,
+        _ textLayoutManager: NSTextLayoutManager,
+        _ content: NSTextContentManager
+    ) -> NSRect? {
+        guard let start = content.location(content.documentRange.location, offsetBy: location),
+              let end = content.location(start, offsetBy: 1),
+              let range = NSTextRange(location: start, end: end) else { return nil }
+        var result: NSRect?
+        textLayoutManager.enumerateTextSegments(in: range, type: .standard, options: []) { _, frame, _, _ in
+            result = frame.offsetBy(dx: textContainerOrigin.x, dy: textContainerOrigin.y)
+            return false
+        }
+        return result
     }
 
     /// Connects the highlighter to the text storage; called once after creation.

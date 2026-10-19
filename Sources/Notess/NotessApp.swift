@@ -40,6 +40,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         closeTabEventMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) {
             [weak self] event in
             let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+            // The View menu's Zvětšit text is ⌘+; ⌘= (no Shift) is its familiar alias.
+            if modifiers == .command, event.charactersIgnoringModifiers == "=" {
+                guard let model = self?.model, model.canZoomInText else { return event }
+                model.zoomInText()
+                return nil
+            }
             guard modifiers == .command,
                   event.charactersIgnoringModifiers?.lowercased() == "w",
                   NSApp.modalWindow == nil,

@@ -38,6 +38,19 @@ struct NoteCommands: Commands {
                 .keyboardShortcut("w", modifiers: .command)
                 .disabled(model.document == nil || model.sidebarMode == .tags || isPreviewPresented)
         }
+        CommandGroup(after: .toolbar) {
+            Divider()
+            // ⌘= is handled by the app delegate: this shortcut is ⇧⌘= on a US keyboard.
+            Button("Zvětšit text") { model.zoomInText() }
+                .keyboardShortcut("+", modifiers: .command)
+                .disabled(!model.canZoomInText)
+            Button("Zmenšit text") { model.zoomOutText() }
+                .keyboardShortcut("-", modifiers: .command)
+                .disabled(!model.canZoomOutText)
+            Button("Skutečná velikost textu") { model.resetTextZoom() }
+                .keyboardShortcut("0", modifiers: .command)
+                .disabled(!model.isTextZoomRoutable)
+        }
         CommandMenu("Tabulka") {
             // Sent to the focused editor, which beeps when the caret is not in a table.
             ForEach(Array(TableEditCommand.groups.enumerated()), id: \.offset) { group in
