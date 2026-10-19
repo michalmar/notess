@@ -84,7 +84,11 @@ final class SQLiteDatabase {
         return rows
     }
 
-    func transaction<T>(_ body: () throws -> T) throws -> T {
+    /// Keeps the connection and synchronous body on the caller's actor.
+    func transaction<T>(
+        isolation: isolated (any Actor)? = #isolation,
+        _ body: () throws -> T
+    ) throws -> T {
         try execute("BEGIN IMMEDIATE")
         do {
             let result = try body()
