@@ -734,6 +734,85 @@ final class SearchIndexTests {
         #expect(try await index.tagSuggestions(matching: "neu").isEmpty)
     }
 
+    @Test("a Tag leaves the vocabulary with its last saved occurrence, in any note kind, and stays while another remains")
+    func vocabularyFollowsOccurrences() async throws {
+        try vault.write("# 2026-06-01\n\n## Den #sdilene #denni\n", to: "Journal/2026/06/2026-06-01.md")
+        try vault.write("## Volná #sdilene #volna\n", to: "Projekty/Volná.md")
+        try vault.write("# Firma\n\n## Fakta #sdilene #mozek\n", to: "_brain/companies/Firma.md")
+        let index = makeIndex()
+        try await index.synchronize()
+        #expect(try await index.vaultTags() == ["acme", "denni", "mozek", "sdilene", "volna"])
+
+        // Each kind's own Tag goes with its note; the shared Tag stays until the last one.
+        for (path, text, expected) in [
+            ("Journal/2026/06/2026-06-01.md", "# 2026-06-01\n\n## Den\n", ["acme", "mozek", "sdilene", "volna"]),
+            ("Projekty/Volná.md", "## Volná\n", ["acme", "mozek", "sdilene"]),
+            ("_brain/companies/Firma.md", "# Firma\n\n## Fakta\n", ["acme"]),
+        ] {
+            try vault.write(text, to: path)
+            try await index.update(relativePaths: [path])
+            #expect(try await index.vaultTags() == expected, "\(path)")
+        }
+    }
+
+    @Test("external additions, changes and deletions of any note kind reach the vocabulary, the Tag Timeline staying Journal-only")
+    func vocabularyFollowsExternalChanges() async throws {
+        let index = makeIndex()
+        try await index.synchronize()
+        #expect(try await index.tagSuggestions(matching: "n").isEmpty)
+
+        let paths = ["Journal/2026/06/2026-06-02.md", "Projekty/Nová.md", "_brain/companies/Nová.md"]
+        try vault.write("# 2026-06-02\n\n## Den #novy-denni\n", to: paths[0])
+        try vault.write("## Nová #novy-volny\n", to: paths[1])
+        try vault.write("# Nová\n\n## Fakta #novy-mozek\n", to: paths[2])
+        try await index.update(relativePaths: Set(paths))
+        #expect(try await index.tagSuggestions(matching: "novy") == ["novy-denni", "novy-mozek", "novy-volny"])
+        #expect(try await index.journalTags().filter { $0.hasPrefix("novy") } == ["novy-denni"])
+        #expect(try await index.tagTimeline(for: "novy-volny").isEmpty)
+
+        try vault.write("## Nová #novy-zmeneny\n", to: paths[1])
+        try await index.update(relativePaths: [paths[1]])
+        #expect(try await index.tagSuggestions(matching: "novy") == ["novy-denni", "novy-mozek", "novy-zmeneny"])
+
+        // A catch-up by stamps (the activation-time synchronisation) sees deletions too.
+        try FileManager.default.removeItem(at: vault.vault.rootURL.appendingPathComponent(paths[0]))
+        try FileManager.default.removeItem(at: vault.vault.rootURL.appendingPathComponent(paths[2]))
+        try await index.synchronize()
+        #expect(try await index.tagSuggestions(matching: "novy") == ["novy-zmeneny"])
+    }
+
+    @Test("an unsaved removal keeps a saved Tag in the vocabulary until the note is saved")
+    @MainActor
+    func unsavedRemovalKeepsTag() async throws {
+        let url = vault.vault.rootURL.appending(path: "Projekty/Uložená.md")
+        try vault.write("## Uložená #drzeny\n", to: "Projekty/Uložená.md")
+        let index = makeIndex()
+        try await index.synchronize()
+
+        let document = try NoteDocument.open(fileURL: url, newFileContent: "")
+        document.text = "## Uložená\n"
+        #expect(try await index.tagSuggestions(matching: "dr") == ["drzeny"])
+
+        try document.save()
+        try await index.update(fileAt: url)
+        #expect(try await index.tagSuggestions(matching: "dr").isEmpty)
+    }
+
+    @Test("a Tag spelled differently in several notes is one suggestion until its last spelling is gone")
+    func vocabularyDeduplicates() async throws {
+        try vault.write("## A #Škola\n", to: "Projekty/A.md")
+        try vault.write("## B #S\u{30C}kola\n", to: "Projekty/B.md")
+        let index = makeIndex()
+        try await index.synchronize()
+        #expect(try await index.tagSuggestions(matching: "šk") == ["škola"])
+        try vault.write("## A\n", to: "Projekty/A.md")
+        try await index.update(relativePaths: ["Projekty/A.md"])
+        #expect(try await index.tagSuggestions(matching: "šk") == ["škola"])
+        try vault.write("## B\n", to: "Projekty/B.md")
+        try await index.update(relativePaths: ["Projekty/B.md"])
+        #expect(try await index.tagSuggestions(matching: "šk").isEmpty)
+    }
+
     @Test("Tag suggestions come from the index's own Vault only")
     func tagSuggestionsPerVault() async throws {
         let other = try TemporaryVault()
@@ -744,6 +823,13 @@ final class SearchIndexTests {
         let index = makeIndex()
         try await index.synchronize()
         #expect(try await otherIndex.tagSuggestions(matching: "c") == ["cizi"])
+        #expect(try await index.tagSuggestions(matching: "c").isEmpty)
+
+        // Changes in one Vault never reach the other's vocabulary.
+        try other.write("# 2026-06-03\n\n## Den #cizi-denni\n", to: "Journal/2026/06/2026-06-03.md")
+        try other.write("# Cizí\n\n## Fakta #cizi-mozek\n", to: "_brain/companies/Cizí.md")
+        try await otherIndex.update(relativePaths: ["Journal/2026/06/2026-06-03.md", "_brain/companies/Cizí.md"])
+        #expect(try await otherIndex.tagSuggestions(matching: "c") == ["cizi", "cizi-denni", "cizi-mozek"])
         #expect(try await index.tagSuggestions(matching: "c").isEmpty)
     }
 

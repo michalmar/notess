@@ -4,14 +4,18 @@ import NotessCore
 /// Where Tag completion looks up suggestions, typically the current Vault's
 /// saved Tags. `id` identifies the vocabulary (e.g. the Vault): when it
 /// changes, open completion closes and pending lookups are discarded.
+/// `revision` counts changes of the same vocabulary (e.g. the index caught up
+/// with saved notes): when it changes, open completion looks up again.
 public struct TagSuggestionSource {
     public let id: AnyHashable
+    public let revision: Int
     /// Saved Tags matching a prefix (as written, without `#`). Runs off the
     /// typing path; the editor normalises, deduplicates and sorts the result.
     public let suggestions: @MainActor (String) async throws -> [String]
 
-    public init(id: AnyHashable, suggestions: @escaping @MainActor (String) async throws -> [String]) {
+    public init(id: AnyHashable, revision: Int = 0, suggestions: @escaping @MainActor (String) async throws -> [String]) {
         self.id = id
+        self.revision = revision
         self.suggestions = suggestions
     }
 }
@@ -77,6 +81,26 @@ final class TagCompleter {
             show([], highlighting: nil)
         }
 
+        startLookup(for: context, source: source)
+    }
+
+    /// The vocabulary changed without changing identity (saved notes were
+    /// indexed). Refreshes only a completion that is still open at its
+    /// original context, never opens one; the shown suggestions and their
+    /// highlight stay until the answer arrives.
+    func vocabularyDidRefresh() {
+        guard let context, let source = textView.tagSuggestionSource else { return }
+        guard textView.tagCompletionContextAtCaret() == context else {
+            dismiss()
+            return
+        }
+        pendingSelection = selectedIndex.map { suggestions[$0] } ?? pendingSelection
+        generation += 1
+        lookup?.cancel()
+        startLookup(for: context, source: source)
+    }
+
+    private func startLookup(for context: TagCompletionContext, source: TagSuggestionSource) {
         let generation = generation
         let prefix = context.prefix
         lookup = Task { [weak self] in
