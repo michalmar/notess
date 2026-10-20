@@ -362,19 +362,41 @@ struct MarkdownTextViewTagCompletionTests {
         vault.isSuspended = true
         type("c")
         #expect(rows == ["#acme", "#acme-2026"])
+        #expect(selected == nil)
         command(#selector(NSResponder.cancelOperation(_:)))
         vault.resumeAll()
         await settle()
         #expect(rows.isEmpty)
         #expect(marked == "#ac‸")
 
-        // Acceptance while a refresh is pending.
+        // Tab while a refresh is pending keeps its usual meaning.
         vault.isSuspended = false
         load("‸")
         type("#a")
         await settle()
         vault.isSuspended = true
         type("k")
+        #expect(rows == ["#akce"])
+        #expect(selected == nil)
+        command(#selector(NSResponder.insertTab(_:)))
+        #expect(marked == "#ak\t‸")
+        vault.resumeAll()
+        await settle()
+        #expect(rows.isEmpty)
+        #expect(marked == "#ak\t‸")
+
+        // Acceptance, then a late response.
+        vault.isSuspended = false
+        load("‸")
+        type("#ak")
+        await settle()
+        vault.isSuspended = true
+        type("c")
+        await settle()
+        vault.resumeAll()
+        await settle()
+        #expect(selected == "#akce")
+        vault.isSuspended = true
         command(#selector(NSResponder.insertTab(_:)))
         #expect(marked == "#akce‸")
         vault.resumeAll()

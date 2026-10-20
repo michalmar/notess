@@ -32,7 +32,11 @@ final class TagCompleter {
     private(set) var context: TagCompletionContext?
     /// The shown suggestions; empty while closed or waiting for a lookup.
     private(set) var suggestions: [String] = []
+    /// The highlighted suggestion; nil while waiting for a lookup, so a
+    /// pending lookup never takes Tab.
     private(set) var selectedIndex: Int?
+    /// The suggestion to highlight again once the pending lookup answers.
+    private var pendingSelection: String?
     /// Set after a failure has been reported, until a lookup succeeds or the
     /// vocabulary changes, so a broken index does not report every keystroke.
     private var hasReportedFailure = false
@@ -42,12 +46,6 @@ final class TagCompleter {
         self.textView = textView
     }
 
-    /// Whether Tab would accept a suggestion now.
-    var isActionable: Bool { context != nil && selectedIndex != nil }
-
-    /// Whether completion is open or waiting for a lookup.
-    var isActive: Bool { context != nil }
-
     // MARK: Opening and refreshing
 
     /// Reacts to a text change. `editedRange` is the changed text after a
@@ -55,7 +53,7 @@ final class TagCompleter {
     /// (undo, redo, loading a note).
     func textDidChange(editedRange: NSRange?) {
         guard let editedRange, let source = textView.tagSuggestionSource,
-              let context = currentContext(),
+              let context = textView.tagCompletionContextAtCaret(),
               editedRange.location >= context.tokenRange.location,
               NSMaxRange(editedRange) <= NSMaxRange(context.tokenRange)
         else {
@@ -64,18 +62,19 @@ final class TagCompleter {
         }
         let previous = self.context
         let previousSuggestions = suggestions
-        let previousSelection = selectedIndex.map { suggestions[$0] }
+        pendingSelection = selectedIndex.map { suggestions[$0] } ?? pendingSelection
         generation += 1
         lookup?.cancel()
         self.context = context
 
-        // While the prefix only grows, the shown suggestions narrow to an exact
-        // subset of what the lookup will return, so they stay usable meanwhile.
+        // While the prefix only grows, the shown suggestions stay on screen,
+        // narrowed, so the list does not flicker; nothing is highlighted until
+        // the lookup confirms them.
         if let previous, !previousSuggestions.isEmpty,
            context.normalizedPrefix.hasPrefix(previous.normalizedPrefix) {
-            show(TagCompletion.candidates(matching: context.prefix, in: previousSuggestions), keeping: previousSelection)
+            show(TagCompletion.candidates(matching: context.prefix, in: previousSuggestions), highlighting: nil)
         } else {
-            show([], keeping: nil)
+            show([], highlighting: nil)
         }
 
         let generation = generation
@@ -92,8 +91,9 @@ final class TagCompleter {
             switch result {
             case .success(let tags):
                 hasReportedFailure = false
-                let selection = selectedIndex.map { suggestions[$0] }
-                show(TagCompletion.candidates(matching: prefix, in: tags), keeping: selection)
+                let tags = TagCompletion.candidates(matching: prefix, in: tags)
+                show(tags, highlighting: pendingSelection.flatMap(tags.firstIndex(of:)) ?? 0)
+                pendingSelection = nil
                 if suggestions.isEmpty { dismiss() }
             case .failure(let error):
                 dismiss()
@@ -104,14 +104,6 @@ final class TagCompleter {
         }
     }
 
-    /// The completion context at the caret, if the editor can complete there.
-    private func currentContext() -> TagCompletionContext? {
-        guard textView.isEditable, !textView.hasMarkedText(), let textStorage = textView.textStorage else { return nil }
-        let selection = textView.selectedRange()
-        guard selection.length == 0 else { return nil }
-        return textView.highlighter.lexer.tagCompletionContext(at: selection.location, in: textStorage.mutableString)
-    }
-
     // MARK: Closing
 
     /// Closes completion and discards any pending lookup.
@@ -120,7 +112,8 @@ final class TagCompleter {
         lookup?.cancel()
         lookup = nil
         context = nil
-        show([], keeping: nil)
+        pendingSelection = nil
+        show([], highlighting: nil)
     }
 
     /// Closes completion unless the selection is still the caret it was opened at.
@@ -146,7 +139,7 @@ final class TagCompleter {
     func acceptSelected() -> Bool {
         guard let context, let selectedIndex else { return false }
         let tag = suggestions[selectedIndex]
-        guard currentContext() == context else {
+        guard textView.tagCompletionContextAtCaret() == context else {
             dismiss()
             return false
         }
@@ -156,9 +149,9 @@ final class TagCompleter {
 
     // MARK: Presentation
 
-    private func show(_ tags: [String], keeping selection: String?) {
+    private func show(_ tags: [String], highlighting index: Int?) {
         suggestions = tags
-        selectedIndex = tags.isEmpty ? nil : (selection.flatMap(tags.firstIndex(of:)) ?? 0)
+        selectedIndex = tags.isEmpty ? nil : index
         guard !tags.isEmpty, let context, let container = textView.enclosingScrollView else {
             list.removeFromSuperview()
             return

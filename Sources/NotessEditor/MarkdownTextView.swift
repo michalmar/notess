@@ -45,6 +45,14 @@ public final class MarkdownTextView: NSTextView {
     private var isApplyingTagCompletion = false
 
     /// Replaces a Tag with an accepted suggestion as one undoable edit.
+    /// The Tag prefix the caret is in, if the editor can complete it now.
+    func tagCompletionContextAtCaret() -> TagCompletionContext? {
+        guard isEditable, !hasMarkedText(), let textStorage else { return nil }
+        let selection = selectedRange()
+        guard selection.length == 0 else { return nil }
+        return highlighter.lexer.tagCompletionContext(at: selection.location, in: textStorage.mutableString)
+    }
+
     func applyTagCompletion(replacing range: NSRange, with tag: String) -> Bool {
         isApplyingTagCompletion = true
         defer { isApplyingTagCompletion = false }
