@@ -65,6 +65,61 @@ struct MarkdownTextViewTagCompletionTests {
     private var selected: String? { textView.selectedTagSuggestion }
     private var rowsInView: [String] { textView.tagSuggestionsInView }
 
+    /// An element of the suggestion list as assistive technology sees it.
+    private struct AccessibleItem {
+        let label: String
+        let isSelected: Bool
+        /// In window coordinates.
+        let frame: NSRect
+    }
+
+    /// The accessibility elements under the editor, depth first.
+    private func accessibilityElements() -> [any NSAccessibilityProtocol] {
+        var result: [any NSAccessibilityProtocol] = []
+        func visit(_ element: any NSAccessibilityProtocol) {
+            result.append(element)
+            for child in element.accessibilityChildren() ?? [] {
+                if let child = child as? any NSAccessibilityProtocol { visit(child) }
+            }
+        }
+        if let scrollView = textView.enclosingScrollView { visit(scrollView) }
+        return result
+    }
+
+    private func item(_ element: any NSAccessibilityProtocol) -> AccessibleItem {
+        AccessibleItem(
+            label: element.accessibilityLabel() ?? "",
+            isSelected: element.isAccessibilitySelected(),
+            frame: window.convertFromScreen(element.accessibilityFrame())
+        )
+    }
+
+    /// The suggestion list as an accessibility element, if shown.
+    private func suggestionList() -> AccessibleItem? {
+        accessibilityElements()
+            .first { $0.accessibilityRole() == .list && $0.accessibilityLabel() == "Návrhy štítků" }
+            .map(item)
+    }
+
+    /// The suggestion rows as accessibility elements, in order.
+    private func suggestionRows() -> [AccessibleItem] {
+        accessibilityElements().filter { $0.accessibilityRole() == .row }.map(item)
+    }
+
+    /// Clicks the middle of the suggestion row reading `label`, each mouse
+    /// event being one user event.
+    private func click(_ label: String) throws {
+        let row = try #require(suggestionRows().first { $0.label == label })
+        let point = NSPoint(x: row.frame.midX, y: row.frame.midY)
+        for (type, pressure) in [(NSEvent.EventType.leftMouseDown, Float(1)), (.leftMouseUp, 0)] {
+            let mouse = try #require(NSEvent.mouseEvent(
+                with: type, location: point, modifierFlags: [], timestamp: 0,
+                windowNumber: window.windowNumber, context: nil, eventNumber: 1, clickCount: 1, pressure: pressure
+            ))
+            event { window.sendEvent(mouse) }
+        }
+    }
+
     // MARK: Type, filter, Tab, undo
 
     @Test("typing a prefix shows matching saved Tags; narrowing, broadening and Tab complete it as one undoable edit")
@@ -309,7 +364,88 @@ struct MarkdownTextViewTagCompletionTests {
         #expect(marked == "#téma10‸")
     }
 
+    @Test("clicking a row accepts it in place, keeps the editor focused and is one undoable edit")
+    func click() async throws {
+        window.makeKeyAndOrderFront(nil)
+        defer { window.orderOut(nil) }
+        window.makeFirstResponder(textView)
+        load("Porada ‸ dnes")
+        type("#a")
+        await settle()
+        #expect(selected == "#acme")
+
+        var changes = 0
+        let observer = NotificationCenter.default.addObserver(
+            forName: NSText.didChangeNotification, object: textView, queue: nil
+        ) { _ in MainActor.assumeIsolated { changes += 1 } }
+        defer { NotificationCenter.default.removeObserver(observer) }
+
+        try click("#akce")
+        #expect(marked == "Porada #akce‸ dnes")
+        #expect(rows.isEmpty)
+        #expect(window.firstResponder === textView)
+        #expect(changes == 1)
+        #expect(undoManager.undoActionName == "Doplnit štítek")
+        await settle()
+        #expect(rows.isEmpty)
+
+        type(",")
+        #expect(marked == "Porada #akce,‸ dnes")
+        undoManager.undo()
+        undoManager.undo()
+        #expect(marked == "Porada #a‸ dnes")
+        undoManager.redo()
+        #expect(textView.string == "Porada #akce dnes")
+        #expect(textView.selectedRange() == NSRange(location: 12, length: 0))
+    }
+
+    @Test("a row scrolled into view beyond the eighth can be clicked")
+    func clickBeyondEighth() async throws {
+        window.makeKeyAndOrderFront(nil)
+        defer { window.orderOut(nil) }
+        window.makeFirstResponder(textView)
+        vault.tags = (1...12).map { String(format: "téma%02d", $0) }
+        load("‸")
+        type("#t")
+        await settle()
+        #expect(!rowsInView.contains("#téma11"))
+        for _ in 0..<10 { command(#selector(NSResponder.moveDown(_:))) }
+        #expect(rowsInView.contains("#téma11"))
+
+        try click("#téma11")
+        #expect(marked == "#téma11‸")
+        #expect(window.firstResponder === textView)
+    }
+
+    @Test("pressing a suggestion through accessibility accepts it")
+    func accessibilityPress() async throws {
+        load("x ‸")
+        type("#a")
+        await settle()
+        let row = try #require(accessibilityElements().first { $0.accessibilityRole() == .row && $0.accessibilityLabel() == "#akce" })
+        event { _ = row.accessibilityPerformPress() }
+        #expect(marked == "x #akce‸")
+        #expect(rows.isEmpty)
+    }
+
     // MARK: Dismissal
+
+    @Test("assistive technology reads each suggestion by name and which one is selected")
+    func accessibility() async throws {
+        load("‸")
+        type("#a")
+        await settle()
+        let list = try #require(suggestionList())
+        #expect(list.label == "Návrhy štítků")
+        #expect(suggestionRows().map(\.label) == ["#acme", "#acme-2026", "#akce"])
+        #expect(suggestionRows().filter(\.isSelected).map(\.label) == ["#acme"])
+
+        command(#selector(NSResponder.moveDown(_:)))
+        #expect(suggestionRows().filter(\.isSelected).map(\.label) == ["#acme-2026"])
+
+        command(#selector(NSResponder.cancelOperation(_:)))
+        #expect(suggestionList() == nil)
+    }
 
     @Test("Escape closes the list without editing; a later edit reopens it")
     func escape() async {
@@ -415,6 +551,33 @@ struct MarkdownTextViewTagCompletionTests {
         #expect(marked == "| #akce‸ | b |\n| - | - |\n| c | d |")
         command(#selector(NSResponder.insertTab(_:)))
         #expect(marked == "| #akce | [b] |\n| - | - |\n| c | d |")
+    }
+
+    @Test("in a table the candidate chosen with Down or a click is completed, and the next Tab moves on")
+    func tablesWithBrowsing() async throws {
+        load("| #‸ | b |\n| - | - |\n| c | d |")
+        type("a")
+        await settle()
+        #expect(selected == "#acme")
+        command(#selector(NSResponder.moveDown(_:)))
+        #expect(selected == rows[1])
+        let second = try #require(selected)
+        command(#selector(NSResponder.insertTab(_:)))
+        #expect(marked == "| \(second)‸ | b |\n| - | - |\n| c | d |")
+        command(#selector(NSResponder.insertTab(_:)))
+        #expect(marked == "| \(second) | [b] |\n| - | - |\n| c | d |")
+
+        window.makeKeyAndOrderFront(nil)
+        defer { window.orderOut(nil) }
+        window.makeFirstResponder(textView)
+        load("| c | #a‸ |\n| - | - |\n| e | f |")
+        await settle()
+        type("k")
+        await settle()
+        try click("#akce")
+        #expect(marked == "| c | #akce‸ |\n| - | - |\n| e | f |")
+        command(#selector(NSResponder.insertTab(_:)))
+        #expect(marked == "| c | #akce |\n| - | - |\n| [e] | f |")
     }
 
     @Test("in a table Tab navigates when nothing matches or the lookup is pending")

@@ -44,7 +44,11 @@ final class TagCompleter {
     /// Set after a failure has been reported, until a lookup succeeds or the
     /// vocabulary changes, so a broken index does not report every keystroke.
     private var hasReportedFailure = false
-    private lazy var list = TagSuggestionList()
+    private lazy var list: TagSuggestionList = {
+        let list = TagSuggestionList()
+        list.onChoose = { [weak self] index in _ = self?.choose(index) }
+        return list
+    }()
 
     init(textView: MarkdownTextView) {
         self.textView = textView
@@ -178,6 +182,13 @@ final class TagCompleter {
     func acceptSelected() -> Bool {
         guard let selectedIndex else { return false }
         return accept(suggestions[selectedIndex])
+    }
+
+    /// Accepts the suggestion in row `index` of the shown list, as clicked
+    /// or pressed through accessibility; it need not be the highlighted one.
+    private func choose(_ index: Int) -> Bool {
+        guard list.superview != nil, list.tags.indices.contains(index) else { return false }
+        return accept(list.tags[index])
     }
 
     /// Replaces the Tag at the caret with `tag`, provided the caret is still
