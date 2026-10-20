@@ -5,6 +5,23 @@ import Testing
 @MainActor
 @Suite("Heading folding")
 struct HeadingFoldingTests {
+    @Test("moving to EOF reveals a folded final body before appending text")
+    func revealEndOfDocument() throws {
+        let textView = MarkdownTextViewFactory.makeReadOnlyTextView()
+        textView.string = "# H\nbody"
+        textView.isEditable = true
+        let expanded = textView.fittingHeight(forWidth: 500)
+        let button = try #require(textView.subviews.compactMap { $0 as? NSButton }.first)
+        button.performClick(nil)
+        #expect(textView.fittingHeight(forWidth: 500) < expanded)
+        textView.setSelectedRange(NSRange(location: 8, length: 0))
+        #expect(abs(textView.fittingHeight(forWidth: 500) - expanded) < 1)
+        #expect(button.state == .on)
+        textView.insertText(" appended", replacementRange: NSRange(location: 8, length: 0))
+        #expect(textView.string == "# H\nbody appended")
+        #expect(button.state == .on)
+    }
+
     @Test("the keyboard command folds the heading at the end-of-document caret")
     func keyboardFoldAtEnd() throws {
         let textView = MarkdownTextViewFactory.makeReadOnlyTextView()

@@ -7,6 +7,7 @@ final class HeadingFolding: NSObject, NSTextContentStorageDelegate {
     private weak var textView: MarkdownTextView?
     private var sections: [HeadingSection] = []
     private var collapsed: Set<Int> = []
+    private var hiddenRanges: [NSRange] = []
     private var buttons: [NSButton] = []
     private var isUpdatingLayout = false
     var onLayoutChange: (() -> Void)?
@@ -58,7 +59,17 @@ final class HeadingFolding: NSObject, NSTextContentStorageDelegate {
     }
 
     func hides(_ location: Int) -> Bool {
-        sections.contains { collapsed.contains($0.range.location) && NSLocationInRange(location, $0.bodyRange) }
+        guard !hiddenRanges.isEmpty else { return false }
+        var low = 0
+        var high = hiddenRanges.count
+        while low < high {
+            let mid = (low + high) / 2
+            if hiddenRanges[mid].location <= location { low = mid + 1 } else { high = mid }
+        }
+        guard low > 0 else { return false }
+        let range = hiddenRanges[low - 1]
+        return NSLocationInRange(location, range)
+            || (location == range.upperBound && location == textView?.textStorage?.length)
     }
 
     nonisolated func textContentManager(
@@ -102,7 +113,9 @@ final class HeadingFolding: NSObject, NSTextContentStorageDelegate {
         let previous = collapsed
         for section in sections where collapsed.contains(section.range.location) {
             if NSLocationInRange(range.location, section.bodyRange)
-                || NSIntersectionRange(range, section.bodyRange).length > 0 {
+                || NSIntersectionRange(range, section.bodyRange).length > 0
+                || (range.length == 0 && range.location == section.bodyRange.upperBound
+                    && range.location == textView?.textStorage?.length) {
                 collapsed.remove(section.range.location)
             }
         }
@@ -111,6 +124,14 @@ final class HeadingFolding: NSObject, NSTextContentStorageDelegate {
 
     private func invalidate() {
         guard let textView, let manager = textView.textLayoutManager else { return }
+        hiddenRanges.removeAll(keepingCapacity: true)
+        for section in sections where collapsed.contains(section.range.location) {
+            if let last = hiddenRanges.last, section.bodyRange.location < last.upperBound {
+                hiddenRanges[hiddenRanges.count - 1] = NSUnionRange(last, section.bodyRange)
+            } else {
+                hiddenRanges.append(section.bodyRange)
+            }
+        }
         manager.invalidateLayout(for: manager.documentRange)
         textView.needsLayout = true
         textView.needsDisplay = true
@@ -132,8 +153,8 @@ final class HeadingFolding: NSObject, NSTextContentStorageDelegate {
         }
         for (section, button) in zip(sections, buttons) {
             button.state = collapsed.contains(section.range.location) ? .off : .on
-            button.isHidden = hides(section.range.location)
-                || viewport.map { !NSLocationInRange(section.range.location, $0) } == true
+            button.isHidden = viewport.map { !NSLocationInRange(section.range.location, $0) } == true
+                || hides(section.range.location)
             guard !button.isHidden, let heading = section.headingRange,
                   let start = content.location(content.documentRange.location, offsetBy: heading.location),
                   let end = content.location(start, offsetBy: 1),
