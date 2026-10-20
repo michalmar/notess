@@ -98,7 +98,6 @@ final class TagCompleter {
             dismiss()
             return
         }
-        pendingSelection = selectedIndex.map { suggestions[$0] } ?? pendingSelection
         generation += 1
         lookup?.cancel()
         startLookup(for: context, source: source)
@@ -120,7 +119,9 @@ final class TagCompleter {
             case .success(let tags):
                 hasReportedFailure = false
                 let tags = TagCompletion.candidates(matching: prefix, in: tags)
-                show(tags, highlighting: pendingSelection.flatMap(tags.firstIndex(of:)) ?? 0)
+                // A highlight still shown (a refresh) may have moved since the lookup began.
+                let highlighted = selectedIndex.map { suggestions[$0] } ?? pendingSelection
+                show(tags, highlighting: highlighted.flatMap(tags.firstIndex(of:)) ?? 0)
                 pendingSelection = nil
                 if suggestions.isEmpty { dismiss() }
             case .failure(let error):

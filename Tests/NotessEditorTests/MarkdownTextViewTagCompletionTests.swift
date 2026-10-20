@@ -109,15 +109,29 @@ struct MarkdownTextViewTagCompletionTests {
     /// Clicks the middle of the suggestion row reading `label`, each mouse
     /// event being one user event.
     private func click(_ label: String) throws {
+        let point = try press(label)
+        try release(at: point)
+    }
+
+    /// Presses the mouse on the middle of the suggestion row reading `label`.
+    private func press(_ label: String) throws -> NSPoint {
         let row = try #require(suggestionRows().first { $0.label == label })
         let point = NSPoint(x: row.frame.midX, y: row.frame.midY)
-        for (type, pressure) in [(NSEvent.EventType.leftMouseDown, Float(1)), (.leftMouseUp, 0)] {
-            let mouse = try #require(NSEvent.mouseEvent(
-                with: type, location: point, modifierFlags: [], timestamp: 0,
-                windowNumber: window.windowNumber, context: nil, eventNumber: 1, clickCount: 1, pressure: pressure
-            ))
-            event { window.sendEvent(mouse) }
-        }
+        try sendMouse(.leftMouseDown, at: point)
+        return point
+    }
+
+    private func release(at point: NSPoint) throws {
+        try sendMouse(.leftMouseUp, at: point)
+    }
+
+    private func sendMouse(_ type: NSEvent.EventType, at point: NSPoint) throws {
+        let mouse = try #require(NSEvent.mouseEvent(
+            with: type, location: point, modifierFlags: [], timestamp: 0,
+            windowNumber: window.windowNumber, context: nil, eventNumber: 1, clickCount: 1,
+            pressure: type == .leftMouseDown ? 1 : 0
+        ))
+        event { window.sendEvent(mouse) }
     }
 
     // MARK: Type, filter, Tab, undo
@@ -884,6 +898,72 @@ struct MarkdownTextViewTagCompletionTests {
         #expect(marked == "#a‸")
         command(#selector(NSResponder.insertTab(_:)))
         #expect(marked == "#a\t‸")
+    }
+
+    @Test("while a refresh is pending the shown list can be browsed and clicked; the highlighted Tag survives the answer")
+    func browsingDuringRefresh() async throws {
+        load("první\n‸\ndruhý")
+        type("#a")
+        await settle()
+        command(#selector(NSResponder.moveDown(_:)))
+        #expect(selected == "#acme-2026")
+
+        // A highlight chosen before the refresh is kept by Tag, not by row.
+        vault.tags.append("abc")
+        textView.tagSuggestionSource = vault.source(revision: 1)
+        await settle()
+        #expect(rows == ["#abc", "#acme", "#acme-2026", "#akce"])
+        #expect(selected == "#acme-2026")
+
+        // Up and Down during a pending refresh move the shown highlight, not the
+        // caret, and the move survives the answer.
+        vault.isSuspended = true
+        vault.tags.append("aaa")
+        textView.tagSuggestionSource = vault.source(revision: 2)
+        await settle()
+        #expect(vault.pendingPrefixes == ["a"])
+        command(#selector(NSResponder.moveDown(_:)))
+        #expect(selected == "#akce")
+        #expect(marked == "první\n#a‸\ndruhý")
+        vault.resumeAll()
+        await settle()
+        #expect(rows == ["#aaa", "#abc", "#acme", "#acme-2026", "#akce"])
+        #expect(selected == "#akce")
+
+        // A click during a pending refresh accepts the clicked row; the late
+        // answer changes nothing.
+        window.makeKeyAndOrderFront(nil)
+        defer { window.orderOut(nil) }
+        window.makeFirstResponder(textView)
+        textView.tagSuggestionSource = vault.source(revision: 3)
+        await settle()
+        #expect(vault.pendingPrefixes == ["a"])
+        try click("#abc")
+        #expect(marked == "první\n#abc‸\ndruhý")
+        vault.resumeAll()
+        await settle()
+        #expect(rows.isEmpty)
+        #expect(textView.string == "první\n#abc\ndruhý")
+    }
+
+    @Test("a refresh answer that changes the row under a pressed mouse does not accept another Tag")
+    func pressAcrossRefresh() async throws {
+        window.makeKeyAndOrderFront(nil)
+        defer { window.orderOut(nil) }
+        window.makeFirstResponder(textView)
+        load("‸")
+        type("#a")
+        await settle()
+        #expect(rows == ["#acme", "#acme-2026", "#akce"])
+        let point = try press("#acme-2026")
+        vault.tags.append("abc")
+        textView.tagSuggestionSource = vault.source(revision: 1)
+        await settle()
+        #expect(rows == ["#abc", "#acme", "#acme-2026", "#akce"])
+        try release(at: point)
+        #expect(marked == "#a‸")
+        #expect(rows == ["#abc", "#acme", "#acme-2026", "#akce"])
+        #expect(window.firstResponder === textView)
     }
 
     @Test("a refresh without any open completion looks nothing up and opens nothing")

@@ -96,6 +96,9 @@ final class TagSuggestionList: NSView {
 
     /// Shows `tags` (normalised names, without `#`) with `selectedIndex` selected.
     func show(_ tags: [String], selectedIndex: Int?) {
+        tableView.cancelPress(unlessRowStill: { [old = self.tags] row in
+            old.indices.contains(row) && tags.indices.contains(row) && old[row] == tags[row]
+        })
         self.tags = tags
         self.selectedIndex = selectedIndex.flatMap { tags.indices.contains($0) ? $0 : nil }
         accessibilityRows = tags.indices.map { RowElement(list: self, index: $0, label: "#" + tags[$0]) }
@@ -247,6 +250,12 @@ final class TagSuggestionList: NSView {
         }
 
         override func mouseDragged(with event: NSEvent) {}
+
+        /// Forgets a press whose row now shows another Tag, so releasing the
+        /// mouse does not choose a Tag the user did not press.
+        func cancelPress(unlessRowStill unchanged: (Int) -> Bool) {
+            if let pressedRow, !unchanged(pressedRow) { self.pressedRow = nil }
+        }
 
         override func mouseUp(with event: NSEvent) {
             defer { pressedRow = nil }
