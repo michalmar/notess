@@ -242,17 +242,36 @@ final class TagCompleter {
         position(below: context.tokenRange, in: container)
     }
 
+    /// Puts the list under the Tag if it fits there, else above it; if it fits
+    /// on neither side, on the roomier side, shortened to whole rows, so it
+    /// never covers the Tag. It always stays inside the visible editor area.
     private func position(below range: NSRange, in container: NSScrollView) {
+        let gap: CGFloat = 2
         let anchor = textView.rect(forCharacterRange: NSRange(location: range.location, length: min(range.length, 1)))
         let visible = textView.visibleRect
-        let size = NSSize(width: min(TagSuggestionList.width, visible.width), height: min(list.preferredHeight, visible.height))
-        var frame = NSRect(origin: NSPoint(x: anchor.minX, y: anchor.maxY + 2), size: size)
-        if frame.maxY > visible.maxY {
-            frame.origin.y = anchor.minY - 2 - size.height
+        // The editor is flipped: "below" is towards larger y.
+        let spaceBelow = visible.maxY - anchor.maxY - gap
+        let spaceAbove = anchor.minY - gap - visible.minY
+        let preferred = list.preferredHeight
+        let opensBelow: Bool
+        let height: CGFloat
+        if preferred <= spaceBelow {
+            (opensBelow, height) = (true, preferred)
+        } else if preferred <= spaceAbove {
+            (opensBelow, height) = (false, preferred)
+        } else {
+            opensBelow = spaceBelow >= spaceAbove
+            height = list.height(fitting: max(spaceBelow, spaceAbove))
         }
+        let size = NSSize(width: min(TagSuggestionList.width, visible.width), height: min(height, visible.height))
+        var frame = NSRect(
+            origin: NSPoint(x: anchor.minX, y: opensBelow ? anchor.maxY + gap : anchor.minY - gap - size.height),
+            size: size
+        )
         frame.origin.x = max(visible.minX, min(frame.origin.x, visible.maxX - size.width))
         frame.origin.y = max(visible.minY, min(frame.origin.y, visible.maxY - size.height))
         list.frame = container.convert(frame, from: textView)
+        list.scrollSelectionToVisible()
     }
 
     /// The shown rows as the user reads them (`#tag`), for tests and accessibility checks.

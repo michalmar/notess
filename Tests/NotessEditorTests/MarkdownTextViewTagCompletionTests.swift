@@ -428,6 +428,72 @@ struct MarkdownTextViewTagCompletionTests {
         #expect(rows.isEmpty)
     }
 
+    // MARK: Placement
+
+    /// The list, the Tag `#…` and the visible editor area, in window coordinates.
+    private func placement(of tag: String) throws -> (list: NSRect, tag: NSRect, visible: NSRect) {
+        let list = try #require(suggestionList()).frame
+        let range = (textView.string as NSString).range(of: tag, options: .backwards)
+        let tagRect = window.convertFromScreen(textView.firstRect(forCharacterRange: range, actualRange: nil))
+        return (list, tagRect, textView.convert(textView.visibleRect, to: nil))
+    }
+
+    @Test("the list opens under the Tag, starting where the Tag starts")
+    func placementBelow() async throws {
+        load("Porada ‸")
+        type("#a")
+        await settle()
+        let (list, tag, visible) = try placement(of: "#a")
+        #expect(abs(list.maxY - (tag.minY - 2)) < 1)
+        #expect(abs(list.minX - tag.minX) < 1)
+        #expect(visible.contains(list))
+        #expect(suggestionRows().count == 3)
+    }
+
+    @Test("near the right edge the list moves left to stay in the editor")
+    func placementRightEdge() async throws {
+        window.setContentSize(NSSize(width: 300, height: 400))
+        load("Porada s týmem na téma ‸")
+        type("#a")
+        await settle()
+        let (list, tag, visible) = try placement(of: "#a")
+        #expect(tag.minX + list.width > visible.maxX)
+        #expect(visible.contains(list))
+        #expect(!list.intersects(tag))
+    }
+
+    @Test("near the bottom edge the list opens above the Tag")
+    func placementAbove() async throws {
+        load(String(repeating: "řádek\n", count: 40) + "‸")
+        type("#a")
+        await settle()
+        let (list, tag, visible) = try placement(of: "#a")
+        #expect(visible.contains(tag))
+        #expect(abs(list.minY - (tag.maxY + 2)) < 1)
+        #expect(visible.contains(list))
+    }
+
+    @Test("in a short editor the list shrinks to whole rows beside the Tag, keeping the highlight in view")
+    func placementShort() async throws {
+        window.setContentSize(NSSize(width: 700, height: 130))
+        vault.tags = (1...12).map { String(format: "téma%02d", $0) }
+        load("Úvod\n‸")
+        type("#t")
+        await settle()
+        var (list, tag, visible) = try placement(of: "#t")
+        #expect(visible.contains(list))
+        #expect(!list.intersects(tag))
+        let shown = rowsInView.count
+        #expect(shown >= 1 && shown < 8)
+        #expect(abs(list.height - (CGFloat(shown) * 22 + 8)) < 1)
+
+        for _ in 0..<6 { command(#selector(NSResponder.moveDown(_:))) }
+        #expect(selected == "#téma07")
+        #expect(rowsInView.contains("#téma07"))
+        (list, tag, visible) = try placement(of: "#t")
+        #expect(!list.intersects(tag))
+    }
+
     // MARK: Dismissal
 
     @Test("assistive technology reads each suggestion by name and which one is selected")
@@ -517,6 +583,33 @@ struct MarkdownTextViewTagCompletionTests {
         type("c")
         await settle()
         #expect(!rows.isEmpty)
+        command(#selector(NSResponder.insertBacktab(_:)))
+        #expect(marked == "| [x] | #ac |\n| - | - |")
+        #expect(rows.isEmpty)
+    }
+
+    @Test("after moving the highlight, Escape, Return and Shift-Tab still only do their usual thing")
+    func keysAfterBrowsing() async {
+        load("‸")
+        type("#a")
+        await settle()
+        command(#selector(NSResponder.moveDown(_:)))
+        command(#selector(NSResponder.cancelOperation(_:)))
+        #expect(rows.isEmpty)
+        #expect(marked == "#a‸")
+
+        load("‸")
+        type("#a")
+        await settle()
+        command(#selector(NSResponder.moveDown(_:)))
+        command(#selector(NSResponder.insertNewline(_:)))
+        #expect(marked == "#a\n‸")
+        #expect(rows.isEmpty)
+
+        load("| x | #a‸ |\n| - | - |")
+        type("c")
+        await settle()
+        command(#selector(NSResponder.moveDown(_:)))
         command(#selector(NSResponder.insertBacktab(_:)))
         #expect(marked == "| [x] | #ac |\n| - | - |")
         #expect(rows.isEmpty)

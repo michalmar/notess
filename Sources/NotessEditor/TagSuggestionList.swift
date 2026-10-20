@@ -85,6 +85,13 @@ final class TagSuggestionList: NSView {
         CGFloat(rows) * Self.rowHeight + 2 * Self.verticalInset
     }
 
+    /// The height of the most whole rows (at least one, at most the preferred
+    /// number) that fit in `space`.
+    func height(fitting space: CGFloat) -> CGFloat {
+        let fitting = Int(((space - 2 * Self.verticalInset) / Self.rowHeight).rounded(.down))
+        return height(forRows: max(1, min(fitting, tags.count, Self.maximumVisibleRows)))
+    }
+
     /// Shows `tags` (normalised names, without `#`) with `selectedIndex` selected.
     func show(_ tags: [String], selectedIndex: Int?) {
         let previous = selectedIndex.flatMap { self.tags.indices.contains($0) ? self.tags[$0] : nil }
