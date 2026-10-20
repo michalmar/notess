@@ -23,6 +23,8 @@ final class TagSuggestionList: NSView {
     private let scrollView = NSScrollView()
     private let tableView = TableView()
     private var accessibilityRows: [RowElement] = []
+    /// The Tag last announced as selected, so each change is announced once.
+    private var announcedTag: String?
 
     init() {
         super.init(frame: NSRect(x: 0, y: 0, width: Self.width, height: Self.rowHeight))
@@ -94,14 +96,13 @@ final class TagSuggestionList: NSView {
 
     /// Shows `tags` (normalised names, without `#`) with `selectedIndex` selected.
     func show(_ tags: [String], selectedIndex: Int?) {
-        let previous = selectedIndex.flatMap { self.tags.indices.contains($0) ? self.tags[$0] : nil }
         self.tags = tags
         self.selectedIndex = selectedIndex.flatMap { tags.indices.contains($0) ? $0 : nil }
         accessibilityRows = tags.indices.map { RowElement(list: self, index: $0, label: "#" + tags[$0]) }
         tableView.reloadData()
         applySelection()
         NSAccessibility.post(element: self, notification: .rowCountChanged)
-        if self.selectedIndex.map({ tags[$0] }) != previous { selectionDidChange() }
+        selectionDidChange()
     }
 
     /// Highlights row `index`, scrolling it into view.
@@ -121,10 +122,17 @@ final class TagSuggestionList: NSView {
         }
     }
 
+    override func viewDidMoveToSuperview() {
+        super.viewDidMoveToSuperview()
+        announcedTag = nil
+        selectionDidChange()
+    }
+
     /// Tells assistive technology which suggestion is selected; the editor
-    /// keeps focus, so the new choice is announced.
+    /// keeps focus, so a newly selected Tag is announced.
     private func selectionDidChange() {
-        guard superview != nil, let selectedIndex else { return }
+        guard superview != nil, let selectedIndex, tags[selectedIndex] != announcedTag else { return }
+        announcedTag = tags[selectedIndex]
         NSAccessibility.post(element: self, notification: .selectedChildrenChanged)
         NSAccessibility.post(
             element: self,
@@ -184,7 +192,8 @@ final class TagSuggestionList: NSView {
 
     /// One suggestion as assistive technology sees it.
     private final class RowElement: NSAccessibilityElement {
-        private unowned let list: TagSuggestionList
+        // Assistive technology may keep a row longer than the list.
+        private weak var list: TagSuggestionList?
         private let index: Int
 
         init(list: TagSuggestionList, index: Int, label: String) {
@@ -199,18 +208,19 @@ final class TagSuggestionList: NSView {
         // Accessibility asks on the main thread.
         override func accessibilityFrame() -> NSRect {
             let (list, index) = (list, index)
-            return MainActor.assumeIsolated { list.screenFrame(ofRow: index) }
+            return MainActor.assumeIsolated { list?.screenFrame(ofRow: index) ?? .zero }
         }
 
         override func isAccessibilitySelected() -> Bool {
             let (list, index) = (list, index)
-            return MainActor.assumeIsolated { list.selectedIndex == index }
+            return MainActor.assumeIsolated { list?.selectedIndex == index }
         }
 
         override func accessibilityIndex() -> Int { index }
 
         override func accessibilityPerformPress() -> Bool {
             let (list, index) = (list, index)
+            guard let list else { return false }
             MainActor.assumeIsolated { list.choose(index) }
             return true
         }

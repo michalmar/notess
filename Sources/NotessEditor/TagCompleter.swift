@@ -162,10 +162,17 @@ final class TagCompleter {
     // MARK: Choosing
 
     /// Moves the highlight `offset` rows, stopping at the first and last
-    /// suggestion. Returns false when no suggestion is actionable, so the key
-    /// keeps its usual meaning (moving the caret).
+    /// suggestion. While a lookup is pending over a list kept on screen, the
+    /// move is remembered and shown once the lookup answers. Returns false
+    /// when no list is shown, so the key keeps its usual meaning (moving the
+    /// caret).
     func moveSelection(by offset: Int) -> Bool {
-        guard context != nil, let selectedIndex else { return false }
+        guard context != nil, !suggestions.isEmpty else { return false }
+        guard let selectedIndex else {
+            let current = pendingSelection.flatMap(suggestions.firstIndex(of:)) ?? 0
+            pendingSelection = suggestions[max(0, min(current + offset, suggestions.count - 1))]
+            return true
+        }
         let index = max(0, min(selectedIndex + offset, suggestions.count - 1))
         if index != selectedIndex {
             self.selectedIndex = index

@@ -300,6 +300,41 @@ struct MarkdownTextViewTagCompletionTests {
         #expect(rows.isEmpty)
     }
 
+    @Test("Up and Down over a list kept on screen during a lookup stay in the list and take effect when it answers")
+    func arrowsWhileRefreshing() async {
+        load("první\n‸\ndruhý")
+        type("#a")
+        await settle()
+        vault.isSuspended = true
+        type("c")
+        await settle()
+        #expect(vault.pendingPrefixes == ["ac"])
+        #expect(rows == ["#acme", "#acme-2026"])
+        #expect(selected == nil)
+        command(#selector(NSResponder.moveDown(_:)))
+        command(#selector(NSResponder.moveDown(_:)))
+        #expect(marked == "první\n#ac‸\ndruhý")
+        #expect(rows == ["#acme", "#acme-2026"])
+        vault.resumeAll()
+        await settle()
+        #expect(selected == "#acme-2026")
+
+        // Tab still waits for the lookup.
+        load("první\n‸\ndruhý")
+        vault.isSuspended = false
+        type("#a")
+        await settle()
+        vault.isSuspended = true
+        type("c")
+        await settle()
+        command(#selector(NSResponder.moveDown(_:)))
+        command(#selector(NSResponder.insertTab(_:)))
+        #expect(marked == "první\n#ac\t‸\ndruhý")
+        vault.resumeAll()
+        await settle()
+        #expect(rows.isEmpty)
+    }
+
     @Test("a highlighted Tag that still matches stays highlighted while the prefix changes; otherwise the first is")
     func retainedSelection() async {
         load("‸")
