@@ -80,6 +80,56 @@ struct AppModelOpenNoteTests {
         #expect(model.reveal?.documentID == AnyHashable(document.id))
         #expect(model.errorMessage == nil)
     }
+
+    @Test("the Tag suggestion source follows the index: a save refreshes its revision and vocabulary, another Vault replaces it")
+    func tagSuggestionSourceFollowsIndex() async throws {
+        let fixture = try AppModelFixture()
+        try fixture.write("## Old #stary\n", to: "Notes/Old.md")
+        let model = fixture.makeModel()
+        let first = try #require(model.tagSuggestionSource)
+        try await waitForIndexing(model)
+        let settled = try #require(model.tagSuggestionSource)
+        #expect(settled.id == first.id)
+        #expect(try await settled.suggestions("s") == ["stary"])
+        #expect(try await settled.suggestions("n").isEmpty)
+
+        // An unsaved addition is not offered; the save is, and bumps the revision.
+        let document = try #require(model.openExistingNote(relativePath: "Notes/Old.md"))
+        document.text = "## Old #stary #novy\n"
+        #expect(try await settled.suggestions("n").isEmpty)
+        let revision = model.searchIndexRevision
+        #expect(model.save(documentID: document.id))
+        try await waitUntil { model.searchIndexRevision > revision }
+        let refreshed = try #require(model.tagSuggestionSource)
+        #expect(refreshed.id == settled.id)
+        #expect(refreshed.revision > settled.revision)
+        #expect(try await refreshed.suggestions("n") == ["novy"])
+
+        // Another Vault is another vocabulary: a new identity with only its own Tags.
+        let other = try AppModelFixture()
+        try other.write("## Other #cizi\n", to: "Notes/Other.md")
+        model.chooseVault(at: other.rootURL)
+        let switched = try #require(model.tagSuggestionSource)
+        #expect(switched.id != refreshed.id)
+        try await waitForIndexing(model)
+        let switchedSettled = try #require(model.tagSuggestionSource)
+        #expect(switchedSettled.id == switched.id)
+        #expect(try await switchedSettled.suggestions("c") == ["cizi"])
+        #expect(try await switchedSettled.suggestions("s").isEmpty)
+    }
+
+    private func waitForIndexing(_ model: AppModel) async throws {
+        try await waitUntil { !model.isIndexing }
+    }
+
+    /// Polls until `condition` holds, failing after a generous deadline.
+    private func waitUntil(_ condition: () -> Bool) async throws {
+        let deadline = ContinuousClock.now + .seconds(20)
+        while !condition() {
+            try #require(ContinuousClock.now < deadline, "timed out")
+            try await Task.sleep(for: .milliseconds(5))
+        }
+    }
 }
 
 private final class AppModelFixture {

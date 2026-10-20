@@ -30,6 +30,8 @@ public final class MarkdownTextView: NSTextView {
         didSet {
             if oldValue?.id != tagSuggestionSource?.id {
                 tagCompleter.sourceDidChange()
+            } else if oldValue?.revision != tagSuggestionSource?.revision {
+                tagCompleter.vocabularyDidRefresh()
             }
         }
     }

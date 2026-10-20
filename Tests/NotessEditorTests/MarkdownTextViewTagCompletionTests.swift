@@ -445,6 +445,272 @@ struct MarkdownTextViewTagCompletionTests {
         #expect(rows.count == 3)
     }
 
+    // MARK: Refreshing the vocabulary
+
+    @Test("a refreshed vocabulary reaches the open list and keeps the highlighted Tag; an emptied list closes")
+    func refreshOpenList() async {
+        load("‸")
+        type("#a")
+        await settle()
+        #expect(rows == ["#acme", "#acme-2026", "#akce"])
+
+        vault.tags = ["acme", "akce", "Acme-2026", "azur"]
+        textView.tagSuggestionSource = vault.source(revision: 1)
+        await settle()
+        #expect(rows == ["#acme", "#acme-2026", "#akce", "#azur"])
+        #expect(selected == "#acme")
+
+        // The highlighted Tag vanished: the first one is highlighted.
+        vault.tags = ["akce", "azur"]
+        textView.tagSuggestionSource = vault.source(revision: 2)
+        await settle()
+        #expect(rows == ["#akce", "#azur"])
+        #expect(selected == "#akce")
+
+        vault.tags = ["projekt"]
+        textView.tagSuggestionSource = vault.source(revision: 3)
+        await settle()
+        #expect(rows.isEmpty)
+        #expect(marked == "#a‸")
+        command(#selector(NSResponder.insertTab(_:)))
+        #expect(marked == "#a\t‸")
+    }
+
+    @Test("a refresh without any open completion looks nothing up and opens nothing")
+    func refreshOpensNothing() async {
+        load("‸")
+        textView.tagSuggestionSource = vault.source(revision: 1)
+        await settle()
+        #expect(vault.requests.isEmpty)
+        #expect(rows.isEmpty)
+
+        // Not after dismissal by Escape, acceptance, a note change or focus loss either.
+        type("#a")
+        await settle()
+        command(#selector(NSResponder.cancelOperation(_:)))
+        vault.tags.append("azur")
+        textView.tagSuggestionSource = vault.source(revision: 2)
+        await settle()
+        #expect(rows.isEmpty)
+
+        load("‸")
+        type("#ak")
+        await settle()
+        command(#selector(NSResponder.insertTab(_:)))
+        let requests = vault.requests.count
+        textView.tagSuggestionSource = vault.source(revision: 3)
+        await settle()
+        #expect(rows.isEmpty)
+        #expect(vault.requests.count == requests)
+
+        window.makeFirstResponder(textView)
+        load("‸")
+        type("#a")
+        await settle()
+        window.makeFirstResponder(nil)
+        textView.tagSuggestionSource = vault.source(revision: 4)
+        await settle()
+        #expect(rows.isEmpty)
+
+        // The next eligible completion simply uses the refreshed vocabulary.
+        window.makeFirstResponder(textView)
+        load("‸")
+        type("#a")
+        await settle()
+        #expect(rows == ["#acme", "#acme-2026", "#akce", "#azur"])
+    }
+
+    @Test("refresh results apply only to the context they were asked for")
+    func refreshSuperseded() async {
+        load("‸")
+        type("#a")
+        await settle()
+
+        // A refresh that is overtaken by a newer one.
+        vault.isSuspended = true
+        vault.tags = ["acme", "akce"]
+        textView.tagSuggestionSource = vault.source(revision: 1)
+        await settle()
+        vault.tags = ["akce", "azur"]
+        textView.tagSuggestionSource = vault.source(revision: 2)
+        await settle()
+        #expect(vault.pendingPrefixes == ["a", "a"])
+        #expect(rows == ["#acme", "#acme-2026", "#akce"])
+        vault.resumeLast("a")
+        await settle()
+        #expect(rows == ["#akce", "#azur"])
+        vault.resume("a")
+        await settle()
+        #expect(rows == ["#akce", "#azur"])
+
+        // A refresh that is overtaken by typing.
+        textView.tagSuggestionSource = vault.source(revision: 3)
+        await settle()
+        type("z")
+        await settle()
+        vault.resume("a")
+        await settle()
+        #expect(selected == nil)
+        vault.resume("az")
+        await settle()
+        #expect(rows == ["#azur"])
+        #expect(selected == "#azur")
+        #expect(marked == "#az‸")
+
+        // Late refreshes after Escape, a caret move, another note and acceptance.
+        textView.tagSuggestionSource = vault.source(revision: 4)
+        await settle()
+        command(#selector(NSResponder.cancelOperation(_:)))
+        vault.resumeAll()
+        await settle()
+        #expect(rows.isEmpty)
+
+        vault.isSuspended = false
+        load("x ‸")
+        type("#a")
+        await settle()
+        vault.isSuspended = true
+        textView.tagSuggestionSource = vault.source(revision: 5)
+        await settle()
+        command(#selector(NSResponder.moveLeft(_:)))
+        vault.resumeAll()
+        await settle()
+        #expect(rows.isEmpty)
+        #expect(marked == "x #‸a")
+
+        vault.isSuspended = false
+        load("‸")
+        type("#a")
+        await settle()
+        vault.isSuspended = true
+        textView.tagSuggestionSource = vault.source(revision: 6)
+        await settle()
+        load("Jiná ‸")
+        vault.resumeAll()
+        await settle()
+        #expect(rows.isEmpty)
+
+        vault.isSuspended = false
+        load("‸")
+        type("#a")
+        await settle()
+        vault.isSuspended = true
+        textView.tagSuggestionSource = vault.source(revision: 7)
+        await settle()
+        command(#selector(NSResponder.insertTab(_:)))
+        #expect(marked == "#akce‸")
+        vault.resumeAll()
+        await settle()
+        #expect(rows.isEmpty)
+        #expect(marked == "#akce‸")
+    }
+
+    @Test("typing and commands stay usable while a refresh is pending")
+    func refreshPending() async {
+        load("| #a‸ | b |\n| - | - |")
+        type("k")
+        await settle()
+        #expect(rows == ["#akce"])
+        vault.isSuspended = true
+        textView.tagSuggestionSource = vault.source(revision: 1)
+        await settle()
+        #expect(vault.pendingPrefixes == ["ak"])
+
+        type("c")
+        #expect(marked == "| #akc‸ | b |\n| - | - |")
+        command(#selector(NSResponder.insertTab(_:)))
+        #expect(marked == "| #akc | [b] |\n| - | - |")
+        vault.resumeAll()
+        await settle()
+        #expect(rows.isEmpty)
+        #expect(textView.string == "| #akc | b |\n| - | - |")
+    }
+
+    @Test("a failed refresh is reported, closes the list and leaves Tab alone; a later lookup recovers")
+    func refreshFailureAndRecovery() async {
+        var failures = 0
+        textView.onTagSuggestionFailure = { _ in failures += 1 }
+        load("‸")
+        type("#a")
+        await settle()
+        #expect(rows.count == 3)
+
+        vault.failure = FakeTagVocabulary.Failure()
+        textView.tagSuggestionSource = vault.source(revision: 1)
+        await settle()
+        #expect(failures == 1)
+        #expect(rows.isEmpty)
+        command(#selector(NSResponder.insertTab(_:)))
+        #expect(marked == "#a\t‸")
+
+        // Recovery: refresh alone does not reopen; the next edit does.
+        vault.failure = nil
+        textView.tagSuggestionSource = vault.source(revision: 2)
+        await settle()
+        #expect(rows.isEmpty)
+        load("‸")
+        type("#a")
+        await settle()
+        #expect(rows.count == 3)
+        #expect(failures == 1)
+
+        // A failure after recovery is reported again.
+        vault.failure = FakeTagVocabulary.Failure()
+        textView.tagSuggestionSource = vault.source(revision: 3)
+        await settle()
+        #expect(failures == 2)
+        #expect(rows.isEmpty)
+    }
+
+    @Test("switching Vault closes the list at once; old responses never show or edit, and new lookups use only the new Vault")
+    func vaultSwitch() async {
+        let other = FakeTagVocabulary(tags: ["akvarium", "cizi"])
+        load("‸")
+        type("#a")
+        await settle()
+        #expect(!rows.isEmpty)
+
+        textView.tagSuggestionSource = other.source(id: "other vault")
+        #expect(rows.isEmpty)
+        command(#selector(NSResponder.insertTab(_:)))
+        #expect(marked == "#a\t‸")
+
+        // Old lookups, whether typed or refreshed, answered late.
+        vault.isSuspended = true
+        textView.tagSuggestionSource = vault.source(revision: 1)
+        load("‸")
+        type("#a")
+        await settle()
+        textView.tagSuggestionSource = vault.source(revision: 2)
+        await settle()
+        textView.tagSuggestionSource = other.source(id: "other vault")
+        #expect(rows.isEmpty)
+        vault.resumeAll()
+        await settle()
+        #expect(rows.isEmpty)
+        #expect(marked == "#a‸")
+        command(#selector(NSResponder.insertTab(_:)))
+        #expect(marked == "#a\t‸")
+
+        load("‸")
+        type("#a")
+        await settle()
+        #expect(rows == ["#akvarium"])
+        #expect(other.requests.last == "a")
+        command(#selector(NSResponder.insertTab(_:)))
+        #expect(marked == "#akvarium‸")
+
+        // A refresh of the new Vault's vocabulary never brings the old one back.
+        other.tags = ["akvarium", "azalka"]
+        load("‸")
+        type("#a")
+        await settle()
+        other.tags = ["azalka"]
+        textView.tagSuggestionSource = other.source(id: "other vault", revision: 1)
+        await settle()
+        #expect(rows == ["#azalka"])
+    }
+
     /// Lets queued lookups and their main-actor continuations run.
     private func settle() async {
         for _ in 0..<5 {
@@ -466,7 +732,7 @@ final class FakeTagVocabulary {
     var isSuspended = false
     var failure: Error?
     private(set) var requests: [String] = []
-    private var pending: [(prefix: String, continuation: CheckedContinuation<[String], Error>)] = []
+    private var pending: [(prefix: String, tags: [String], continuation: CheckedContinuation<[String], Error>)] = []
 
     init(tags: [String]) {
         self.tags = tags
@@ -474,8 +740,8 @@ final class FakeTagVocabulary {
 
     var pendingPrefixes: [String] { pending.map(\.prefix) }
 
-    func source(id: AnyHashable = "vault") -> TagSuggestionSource {
-        TagSuggestionSource(id: id) { [unowned self] prefix in
+    func source(id: AnyHashable = "vault", revision: Int = 0) -> TagSuggestionSource {
+        TagSuggestionSource(id: id, revision: revision) { [unowned self] prefix in
             try await self.lookup(prefix)
         }
     }
@@ -483,23 +749,33 @@ final class FakeTagVocabulary {
     private func lookup(_ prefix: String) async throws -> [String] {
         requests.append(prefix)
         if isSuspended {
+            let snapshot = tags
             return try await withCheckedThrowingContinuation { continuation in
-                pending.append((prefix, continuation))
+                pending.append((prefix, snapshot, continuation))
             }
         }
         if let failure { throw failure }
         return tags.filter { Tag.normalize($0).hasPrefix(Tag.normalize(prefix)) }
     }
 
+    /// Answers the oldest held lookup for `prefix` with the Tags as they were
+    /// when it was asked.
     func resume(_ prefix: String) {
         guard let index = pending.firstIndex(where: { $0.prefix == prefix }) else { return }
         let request = pending.remove(at: index)
-        request.continuation.resume(returning: tags)
+        request.continuation.resume(returning: request.tags)
+    }
+
+    /// Answers the newest held lookup for `prefix`.
+    func resumeLast(_ prefix: String) {
+        guard let index = pending.lastIndex(where: { $0.prefix == prefix }) else { return }
+        let request = pending.remove(at: index)
+        request.continuation.resume(returning: request.tags)
     }
 
     func resumeAll() {
         let requests = pending
         pending.removeAll()
-        for request in requests { request.continuation.resume(returning: tags) }
+        for request in requests { request.continuation.resume(returning: request.tags) }
     }
 }
