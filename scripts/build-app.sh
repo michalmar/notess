@@ -29,6 +29,11 @@ if [[ -n "$build_number" && ! "$build_number" =~ ^[1-9][0-9]*(\.[0-9]+){0,2}$ ]]
     echo "BUILD_NUMBER must contain one to three numeric components, starting with a positive integer." >&2
     exit 1
 fi
+icon="$root/Support/AppIcon.icns"
+if [[ ! -f "$icon" || ! -r "$icon" || ! -s "$icon" ]]; then
+    echo "Missing or unreadable app icon: $icon. Regenerate it with swift scripts/generate-app-icon.swift." >&2
+    exit 1
+fi
 
 swift_args=(-c "$configuration")
 if [[ -n "$architecture" ]]; then
@@ -43,6 +48,7 @@ rm -rf "$app"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
 cp "$bin_dir/Notess" "$app/Contents/MacOS/Notess"
 cp Support/Info.plist "$app/Contents/Info.plist"
+cp "$icon" "$app/Contents/Resources/AppIcon.icns"
 if [[ -n "$build_number" ]]; then
     plutil -replace CFBundleVersion -string "$build_number" "$app/Contents/Info.plist"
 fi

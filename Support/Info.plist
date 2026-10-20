@@ -8,6 +8,8 @@
 	<string>Notess</string>
 	<key>CFBundleExecutable</key>
 	<string>Notess</string>
+	<key>CFBundleIconFile</key>
+	<string>AppIcon.icns</string>
 	<key>CFBundleIdentifier</key>
 	<string>com.michalmar.notess</string>
 	<key>CFBundleInfoDictionaryVersion</key>
