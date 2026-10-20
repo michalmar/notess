@@ -19,7 +19,61 @@ public final class MarkdownTextView: NSTextView {
             imageCache.removeAll()
             reportedImageFailures.removeAll()
             scheduleInlineImageRefresh()
+            tagCompleter.dismiss()
         }
+    }
+
+    // MARK: Tag completion
+
+    /// Where Tag completion looks up saved Tags; nil turns completion off.
+    public var tagSuggestionSource: TagSuggestionSource? {
+        didSet {
+            if oldValue?.id != tagSuggestionSource?.id {
+                tagCompleter.sourceDidChange()
+            }
+        }
+    }
+    /// Called when a Tag lookup fails; completion stays closed and editing continues.
+    public var onTagSuggestionFailure: ((Error) -> Void)?
+    lazy var tagCompleter = TagCompleter(textView: self)
+    /// Where the text changed since the last `didChangeText()` (after the
+    /// change), for Tag completion.
+    private var pendingEditedRange: NSRange?
+    /// True while undo or redo reports its change, which must not open completion.
+    private var isReportingUndoOrRedo = false
+    /// True while a Tag completion is being inserted, which must not reopen completion.
+    private var isApplyingTagCompletion = false
+
+    /// Replaces a Tag with an accepted suggestion as one undoable edit.
+    func applyTagCompletion(replacing range: NSRange, with tag: String) -> Bool {
+        isApplyingTagCompletion = true
+        defer { isApplyingTagCompletion = false }
+        return replace(range, with: tag, actionName: "Doplnit štítek")
+    }
+
+    /// The Tag suggestions shown under the caret (`#tag`), empty when closed.
+    var visibleTagSuggestions: [String] { tagCompleter.visibleRows }
+
+    /// The highlighted suggestion (`#tag`), the one Tab accepts.
+    var selectedTagSuggestion: String? { tagCompleter.selectedRow }
+
+    public override var isEditable: Bool {
+        didSet {
+            if !isEditable { tagCompleter.dismiss() }
+        }
+    }
+
+    public override func resignFirstResponder() -> Bool {
+        let resigned = super.resignFirstResponder()
+        if resigned { tagCompleter.dismiss() }
+        return resigned
+    }
+
+    /// Escape closes open Tag suggestions without editing.
+    public override func cancelOperation(_ sender: Any?) {
+        let wasShowing = !tagCompleter.visibleRows.isEmpty
+        tagCompleter.dismiss()
+        if !wasShowing { super.cancelOperation(sender) }
     }
 
     @MainActor
@@ -168,12 +222,30 @@ public final class MarkdownTextView: NSTextView {
         set {
             super.string = newValue
             hasUnreportedTextEdit = false
+            pendingEditedRange = nil
+            tagCompleter.dismiss()
         }
     }
 
+    /// Remembers where a typing, deleting or replacing edit puts its new text.
+    public override func shouldChangeText(in affectedCharRange: NSRange, replacementString: String?) -> Bool {
+        guard super.shouldChangeText(in: affectedCharRange, replacementString: replacementString) else { return false }
+        if let replacementString {
+            let edited = NSRange(location: affectedCharRange.location, length: (replacementString as NSString).length)
+            pendingEditedRange = pendingEditedRange.map { NSUnionRange($0, edited) } ?? edited
+        }
+        return true
+    }
+
     public override func didChangeText() {
+        let isUndoOrRedo = isReportingUndoOrRedo || undoManager?.isUndoing == true || undoManager?.isRedoing == true
+        let editedRange = isUndoOrRedo ? nil : pendingEditedRange
         hasUnreportedTextEdit = false
+        pendingEditedRange = nil
         super.didChangeText()
+        if !isApplyingTagCompletion {
+            tagCompleter.textDidChange(editedRange: editedRange)
+        }
     }
 
     /// On TextKit 2, undo and redo change the text without `didChangeText()`,
@@ -193,6 +265,8 @@ public final class MarkdownTextView: NSTextView {
         guard hasUnreportedTextEdit,
               let undoManager,
               notification.object as? UndoManager === undoManager else { return }
+        isReportingUndoOrRedo = true
+        defer { isReportingUndoOrRedo = false }
         didChangeText()
     }
 
@@ -236,6 +310,7 @@ public final class MarkdownTextView: NSTextView {
         if widthChanged {
             scheduleInlineImageLayout(updateSpacing: true)
         }
+        tagCompleter.reposition()
     }
 
     // MARK: Table delimiter rows
@@ -244,6 +319,9 @@ public final class MarkdownTextView: NSTextView {
     /// it stays visible to edit (alignment colons, a table being typed).
     public override func setSelectedRanges(_ ranges: [NSValue], affinity: NSSelectionAffinity, stillSelecting: Bool) {
         super.setSelectedRanges(ranges, affinity: affinity, stillSelecting: stillSelecting)
+        // The caret moving with a typed or deleted character is part of that
+        // edit; `didChangeText()` refreshes completion for it.
+        if !hasUnreportedTextEdit { tagCompleter.selectionDidChange() }
         guard isEditable, let textStorage else { return }
         highlighter.selectionDidChange(to: selectedRange(), in: textStorage)
     }
@@ -583,7 +661,7 @@ public final class MarkdownTextView: NSTextView {
         return NSSize(width: image.size.width * scale, height: image.size.height * scale)
     }
 
-    private func rect(forCharacterRange range: NSRange) -> NSRect {
+    func rect(forCharacterRange range: NSRange) -> NSRect {
         guard let window else { return .zero }
         let screenRect = firstRect(forCharacterRange: range, actualRange: nil)
         return convert(window.convertFromScreen(screenRect), from: nil)

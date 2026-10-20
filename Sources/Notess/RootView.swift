@@ -116,6 +116,10 @@ struct RootView: View {
                     onImageLoadFailure: {
                         model.errorMessage = $0
                     },
+                    tagSuggestionSource: model.tagSuggestionSource,
+                    onTagSuggestionFailure: { error in
+                        model.errorMessage = "Návrhy štítků se nepodařilo načíst: \(error.localizedDescription)"
+                    },
                     isImagePreviewPresented: model.imagePreview.content != nil
                 )
             } else {

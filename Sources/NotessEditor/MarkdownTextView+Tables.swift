@@ -53,6 +53,7 @@ extension MarkdownTextView {
     /// Enter in a table adds a row below, keeping any selected text such as a
     /// cell selected by Tab (Option+Enter is a plain line break).
     public override func insertNewline(_ sender: Any?) {
+        tagCompleter.dismiss()
         guard let (table, index, text) = tableAtSelection(),
               let edit = table.newline(at: index, in: text) else {
             super.insertNewline(sender)
@@ -61,8 +62,10 @@ extension MarkdownTextView {
         applyTableEdit(edit, actionName: edit.replacement.isEmpty ? "Opustit tabulku" : "Přidat řádek")
     }
 
-    /// Tab in a table selects the next cell (Option+Tab is a tab character).
+    /// Tab accepts a shown Tag suggestion; otherwise, in a table it selects
+    /// the next cell (Option+Tab is a tab character).
     public override func insertTab(_ sender: Any?) {
+        if tagCompleter.acceptSelected() { return }
         guard let (table, index, text) = tableAtSelection() else {
             super.insertTab(sender)
             return
@@ -74,6 +77,7 @@ extension MarkdownTextView {
 
     /// Shift+Tab in a table selects the previous cell.
     public override func insertBacktab(_ sender: Any?) {
+        tagCompleter.dismiss()
         guard let (table, index, text) = tableAtSelection() else {
             super.insertBacktab(sender)
             return

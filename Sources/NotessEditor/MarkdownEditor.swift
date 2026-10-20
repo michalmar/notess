@@ -88,11 +88,15 @@ public struct MarkdownEditor: NSViewRepresentable {
     private let onOpenImagePreview: ((ImagePreviewContent) -> Void)?
     private let onImageLoadFailure: ((String) -> Void)?
     private let onMagnify: ((CGFloat) -> Void)?
+    private let tagSuggestionSource: TagSuggestionSource?
+    private let onTagSuggestionFailure: ((Error) -> Void)?
 
     /// - Parameters:
     ///   - fontName: The body font's PostScript name, or `"System"`.
     ///   - fontSize: The body font size to display, i.e. already scaled by any text zoom.
     ///   - onMagnify: Receives the incremental magnification of a trackpad pinch over the editor.
+    ///   - tagSuggestionSource: Saved Tags offered while typing a Tag; nil turns Tag completion off.
+    ///   - onTagSuggestionFailure: Told when looking up Tag suggestions fails (once until one succeeds).
     ///   - colors: Formatting colours; the defaults follow light/dark mode.
     public init(
         documentID: AnyHashable,
@@ -111,6 +115,8 @@ public struct MarkdownEditor: NSViewRepresentable {
         onOpenImagePreview: ((ImagePreviewContent) -> Void)? = nil,
         onImageLoadFailure: ((String) -> Void)? = nil,
         onMagnify: ((CGFloat) -> Void)? = nil,
+        tagSuggestionSource: TagSuggestionSource? = nil,
+        onTagSuggestionFailure: ((Error) -> Void)? = nil,
         onTextChange: @escaping (String) -> Void
     ) {
         self.documentID = documentID
@@ -127,6 +133,8 @@ public struct MarkdownEditor: NSViewRepresentable {
         self.onOpenImagePreview = onOpenImagePreview
         self.onImageLoadFailure = onImageLoadFailure
         self.onMagnify = onMagnify
+        self.tagSuggestionSource = tagSuggestionSource
+        self.onTagSuggestionFailure = onTagSuggestionFailure
         self.onTextChange = onTextChange
     }
 
@@ -139,6 +147,7 @@ public struct MarkdownEditor: NSViewRepresentable {
         let textView = scrollView.documentView as! MarkdownTextView
         textView.delegate = context.coordinator
         configureImages(in: textView)
+        configureTagCompletion(in: textView)
         context.coordinator.onTextChange = onTextChange
         textView.onWikiLinkClick = onOpenWikiLink
         textView.onMagnify = onMagnify
@@ -154,6 +163,7 @@ public struct MarkdownEditor: NSViewRepresentable {
         textView.onWikiLinkClick = onOpenWikiLink
         textView.onMagnify = onMagnify
         configureImages(in: textView)
+        configureTagCompletion(in: textView)
         if textView.markdownStyle != style {
             textView.markdownStyle = style
         }
@@ -196,6 +206,11 @@ public struct MarkdownEditor: NSViewRepresentable {
         textView.onOpenImagePreview = onOpenImagePreview
         textView.onImageLoadFailure = onImageLoadFailure
         textView.noteURL = noteURL
+    }
+
+    private func configureTagCompletion(in textView: MarkdownTextView) {
+        textView.tagSuggestionSource = tagSuggestionSource
+        textView.onTagSuggestionFailure = onTagSuggestionFailure
     }
 
     private func configureInteraction(in textView: MarkdownTextView, coordinator: Coordinator) {

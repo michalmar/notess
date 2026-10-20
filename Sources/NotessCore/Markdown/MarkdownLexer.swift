@@ -92,6 +92,26 @@ public final class MarkdownLexer {
         return nil
     }
 
+    /// The Tag completion context for a collapsed caret at `caret`, or nil
+    /// when the caret does not follow `#` and at least one Tag-name character
+    /// in a place where Tags are recognised. Uses the stored block states;
+    /// changes nothing.
+    public func tagCompletionContext(at caret: Int, in text: NSString) -> TagCompletionContext? {
+        guard caret > 1, caret <= text.length else { return nil }
+        if caret < text.length, UTF16.isTrailSurrogate(text.character(at: caret)),
+           UTF16.isLeadSurrogate(text.character(at: caret - 1)) { return nil }
+        let line = Self.upperBound(lineStarts, caret) - 1
+        guard line >= 0, line < states.count else { return nil }
+        var lexer = MarkdownLineLexer(line: lineUnits(line, in: text), offset: lineStarts[line], recognizesTagPrefixes: true)
+        _ = lexer.lex(state: states[line], isFirstLine: line == 0) { nextLineUnits(after: line, in: text) }
+        for token in lexer.tokens where token.kind == .tag {
+            guard caret > token.range.location + 1, caret <= NSMaxRange(token.range) else { continue }
+            let prefix = text.substring(with: NSRange(location: token.range.location + 1, length: caret - token.range.location - 1))
+            return TagCompletionContext(prefix: prefix, tokenRange: token.range, caret: caret)
+        }
+        return nil
+    }
+
     /// The table with a row on the line of `index` (`index` may be the end of
     /// the text), or nil. Uses the stored block states; changes nothing.
     public func table(containing index: Int, in text: NSString) -> MarkdownTable? {

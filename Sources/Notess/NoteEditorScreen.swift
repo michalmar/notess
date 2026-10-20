@@ -13,6 +13,8 @@ struct NoteEditorScreen: View {
     var onPasteImageFailure: (Error) -> Void = { _ in }
     var onOpenImagePreview: (ImagePreviewContent) -> Void = { _ in }
     var onImageLoadFailure: (String) -> Void = { _ in }
+    var tagSuggestionSource: TagSuggestionSource?
+    var onTagSuggestionFailure: (Error) -> Void = { _ in }
     var isImagePreviewPresented = false
 
     var body: some View {
@@ -41,6 +43,8 @@ struct NoteEditorScreen: View {
                 onOpenImagePreview: onOpenImagePreview,
                 onImageLoadFailure: onImageLoadFailure,
                 onMagnify: { settings.pinchTextZoom(by: Double($0)) },
+                tagSuggestionSource: tagSuggestionSource,
+                onTagSuggestionFailure: onTagSuggestionFailure,
                 onTextChange: { document.text = $0 }
             )
             BacklinksBar(backlinks: backlinks, onOpen: onOpenBacklink)
