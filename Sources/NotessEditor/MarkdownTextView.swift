@@ -7,6 +7,45 @@ import UniformTypeIdentifiers
 /// Do not access `layoutManager` here: it switches the view to TextKit 1.
 public final class MarkdownTextView: NSTextView {
     let highlighter = MarkdownHighlighter()
+    lazy var headingFolding = HeadingFolding(textView: self)
+    /// Called when disclosure changes the read-only view's fitting height.
+    var onHeadingLayoutChange: (() -> Void)? {
+        get { headingFolding.onLayoutChange }
+        set { headingFolding.onLayoutChange = newValue }
+    }
+
+    public override func layout() {
+        super.layout()
+        headingFolding.layoutButtons()
+    }
+
+    @objc public func toggleHeadingFold(_ sender: Any?) {
+        let location = (sender as? NSMenuItem)?.representedObject as? Int ?? selectedRange().location
+        guard isSelectable, headingFolding.canToggle(at: location) else {
+            NSSound.beep()
+            return
+        }
+        headingFolding.toggle(at: location)
+    }
+
+    func addHeadingFoldItem(to menu: NSMenu, at location: Int) {
+        guard isSelectable else { return }
+        if headingFolding.canToggle(at: location) {
+            let item = NSMenuItem(
+                title: "Sbalit nebo rozbalit nadpis",
+                action: #selector(toggleHeadingFold(_:)), keyEquivalent: ""
+            )
+            item.target = self
+            item.representedObject = location
+            menu.insertItem(.separator(), at: 0)
+            menu.insertItem(item, at: 0)
+        }
+    }
+
+    public override func scrollRangeToVisible(_ range: NSRange) {
+        headingFolding.reveal(range)
+        super.scrollRangeToVisible(range)
+    }
     public var onPasteImage: ((Data, String) -> String?)?
     public var inlineImageData: ((String) -> Data?)?
     public var onOpenImagePreview: ((ImagePreviewContent) -> Void)?
@@ -223,6 +262,7 @@ public final class MarkdownTextView: NSTextView {
         observeUndoAndRedo()
         highlighter.didStyleText = { [weak self] range, editedRange, delta in
             guard let self else { return }
+            headingFolding.refresh(editedRange: editedRange, delta: delta)
             if let editedRange {
                 hasUnreportedTextEdit = true
                 updateInlineImages(in: range, editedRange: editedRange, changeInLength: delta)
@@ -232,6 +272,7 @@ public final class MarkdownTextView: NSTextView {
         }
         textStorage?.delegate = highlighter
         textLayoutManager?.delegate = highlighter
+        (textLayoutManager?.textContentManager as? NSTextContentStorage)?.delegate = headingFolding
         font = highlighter.style.font
         typingAttributes = highlighter.baseAttributes
     }
@@ -248,11 +289,13 @@ public final class MarkdownTextView: NSTextView {
             hasUnreportedTextEdit = false
             pendingEditedRange = nil
             tagCompleter.dismiss()
+            headingFolding.reset()
         }
     }
 
     /// Remembers where a typing, deleting or replacing edit puts its new text.
     public override func shouldChangeText(in affectedCharRange: NSRange, replacementString: String?) -> Bool {
+        headingFolding.reveal(affectedCharRange)
         guard super.shouldChangeText(in: affectedCharRange, replacementString: replacementString) else { return false }
         if let replacementString {
             let edited = NSRange(location: affectedCharRange.location, length: (replacementString as NSString).length)
@@ -342,6 +385,7 @@ public final class MarkdownTextView: NSTextView {
     /// A table's delimiter row is hidden except while the caret is on it, so
     /// it stays visible to edit (alignment colons, a table being typed).
     public override func setSelectedRanges(_ ranges: [NSValue], affinity: NSSelectionAffinity, stillSelecting: Bool) {
+        for range in ranges { headingFolding.reveal(range.rangeValue) }
         super.setSelectedRanges(ranges, affinity: affinity, stillSelecting: stillSelecting)
         // The caret moving with a typed or deleted character is part of that
         // edit; `didChangeText()` refreshes completion for it.
@@ -362,11 +406,18 @@ public final class MarkdownTextView: NSTextView {
     /// types a plain-text view reads, which exclude images: without this, Paste
     /// stays disabled for a screenshot on the clipboard and `paste(_:)` never runs.
     public override func validateUserInterfaceItem(_ item: NSValidatedUserInterfaceItem) -> Bool {
-        validatePaste(item.action) ?? validateTableCommand(item.action) ?? super.validateUserInterfaceItem(item)
+        if item.action == #selector(toggleHeadingFold(_:)) {
+            return isSelectable && headingFolding.canToggle(at: selectedRange().location)
+        }
+        return validatePaste(item.action) ?? validateTableCommand(item.action) ?? super.validateUserInterfaceItem(item)
     }
 
     public override func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
-        validatePaste(menuItem.action) ?? validateTableCommand(menuItem.action) ?? super.validateMenuItem(menuItem)
+        if menuItem.action == #selector(toggleHeadingFold(_:)) {
+            let location = menuItem.representedObject as? Int ?? selectedRange().location
+            return isSelectable && headingFolding.canToggle(at: location)
+        }
+        return validatePaste(menuItem.action) ?? validateTableCommand(menuItem.action) ?? super.validateMenuItem(menuItem)
     }
 
     /// Whether Paste is enabled, or `nil` to leave the decision to AppKit.
@@ -564,7 +615,7 @@ public final class MarkdownTextView: NSTextView {
     var trailingInlineImageHeight: CGFloat {
         guard let length = textStorage?.length else { return 0 }
         return inlineImagePreviews
-            .filter { $0.paragraphRange.upperBound >= length }
+            .filter { $0.paragraphRange.upperBound >= length && !headingFolding.hides($0.range.location) }
             .reduce(0) { $0 + fittedSize(for: $1.image).height + 8 }
     }
 
@@ -596,6 +647,8 @@ public final class MarkdownTextView: NSTextView {
         layoutSubtreeIfNeeded()
         var paragraphOffsets: [NSRange: CGFloat] = [:]
         for preview in inlineImagePreviews.sorted(by: { $0.range.location < $1.range.location }) {
+            preview.imageView.isHidden = headingFolding.hides(preview.range.location)
+            guard !preview.imageView.isHidden else { continue }
             let size = fittedSize(for: preview.image)
             let lineRect = rect(forCharacterRange: preview.range)
             let offset = paragraphOffsets[preview.paragraphRange, default: 0]
@@ -644,7 +697,7 @@ public final class MarkdownTextView: NSTextView {
 
     private func openInlineImage(atPoint point: NSPoint) -> Bool {
         guard let preview = inlineImagePreviews.first(where: {
-            $0.imageView.frame.contains(point)
+            !$0.imageView.isHidden && $0.imageView.frame.contains(point)
         }) else { return false }
         open(preview)
         return true

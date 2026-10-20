@@ -555,6 +555,105 @@ final class SearchIndexTests {
 
     // MARK: - Tag Timeline
 
+    @Test("Tags select their nearest heading at every level, not siblings or an untagged parent")
+    func timelineNestedHeadingBoundaries() async throws {
+        try vault.write("""
+        Intro #preamble
+
+        Topic
+        =====
+        not tagged
+
+        Group #group
+        ------------
+        own text
+        ### Child #leaf
+        café 😀
+        ```
+        # not a boundary #ignored
+        ```
+        ###### Deep
+        deeply nested
+        ### Sibling
+        sibling text
+        ## Next
+        outside
+        """, to: "Journal/2026/10/2026-10-19.md")
+        let index = makeIndex()
+        try await index.synchronize()
+        let group = try await index.tagTimeline(for: "group").flatMap(\.sections)
+        #expect(group.count == 1)
+        #expect(group.first?.markdown == """
+        Group #group
+        ------------
+        own text
+        ### Child #leaf
+        café 😀
+        ```
+        # not a boundary #ignored
+        ```
+        ###### Deep
+        deeply nested
+        ### Sibling
+        sibling text
+        """)
+        #expect(try await index.tagTimeline(for: "leaf").first?.sections.first?.markdown == """
+        ### Child #leaf
+        café 😀
+        ```
+        # not a boundary #ignored
+        ```
+        ###### Deep
+        deeply nested
+        """)
+        #expect(try await index.tagTimeline(for: "preamble").first?.sections.first?.markdown == "Intro #preamble")
+        #expect(try await index.tagTimeline(for: "ignored").isEmpty)
+    }
+
+    @Test("an H1 Tag shows its whole subtree, stopping at the next H1")
+    func timelineIncludesHeadingSubtree() async throws {
+        try vault.write("""
+        # Topic 1
+        #tag1
+
+        ## subtopic
+        some text
+
+        ## subtopic
+        more text #tag1
+        ### sub-sub-topic
+        nested text
+
+        # Topic 2
+        unrelated text
+        ## sub-topic2
+        #tag2
+        other text
+        """, to: "Journal/2026/10/2026-10-20.md")
+        let index = makeIndex()
+        try await index.synchronize()
+        let sections = try await index.tagTimeline(for: "tag1").flatMap(\.sections)
+        #expect(sections.count == 1)
+        #expect(sections.first?.title == "Topic 1")
+        #expect(sections.first?.markdown == """
+        # Topic 1
+        #tag1
+
+        ## subtopic
+        some text
+
+        ## subtopic
+        more text #tag1
+        ### sub-sub-topic
+        nested text
+        """)
+        #expect(try await index.tagTimeline(for: "tag2").first?.sections.first?.markdown == """
+        ## sub-topic2
+        #tag2
+        other text
+        """)
+    }
+
     private func writeTimelineNotes() throws {
         try vault.write("""
         # 2026-05-03 #intro
@@ -609,22 +708,29 @@ final class SearchIndexTests {
 
         let days = try await index.tagTimeline(for: "#ACME")
         #expect(days.map(\.day.isoString) == ["2026-05-03", "2026-05-01", "2026-03-14"])
-        #expect(timelineIDs(days) == ["2026-05-03#0", "2026-05-03#1", "2026-05-03#3", "2026-05-01#1", "2026-03-14#1"])
+        #expect(timelineIDs(days) == ["2026-05-03#0", "2026-05-01#1", "2026-03-14#1"])
 
         let may3 = days[0].sections
         #expect(may3.allSatisfy { $0.relativePath == "Journal/2026/05/2026-05-03.md" })
         #expect(may3[0].title == "2026-05-03 #intro")
-        #expect(may3[0].markdown == "# 2026-05-03 #intro\n\nÚvod dne. #acme")
-        #expect(may3[1].title == "Porada #Acme")
-        #expect(may3[1].markdown == """
+        #expect(may3[0].markdown == """
+        # 2026-05-03 #intro
+
+        Úvod dne. #acme
+
         ## Porada #Acme
         Zápis z porady.
 
         ### Podrobnosti
         - [ ] úkol pro #beta
         ![schéma](attachments/schema.png)
+
+        ## Oběd
+        Bez značek, i když zmíním acme.
+
+        ## Večer
+        Hovor s klientem #ACME #acme
         """)
-        #expect(may3[2].markdown == "## Večer\nHovor s klientem #ACME #acme")
 
         let long = try #require(days[1].sections.first)
         #expect(long.markdown.hasPrefix("## Kickoff #acme\nDlouhý text"))
@@ -638,7 +744,7 @@ final class SearchIndexTests {
         let index = makeIndex()
         try await index.synchronize()
         #expect(timelineIDs(try await index.tagTimeline(for: "CAFE\u{301}")) == ["2026-04-30#1"])
-        #expect(timelineIDs(try await index.tagTimeline(for: "beta")) == ["2026-05-03#1"])
+        #expect(timelineIDs(try await index.tagTimeline(for: "beta")) == ["2026-05-03#2"])
         #expect(try await index.tagTimeline(for: "zakaznik").isEmpty)
         #expect(try await index.tagTimeline(for: "neexistuje").isEmpty)
     }

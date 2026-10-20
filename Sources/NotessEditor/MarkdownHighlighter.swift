@@ -15,6 +15,7 @@ extension NSAttributedString.Key {
 @MainActor
 final class MarkdownHighlighter: NSObject, NSTextStorageDelegate, NSTextLayoutManagerDelegate {
     let lexer = MarkdownLexer()
+    private(set) var headingTokens: [MarkdownToken] = []
     private(set) var style: MarkdownEditorStyle
     private var fontCache: [FontKey: NSFont] = [:]
     var didStyleText: (NSRange, NSRange?, Int) -> Void = { _, _, _ in }
@@ -38,6 +39,7 @@ final class MarkdownHighlighter: NSObject, NSTextStorageDelegate, NSTextLayoutMa
     /// Re-lexes and restyles the whole text.
     func restyleAll(_ storage: NSTextStorage) {
         let update = lexer.relexAll(text: storage.mutableString)
+        headingTokens = update.tokens.filter { if case .heading = $0.kind { true } else { false } }
         storage.beginEditing()
         apply(update, to: storage)
         storage.endEditing()
@@ -67,6 +69,15 @@ final class MarkdownHighlighter: NSObject, NSTextStorageDelegate, NSTextLayoutMa
                 selection = NSRange(location: editedRange.upperBound, length: 0)
             }
             let update = lexer.update(text: storage.mutableString, editedRange: editedRange, changeInLength: delta)
+            let oldRange = NSRange(location: update.range.location, length: max(0, update.range.length - delta))
+            headingTokens = headingTokens.compactMap { token in
+                guard NSIntersectionRange(token.range, oldRange).length == 0 else { return nil }
+                var token = token
+                if token.range.location >= oldRange.upperBound { token.range.location += delta }
+                return token
+            }
+            headingTokens += update.tokens.filter { if case .heading = $0.kind { true } else { false } }
+            headingTokens.sort { $0.range.location < $1.range.location }
             apply(update, to: storage)
             // Attribute fixing (font fallback for emoji, CJK, ...) already ran
             // before this callback, and `apply` reset the fonts.

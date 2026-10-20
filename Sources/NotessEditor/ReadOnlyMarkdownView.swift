@@ -17,7 +17,7 @@ extension MarkdownTextViewFactory {
         textView.usesFindBar = false
         textView.isIncrementalSearchingEnabled = false
         textView.drawsBackground = false
-        textView.textContainerInset = NSSize(width: 0, height: 2)
+        textView.textContainerInset = NSSize(width: 22, height: 2)
         textView.autoresizingMask = []
         return textView
     }
@@ -31,6 +31,7 @@ extension MarkdownTextView {
         }
         guard let textLayoutManager else { return 0 }
         textLayoutManager.ensureLayout(for: textLayoutManager.documentRange)
+        headingFolding.layoutButtons()
         let textHeight = textLayoutManager.usageBoundsForTextContainer.height
         return ceil(textHeight + trailingInlineImageHeight + textContainerInset.height * 2)
     }
@@ -82,6 +83,9 @@ public struct ReadOnlyMarkdownView: NSViewRepresentable {
         let tick = $imageLayoutTick
         // Deferred: this fires during AppKit layout, possibly inside a SwiftUI update.
         textView.onInlineImagesLaidOut = {
+            DispatchQueue.main.async { tick.wrappedValue += 1 }
+        }
+        textView.onHeadingLayoutChange = {
             DispatchQueue.main.async { tick.wrappedValue += 1 }
         }
         textView.noteURL = noteURL

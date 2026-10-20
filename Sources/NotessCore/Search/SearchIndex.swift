@@ -20,7 +20,8 @@ public actor SearchIndex {
     ///
     /// - 2: Tags in headings of any level mark their Section.
     /// - 3: Sections keep their complete Markdown for the Tag Timeline.
-    static let schemaVersion = 3
+    /// - 4: Tag Timeline spans follow heading hierarchy at every level.
+    static let schemaVersion = 4
     private static let batchSize = 50
 
     public let vault: Vault
@@ -173,6 +174,28 @@ public actor SearchIndex {
                 try db.query("INSERT INTO section_tags (section_id, tag) VALUES (?, ?)", [id, .text(tag)])
             }
         }
+        if file.kind == .dailyEntry {
+            let string = text as NSString
+            let sections = HeadingSection.split(text)
+            for section in sections {
+                for tag in section.tags {
+                    // A tagged ancestor already includes this entire subtree.
+                    guard !sections.contains(where: {
+                        $0.ordinal < section.ordinal && $0.tags.contains(tag)
+                            && NSLocationInRange(section.range.location, $0.range)
+                    }) else { continue }
+                    try db.query("""
+                        INSERT INTO timeline_sections (path, ordinal, title, markdown, tag)
+                        VALUES (?, ?, ?, ?, ?)
+                        """, [
+                            .text(file.relativePath), .int(Int64(section.ordinal)),
+                            section.title.map { .text($0) } ?? .null,
+                            .text(string.substring(with: section.range).trimmingCharacters(in: .newlines)),
+                            .text(tag)
+                        ])
+                }
+            }
+        }
         try db.query(
             "INSERT OR REPLACE INTO files (path, modified, size) VALUES (?, ?, ?)",
             [.text(file.relativePath), .double(file.stamp.modified), .int(file.stamp.size)]
@@ -184,6 +207,7 @@ public actor SearchIndex {
         try db.query("DELETE FROM sections_fts WHERE rowid IN (\(ids))", [.text(path)])
         try db.query("DELETE FROM section_tags WHERE section_id IN (\(ids))", [.text(path)])
         try db.query("DELETE FROM sections WHERE path = ?", [.text(path)])
+        try db.query("DELETE FROM timeline_sections WHERE path = ?", [.text(path)])
         try db.query("DELETE FROM files WHERE path = ?", [.text(path)])
     }
 
@@ -291,9 +315,8 @@ public actor SearchIndex {
     public func tagTimeline(for tag: String) throws -> [TagTimelineDay] {
         let db = try openDatabase()
         let rows = try db.query("""
-            SELECT path, ordinal, title, markdown FROM sections
-            WHERE kind = ? AND id IN (SELECT section_id FROM section_tags WHERE tag = ?)
-            """, [.int(Int64(NoteKind.dailyEntry.searchIndexCode)), .text(Tag.normalize(tag))])
+            SELECT path, ordinal, title, markdown FROM timeline_sections WHERE tag = ?
+            """, [.text(Tag.normalize(tag))])
         var sectionsByDay: [Day: [TagTimelineSection]] = [:]
         for row in rows {
             guard let path = row[0].text, let day = DailyEntry.day(forRelativePath: path) else { continue }
@@ -340,6 +363,11 @@ public actor SearchIndex {
             CREATE TABLE IF NOT EXISTS section_tags (section_id INTEGER NOT NULL, tag TEXT NOT NULL);
             CREATE INDEX IF NOT EXISTS section_tags_by_tag ON section_tags (tag);
             CREATE INDEX IF NOT EXISTS section_tags_by_section ON section_tags (section_id);
+            CREATE TABLE IF NOT EXISTS timeline_sections (
+                path TEXT NOT NULL, ordinal INTEGER NOT NULL, title TEXT,
+                markdown TEXT NOT NULL, tag TEXT NOT NULL);
+            CREATE INDEX IF NOT EXISTS timeline_by_tag ON timeline_sections (tag);
+            CREATE INDEX IF NOT EXISTS timeline_by_path ON timeline_sections (path);
             CREATE VIRTUAL TABLE IF NOT EXISTS sections_fts USING fts5 (
                 title, body, tokenize = 'unicode61 remove_diacritics 2');
             PRAGMA user_version = \(schemaVersion);

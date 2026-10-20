@@ -40,6 +40,13 @@ struct NoteCommands: Commands {
         }
         CommandGroup(after: .toolbar) {
             Divider()
+            Button("Sbalit nebo rozbalit nadpis") {
+                if !NSApp.sendAction(#selector(MarkdownTextView.toggleHeadingFold(_:)), to: nil, from: nil) {
+                    NSSound.beep()
+                }
+            }
+            .keyboardShortcut("f", modifiers: [.command, .option])
+            .disabled(isPreviewPresented || model.vault == nil)
             // ⌘= is handled by the app delegate: this shortcut is ⇧⌘= on a US keyboard.
             Button("Zvětšit text") { model.zoomInText() }
                 .keyboardShortcut("+", modifiers: .command)

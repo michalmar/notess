@@ -23,15 +23,15 @@ A note the user creates in any folder of the Vault outside the Journal; it is no
 _Avoid_: Page, document
 
 **Section**:
-The span of a note from one second-level heading to the next heading of level 1 or 2; the unit that search returns, Tags apply to, and Brain Notes cite. The text before the first second-level heading is one more, introductory Section.
+The span of a note from one second-level heading to the next heading of level 1 or 2; the unit that fulltext search returns and Brain Notes cite. The text before the first second-level heading is one more, introductory Section.
 _Avoid_: Block, chunk, topic, chapter
 
 **Tag**:
-A `#word` token (hash immediately followed by a word, no space) written anywhere in a note outside code, including in a heading of any level; it marks the whole Section it appears in. A Tag in an H2 heading marks the Section that heading starts, a Tag in a deeper heading marks its enclosing Section, and a Tag in an H1 heading that ends a Section marks the Section it starts. Tags in the introductory text before the first second-level heading, including in its H1 title or deeper headings, mark only that introductory Section; they never apply to later Sections. The word needs at least one letter, so `#2026` is not a Tag. Tags are compared case-insensitively and Unicode-normalised, and repeating a Tag within a Section counts once.
+A `#word` token (hash immediately followed by a word containing at least one letter) outside code, compared case-insensitively and Unicode-normalised. In the Tag Timeline it marks its nearest preceding heading, including all descendants until the next heading of equal or higher rank; text before any heading stays local, while fulltext search still filters by the Section containing the Tag.
 _Avoid_: Label, category, topic
 
 **Tag Timeline**:
-For one Tag, the complete Sections that carry it in saved Daily Entries, grouped by Daily Entry date with the newest day first and each day's Sections in their original order. It is read-only and built from saved content only; unsaved edits, Free Notes and Brain Notes are not part of it.
+For one Tag, the complete tagged heading subtrees in saved Daily Entries, grouped by date newest first and in note order within a day, without repeating descendants already included by a tagged ancestor. It is read-only and includes neither unsaved edits nor Free Notes or Brain Notes.
 _Avoid_: Tag view, Tag feed, Tag page
 
 **Wiki-link**:

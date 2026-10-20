@@ -24,7 +24,10 @@ extension AppModel {
 
     /// Opens the Daily Entry of a Tag Timeline Section for editing and scrolls to the Section.
     func openTimelineSection(_ section: TagTimelineSection) {
-        openSection(relativePath: section.relativePath, title: section.title, ordinal: section.ordinal)
+        guard let document = openExistingNote(relativePath: section.relativePath) else { return }
+        let heading = HeadingSection.locate(title: section.title, ordinal: section.ordinal, in: document.text)
+        let range = heading?.headingRange ?? NSRange(location: heading?.range.location ?? 0, length: 0)
+        reveal = EditorReveal(documentID: document.id, range: range)
     }
 
     /// Opens a note in Journal mode, reusing its tab (and any unsaved text), and

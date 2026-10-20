@@ -5,10 +5,10 @@ import Foundation
 public struct TagTimelineSection: Hashable, Sendable, Identifiable {
     /// The Daily Entry's Vault-relative path.
     public let relativePath: String
-    /// The Section's position in the note (`SearchSection.ordinal`).
+    /// The heading subtree's position in the note (`HeadingSection.ordinal`).
     public let ordinal: Int
-    /// The Section heading (`SearchSection.title`), used with `ordinal` to
-    /// find the Section again in the note's current text (`SearchSection.locate`).
+    /// Used with `ordinal` to relocate the heading in current text
+    /// (`HeadingSection.locate`).
     public let title: String?
     /// The whole Section as saved, heading, deeper headings and image Markdown included.
     public let markdown: String
