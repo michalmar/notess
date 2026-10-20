@@ -38,6 +38,10 @@ jobs:
         timeout-minutes: 5
         run: swift test --no-parallel
 
+      - name: Test app manager canvas
+        timeout-minutes: 1
+        run: node --test .github/extensions/notess-manager/manager.test.mjs
+
       - name: Build and verify disk image
         run: scripts/build-dmg.sh
 

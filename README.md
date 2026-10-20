@@ -22,7 +22,7 @@ To update, download and install the new preview the same way; there is no in-app
 
 ### How previews are published
 
-The [Main preview workflow](.github/workflows/preview-release.yml) runs on every push to `main` and can also be run manually on `main`. It uses the stable macOS 26 runner with Xcode 26.6 and runs the full unit test suite with `--no-parallel`, since AppKit tests share application state. It then builds a release-mode Apple Silicon app, verifies the signature, architecture, deployment target and disk image, and updates one rolling `main-preview` prerelease. The app still targets macOS 15+; CI checks the binary's target against `Info.plist`, but does not exercise the macOS 15 runtime. The DMG uses HFS+ for compatibility with older supported Macs.
+The [Main preview workflow](.github/workflows/preview-release.yml) runs on every push to `main` and can also be run manually on `main`. It uses the stable macOS 26 runner with Xcode 26.6 and runs the full Swift unit test suite with `--no-parallel`, since AppKit tests share application state, plus the app manager canvas's isolated backend checks. It then builds a release-mode Apple Silicon app, verifies the signature, architecture, deployment target and disk image, and updates one rolling `main-preview` prerelease. The app still targets macOS 15+; CI checks the binary's target against `Info.plist`, but does not exercise the macOS 15 runtime. The DMG uses HFS+ for compatibility with older supported Macs.
 
 Tests have a five-minute timeout and the job has a fifteen-minute timeout. Runs are serialized with up to 100 pending runs rather than replacing waiting pushes. The tag moves to the published commit. Failed tests or packaging leave the previous download available; runs for commits that are no longer at the tip of `main` skip publication.
 
@@ -48,6 +48,17 @@ Everything is a Swift package and runs from the command line; no Xcode project i
 Set `BUILD_ARCH=arm64` or `BUILD_ARCH=x86_64` to override the host architecture, and `BUILD_NUMBER=123.1` to override the built app's `CFBundleVersion` without editing the source plist. `OUTPUT_DIR` changes the output directory (default `build/`). `scripts/build-dmg.sh` always builds `arm64` in release mode and creates `Notess-<version>-<build>-arm64.dmg` with an Applications shortcut; it accepts the same output-directory, build-number and signing-identity overrides.
 
 `swift run Notess` also works for quick iteration, but the bundled app is what users run.
+
+### App manager canvas
+
+The project extension in [`.github/extensions/notess-manager/`](.github/extensions/notess-manager/) adds a **Notess app manager** canvas in Copilot. Ask Copilot to open it for this repository. It shows the installed version/build, installed source commit, and latest `origin/main` commit, with two buttons:
+
+- **Build & install** is enabled when the app is missing, its source is untracked, or `main` has changed. Quit Notess first. It builds a clean remote snapshot with the existing build script and replaces `~/Applications/Notess.app` only after verifying the new bundle's signature and source metadata. It does not switch branches, pull into your checkout, include local edits, or change your notes.
+- **Open app** launches `~/Applications/Notess.app`; it stays disabled until an app is installed and while a build is running.
+
+Main is checked automatically every minute while the pane is open. Local build numbers advance from the installed app's build number; update detection compares commit IDs, not GitHub Actions build numbers. The source revision is embedded before signing, so tracking survives canvas reloads and new sessions. Existing copies without that metadata need one canvas build to start tracking.
+
+Requires macOS and the Xcode toolchain above. Progress and failures appear in the pane. A per-installation lock under `$COPILOT_HOME/extensions/notess-manager/artifacts/` (default `~/.copilot/...`) prevents builds in different sessions from replacing the app concurrently. If a provider was forcibly killed, confirm no build is running before removing the lock path shown in the pane. Backend checks run with `node --test .github/extensions/notess-manager/manager.test.mjs`; they use temporary Git repositories and app bundles, not your installed app.
 
 ## Project structure
 

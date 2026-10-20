@@ -1,0 +1,269 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Notess app manager</title>
+  <script>
+    (() => {
+      const param = new URLSearchParams(window.location.search).get("scoutTheme");
+      const theme =
+        param || (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+      document.documentElement.setAttribute("data-theme", theme);
+    })();
+  </script>
+  <style>
+    :root {
+      color-scheme: light;
+      --cp-bg: #f7f4ef;
+      --cp-bg-elevated: #fcfbf8;
+      --cp-surface: #ffffff;
+      --cp-surface-soft: #f5f5f5;
+      --cp-border: #dedede;
+      --cp-border-strong: #919191;
+      --cp-text: #242424;
+      --cp-text-muted: #5c5c5c;
+      --cp-text-soft: #6f6f6f;
+      --cp-accent: #b11f4b;
+      --cp-accent-hover: #9a1a41;
+      --cp-accent-soft: rgba(177, 31, 75, 0.08);
+      --cp-accent-fg: #ffffff;
+      --cp-success: #16a34a;
+      --cp-danger: #dc2626;
+      --cp-warning: #f59e0b;
+      --cp-link: #0078d4;
+      --cp-shadow: 0 18px 48px rgba(0, 0, 0, 0.12);
+      --cp-overlay: rgba(255, 255, 255, 0.8);
+      --cp-panel: rgba(255, 255, 255, 0.86);
+      --cp-panel-strong: rgba(255, 255, 255, 0.96);
+      --cp-sheen: rgba(255, 255, 255, 0.55);
+      --cp-highlight: rgba(177, 31, 75, 0.12);
+    }
+    html[data-theme="dark"] {
+      color-scheme: dark;
+      --cp-bg: #3d3b3a;
+      --cp-bg-elevated: #343231;
+      --cp-surface: #292929;
+      --cp-surface-soft: #2e2e2e;
+      --cp-border: #474747;
+      --cp-border-strong: #5f5f5f;
+      --cp-text: #dedede;
+      --cp-text-muted: #919191;
+      --cp-text-soft: #b0b0b0;
+      --cp-accent: #fd8ea1;
+      --cp-accent-hover: #fb7b91;
+      --cp-accent-soft: rgba(253, 142, 161, 0.14);
+      --cp-accent-fg: #1a1a1a;
+      --cp-success: #4ade80;
+      --cp-danger: #f87171;
+      --cp-warning: #fbbf24;
+      --cp-link: #4da6ff;
+      --cp-shadow: 0 18px 48px rgba(0, 0, 0, 0.32);
+      --cp-overlay: rgba(41, 41, 41, 0.88);
+      --cp-panel: rgba(41, 41, 41, 0.72);
+      --cp-panel-strong: rgba(41, 41, 41, 0.96);
+      --cp-sheen: rgba(255, 255, 255, 0.04);
+      --cp-highlight: rgba(253, 142, 161, 0.12);
+    }
+    :root[data-color-mode] {
+      --cp-bg: var(--background-color-default);
+      --cp-text: var(--text-color-default);
+      --cp-text-muted: var(--text-color-muted);
+      --cp-border: var(--border-color-default);
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; background: var(--cp-bg); color: var(--cp-text);
+      font: 14px/1.5 "Segoe UI", Aptos, Calibri, -apple-system, BlinkMacSystemFont, sans-serif;
+    }
+    main { max-width: 720px; margin: 0 auto; padding: 32px 24px; }
+    header { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; margin-bottom: 28px; }
+    h1 { margin: 0; font-size: 24px; font-weight: 650; letter-spacing: -0.6px; }
+    header p, .muted { color: var(--cp-text-muted); }
+    header p { margin: 0; font-size: 12px; }
+    .app { padding: 24px; border: 1px solid var(--cp-border); border-radius: 16px; background: var(--cp-surface); }
+    .label { margin: 0 0 4px; color: var(--cp-text-muted); font-size: 12px; }
+    .build-line { display: flex; align-items: baseline; flex-wrap: wrap; gap: 12px; }
+    #build-number { font-size: 36px; font-weight: 600; letter-spacing: -1px; line-height: 1.2; overflow-wrap: anywhere; }
+    #version { color: var(--cp-text-muted); font-size: 13px; }
+    code, pre { font-family: Consolas, "Courier New", Courier, monospace; }
+    .path { margin: 16px 0 24px; color: var(--cp-text-muted); font-size: 12px; overflow-wrap: anywhere; }
+    .revisions { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 16px; padding: 16px 0; border-top: 1px solid var(--cp-border); border-bottom: 1px solid var(--cp-border); }
+    .revisions p { margin: 0 0 4px; color: var(--cp-text-muted); font-size: 12px; }
+    .revisions code { font-size: 14px; }
+    .arrow { color: var(--cp-text-muted); }
+    #status { margin: 20px 0 4px; font-weight: 600; }
+    #status[data-tone="success"] { color: var(--cp-success); }
+    #status[data-tone="error"], .error { color: var(--cp-danger); }
+    #status[data-tone="update"] { color: var(--cp-accent); }
+    #hint { margin: 0; color: var(--cp-text-muted); font-size: 13px; overflow-wrap: anywhere; }
+    .actions { display: grid; grid-template-columns: 1.5fr 1fr; gap: 12px; margin-top: 24px; }
+    button { min-height: 44px; padding: 10px 16px; border-radius: 10px; border: 1px solid var(--cp-border-strong); background: var(--cp-surface); color: var(--cp-text); font: inherit; font-weight: 600; cursor: pointer; }
+    #build { background: var(--cp-accent); border-color: var(--cp-accent); color: var(--cp-accent-fg); }
+    #build:hover:not(:disabled) { background: var(--cp-accent-hover); border-color: var(--cp-accent-hover); }
+    button:hover:not(:disabled) { border-color: var(--cp-text); }
+    button:focus-visible, summary:focus-visible { outline: 2px solid var(--cp-accent); outline-offset: 4px; }
+    button:disabled { opacity: 0.5; cursor: not-allowed; }
+    .footnote { margin: 16px 0 0; font-size: 12px; color: var(--cp-text-muted); }
+    .error { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13px; margin: 20px 0 0; }
+    [hidden] { display: none !important; }
+    details { margin-top: 24px; }
+    summary { cursor: pointer; color: var(--cp-text-muted); font-size: 13px; }
+    pre { max-height: 300px; overflow: auto; padding: 16px; border-radius: 10px; border: 1px solid var(--cp-border); background: var(--cp-surface-soft); color: var(--cp-text-soft); font-size: 11px; white-space: pre-wrap; overflow-wrap: anywhere; }
+    #checked { margin: 20px 0 0; color: var(--cp-text-muted); font-size: 11px; }
+    @media (max-width: 420px) {
+      main { padding: 20px 16px; }
+      header { align-items: flex-start; flex-direction: column; gap: 4px; margin-bottom: 20px; }
+      .app { padding: 20px 16px; }
+      .actions { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header><h1>Notess</h1><p>Local app manager</p></header>
+    <section class="app" aria-label="Installed app">
+      <p class="label">Installed build</p>
+      <div class="build-line"><span id="build-number">Checking...</span><span id="version"></span></div>
+      <p class="path"><code>~/Applications/Notess.app</code></p>
+      <div class="revisions" aria-label="Installed source compared with main">
+        <div><p>Installed source</p><code id="installed-revision">Checking...</code></div>
+        <svg class="arrow" width="24" height="16" viewBox="0 0 24 16" aria-hidden="true"><path d="M1 8h20m-6-6 6 6-6 6" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>
+        <div><p>Latest on main</p><code id="main-revision">Checking...</code></div>
+      </div>
+      <div aria-live="polite" role="status">
+        <p id="status">Reading the installed app and checking main...</p>
+        <p id="hint">Your checkout and local edits stay untouched.</p>
+      </div>
+      <div class="actions" aria-label="App actions">
+        <button id="build" disabled>Build &amp; install</button>
+        <button id="open" disabled>Open app</button>
+      </div>
+      <p class="footnote">Builds a clean origin/main snapshot. Replaces only the app above; quit Notess before installing. Your notes stay where they are.</p>
+      <p id="error" class="error" role="alert" hidden></p>
+    </section>
+    <details id="build-details" hidden>
+      <summary>Build output</summary>
+      <pre id="logs" tabindex="0" aria-label="Build output"></pre>
+    </details>
+    <p id="checked">Main is checked automatically every minute while this pane is open.</p>
+  </main>
+  <script>
+    const $ = (id) => document.getElementById(id);
+    let state;
+    let timer;
+    let loading = false;
+    let actionPending = false;
+    let actionError = "";
+    const syncTheme = () => {
+      const mode = document.documentElement.dataset.colorMode || document.body.dataset.colorMode;
+      const override = new URLSearchParams(location.search).get("scoutTheme");
+      if (["dark", "light"].includes(override || mode)) document.documentElement.dataset.theme = override || mode;
+    };
+    new MutationObserver(syncTheme).observe(document.documentElement, { attributes: true, attributeFilter: ["data-color-mode"] });
+    syncTheme();
+
+    function render(next) {
+      const wasBusy = state?.busy;
+      state = next;
+      $("build-number").textContent = state.installed ? `Build ${state.installed.build}` : "Not installed";
+      $("version").textContent = state.installed ? `Version ${state.installed.version}` : "";
+      $("installed-revision").textContent = state.installed ? state.installed.revision?.slice(0, 8) || "Untracked" : "Not installed";
+      $("main-revision").textContent = state.latestRevision?.slice(0, 8) || "Unavailable";
+      const phases = { fetching: "Preparing main...", building: "Building Notess...", installing: "Installing Notess..." };
+      let title = state.installed ? "Main is installed" : "Ready to build";
+      let hint = "Your installed app matches the latest main commit.";
+      let tone = "success";
+      if (state.updateAvailable) {
+        title = state.installed?.revision ? "A main update is available" : "Ready to build main";
+        hint = state.installed && !state.installed.revision
+          ? "This copy has no source revision. Build once to enable update tracking."
+          : "Build and install the latest source without changing your checkout.";
+        tone = "update";
+      }
+      if (state.running) hint = "Quit Notess to enable building and installing an update.";
+      if (state.locked && !state.busy) {
+        title = "Another build holds the installation lock";
+        hint = `Finish that build first. If it was interrupted and is no longer running, remove ${state.lockPath}.`;
+        tone = "error";
+      }
+      if (state.busy) {
+        title = phases[state.phase] || "Preparing the build...";
+        hint = "You can leave this pane open. The existing app stays in place until the new build is ready.";
+        tone = "update";
+      }
+      const error = [actionError, state.checkError, state.error].filter(Boolean).join("\n\n");
+      if (state.checkError) {
+        title = "Could not check main";
+        hint = "Check the error below. The manager will retry automatically.";
+        tone = "error";
+      }
+      else if (state.error && !state.busy) { title = "Build or installation needs attention"; tone = "error"; }
+      $("status").textContent = title;
+      $("status").dataset.tone = tone;
+      $("hint").textContent = hint;
+      $("error").hidden = !error;
+      $("error").textContent = error;
+      $("build").disabled = actionPending || state.busy || state.running || state.locked || !!state.checkError || !state.updateAvailable;
+      $("open").disabled = actionPending || state.busy || state.locked || !state.installed;
+      $("build").textContent = state.busy ? "Building & installing..." : state.installed?.revision && state.updateAvailable ? "Build & install update" : "Build & install";
+      document.querySelector(".app").setAttribute("aria-busy", String(state.busy || actionPending));
+      $("build-details").hidden = !state.logs;
+      if (state.busy && !wasBusy) $("build-details").open = true;
+      const log = $("logs");
+      const atEnd = log.scrollHeight - log.scrollTop - log.clientHeight < 32;
+      if (log.textContent !== state.logs) {
+        log.textContent = state.logs;
+        if (atEnd) log.scrollTop = log.scrollHeight;
+      }
+      $("checked").textContent = state.checkedAt
+        ? `Main checked ${new Date(state.checkedAt).toLocaleTimeString()}. Checks automatically every minute.`
+        : "Waiting for the first successful main check.";
+    }
+
+    async function request(path, method = "GET") {
+      const response = await fetch(new URL(`api/${path}`, location.href), method === "POST"
+        ? { method, headers: { "Content-Type": "application/json" }, body: "{}" } : {});
+      const value = await response.json();
+      if (!response.ok) throw new Error(value.error || `Request failed (${response.status}).`);
+      return value;
+    }
+
+    async function poll() {
+      if (loading) return;
+      clearTimeout(timer);
+      loading = true;
+      try {
+        render(await request("status"));
+      } catch (error) {
+        $("error").hidden = false;
+        $("error").textContent = `Could not reach the local manager: ${error.message}`;
+        $("build").disabled = $("open").disabled = true;
+      } finally {
+        loading = false;
+        timer = setTimeout(poll, state?.busy ? 1000 : 15_000);
+      }
+    }
+
+    async function act(path) {
+      actionError = "";
+      actionPending = true;
+      if (state) render(state);
+      try {
+        render(await request(path, "POST"));
+      } catch (error) {
+        actionError = error.message;
+      } finally {
+        actionPending = false;
+        if (state) render(state);
+        clearTimeout(timer);
+        timer = setTimeout(poll, 1000);
+      }
+    }
+    $("build").addEventListener("click", () => act("build"));
+    $("open").addEventListener("click", () => act("open"));
+    document.addEventListener("visibilitychange", () => { if (!document.hidden) poll(); });
+    poll();
+  </script>
+</body>
+</html>
