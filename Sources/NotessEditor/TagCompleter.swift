@@ -44,7 +44,11 @@ final class TagCompleter {
     /// Set after a failure has been reported, until a lookup succeeds or the
     /// vocabulary changes, so a broken index does not report every keystroke.
     private var hasReportedFailure = false
-    private lazy var list = TagSuggestionList()
+    private lazy var list: TagSuggestionList = {
+        let list = TagSuggestionList()
+        list.onChoose = { [weak self] index in _ = self?.choose(index) }
+        return list
+    }()
 
     init(textView: MarkdownTextView) {
         self.textView = textView
@@ -94,7 +98,6 @@ final class TagCompleter {
             dismiss()
             return
         }
-        pendingSelection = selectedIndex.map { suggestions[$0] } ?? pendingSelection
         generation += 1
         lookup?.cancel()
         startLookup(for: context, source: source)
@@ -116,7 +119,9 @@ final class TagCompleter {
             case .success(let tags):
                 hasReportedFailure = false
                 let tags = TagCompletion.candidates(matching: prefix, in: tags)
-                show(tags, highlighting: pendingSelection.flatMap(tags.firstIndex(of:)) ?? 0)
+                // A highlight still shown (a refresh) may have moved since the lookup began.
+                let highlighted = selectedIndex.map { suggestions[$0] } ?? pendingSelection
+                show(tags, highlighting: highlighted.flatMap(tags.firstIndex(of:)) ?? 0)
                 pendingSelection = nil
                 if suggestions.isEmpty { dismiss() }
             case .failure(let error):
@@ -155,14 +160,49 @@ final class TagCompleter {
         dismiss()
     }
 
+    // MARK: Choosing
+
+    /// Moves the highlight `offset` rows, stopping at the first and last
+    /// suggestion. While a lookup is pending over a list kept on screen, the
+    /// move is remembered and shown once the lookup answers. Returns false
+    /// when no list is shown, so the key keeps its usual meaning (moving the
+    /// caret).
+    func moveSelection(by offset: Int) -> Bool {
+        guard context != nil, !suggestions.isEmpty else { return false }
+        guard let selectedIndex else {
+            let current = pendingSelection.flatMap(suggestions.firstIndex(of:)) ?? 0
+            pendingSelection = suggestions[max(0, min(current + offset, suggestions.count - 1))]
+            return true
+        }
+        let index = max(0, min(selectedIndex + offset, suggestions.count - 1))
+        if index != selectedIndex {
+            self.selectedIndex = index
+            list.select(index)
+        }
+        return true
+    }
+
     // MARK: Accepting
 
     /// Replaces the Tag at the caret with the selected suggestion, as one
     /// undoable edit. Returns false, changing nothing, when no suggestion is
     /// actionable, so the key keeps its usual meaning.
     func acceptSelected() -> Bool {
-        guard let context, let selectedIndex else { return false }
-        let tag = suggestions[selectedIndex]
+        guard let selectedIndex else { return false }
+        return accept(suggestions[selectedIndex])
+    }
+
+    /// Accepts the suggestion in row `index` of the shown list, as clicked
+    /// or pressed through accessibility; it need not be the highlighted one.
+    private func choose(_ index: Int) -> Bool {
+        guard list.superview != nil, list.tags.indices.contains(index) else { return false }
+        return accept(list.tags[index])
+    }
+
+    /// Replaces the Tag at the caret with `tag`, provided the caret is still
+    /// in the Tag the suggestions were looked up for.
+    private func accept(_ tag: String) -> Bool {
+        guard let context else { return false }
         guard textView.tagCompletionContextAtCaret() == context else {
             dismiss()
             return false
@@ -210,17 +250,36 @@ final class TagCompleter {
         position(below: context.tokenRange, in: container)
     }
 
+    /// Puts the list under the Tag if it fits there, else above it; if it fits
+    /// on neither side, on the roomier side, shortened to whole rows, so it
+    /// never covers the Tag. It always stays inside the visible editor area.
     private func position(below range: NSRange, in container: NSScrollView) {
+        let gap: CGFloat = 2
         let anchor = textView.rect(forCharacterRange: NSRange(location: range.location, length: min(range.length, 1)))
         let visible = textView.visibleRect
-        let size = NSSize(width: min(TagSuggestionList.width, visible.width), height: min(list.preferredHeight, visible.height))
-        var frame = NSRect(origin: NSPoint(x: anchor.minX, y: anchor.maxY + 2), size: size)
-        if frame.maxY > visible.maxY {
-            frame.origin.y = anchor.minY - 2 - size.height
+        // The editor is flipped: "below" is towards larger y.
+        let spaceBelow = visible.maxY - anchor.maxY - gap
+        let spaceAbove = anchor.minY - gap - visible.minY
+        let preferred = list.preferredHeight
+        let opensBelow: Bool
+        let height: CGFloat
+        if preferred <= spaceBelow {
+            (opensBelow, height) = (true, preferred)
+        } else if preferred <= spaceAbove {
+            (opensBelow, height) = (false, preferred)
+        } else {
+            opensBelow = spaceBelow >= spaceAbove
+            height = list.height(fitting: max(spaceBelow, spaceAbove))
         }
+        let size = NSSize(width: min(TagSuggestionList.width, visible.width), height: min(height, visible.height))
+        var frame = NSRect(
+            origin: NSPoint(x: anchor.minX, y: opensBelow ? anchor.maxY + gap : anchor.minY - gap - size.height),
+            size: size
+        )
         frame.origin.x = max(visible.minX, min(frame.origin.x, visible.maxX - size.width))
         frame.origin.y = max(visible.minY, min(frame.origin.y, visible.maxY - size.height))
         list.frame = container.convert(frame, from: textView)
+        list.scrollSelectionToVisible()
     }
 
     /// The shown rows as the user reads them (`#tag`), for tests and accessibility checks.
@@ -232,5 +291,10 @@ final class TagCompleter {
     var selectedRow: String? {
         guard list.superview != nil, let index = list.selectedIndex else { return nil }
         return "#" + list.tags[index]
+    }
+
+    /// The shown rows not scrolled out of the list (`#tag`).
+    var rowsInView: [String] {
+        list.superview == nil ? [] : list.rowsInView.map { "#" + list.tags[$0] }
     }
 }
