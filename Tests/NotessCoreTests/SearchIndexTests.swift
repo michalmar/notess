@@ -690,6 +690,63 @@ final class SearchIndexTests {
         #expect(try await reopened.tagTimeline(for: "acme") == timeline)
     }
 
+    // MARK: Tag suggestions
+
+    @Test("the Tag vocabulary holds each normalised saved Tag of every note kind once")
+    func vaultTags() async throws {
+        try writeTimelineNotes()
+        let index = makeIndex()
+        try await index.synchronize()
+        #expect(try await index.vaultTags() == ["acme", "beta", "café", "intro", "zakaznik"])
+        #expect(try await index.journalTags() == ["acme", "beta", "café", "intro"])
+    }
+
+    @Test("Tag suggestions are prefix matches from all note kinds, without the typed name")
+    func tagSuggestions() async throws {
+        try writeTimelineNotes()
+        try vault.write("## Volné #Akce #acme-2026\n", to: "Projekty/Další.md")
+        let index = makeIndex()
+        try await index.synchronize()
+        #expect(try await index.tagSuggestions(matching: "a") == ["acme", "acme-2026", "akce"])
+        #expect(try await index.tagSuggestions(matching: "ACME") == ["acme-2026"])
+        #expect(try await index.tagSuggestions(matching: "za") == ["zakaznik"])
+        #expect(try await index.tagSuggestions(matching: "CA") == ["café"])
+        #expect(try await index.tagSuggestions(matching: "x").isEmpty)
+    }
+
+    @Test("Tag suggestions use saved content only and follow saves and deletions")
+    @MainActor
+    func tagSuggestionsFollowSavedContent() async throws {
+        let index = makeIndex()
+        try await index.synchronize()
+        let url = vault.vault.rootURL.appending(path: "Projekty/Nový.md")
+
+        let document = try NoteDocument.open(fileURL: url, newFileContent: "")
+        document.text = "## Nový #neulozeny\n"
+        #expect(try await index.tagSuggestions(matching: "neu").isEmpty)
+
+        try document.save()
+        try await index.update(fileAt: url)
+        #expect(try await index.tagSuggestions(matching: "neu") == ["neulozeny"])
+
+        try FileManager.default.removeItem(at: url)
+        try await index.update(relativePaths: ["Projekty/Nový.md"])
+        #expect(try await index.tagSuggestions(matching: "neu").isEmpty)
+    }
+
+    @Test("Tag suggestions come from the index's own Vault only")
+    func tagSuggestionsPerVault() async throws {
+        let other = try TemporaryVault()
+        try other.write("## Jinde #cizi\n", to: "Poznámka.md")
+        let otherDatabase = databaseURL.deletingLastPathComponent().appendingPathComponent("other.sqlite")
+        let otherIndex = SearchIndex(vault: other.vault, databaseURL: otherDatabase)
+        try await otherIndex.synchronize()
+        let index = makeIndex()
+        try await index.synchronize()
+        #expect(try await otherIndex.tagSuggestions(matching: "c") == ["cizi"])
+        #expect(try await index.tagSuggestions(matching: "c").isEmpty)
+    }
+
     @Test("the default index location is a cache outside the Vault")
     func location() {
         let url = SearchIndex.defaultDatabaseURL(for: vault.vault)

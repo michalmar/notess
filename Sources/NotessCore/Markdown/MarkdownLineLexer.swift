@@ -41,10 +41,15 @@ struct MarkdownLineLexer {
     private(set) var tableRow: MarkdownTable.Row?
     /// The column alignments when the line is a table's delimiter row.
     private(set) var tableAlignments: [MarkdownTable.Alignment]?
+    /// Also emits `.tag` for names without a letter (`#2`, `#-`), so Tag
+    /// completion can work on a prefix that is not yet a Tag. Never used for
+    /// highlighting or Tag recognition.
+    private let recognizesTagPrefixes: Bool
 
-    init(line: [UInt16], offset: Int) {
+    init(line: [UInt16], offset: Int, recognizesTagPrefixes: Bool = false) {
         self.c = line
         self.offset = offset
+        self.recognizesTagPrefixes = recognizesTagPrefixes
     }
 
     // MARK: Block structure
@@ -616,7 +621,7 @@ struct MarkdownLineLexer {
     }
 
     private mutating func finishTag(_ i: Int, _ j: Int, _ hasLetter: Bool) -> Int? {
-        guard hasLetter else { return nil }
+        guard hasLetter || (recognizesTagPrefixes && j > i + 1) else { return nil }
         add(.tag, i, j)
         return j
     }

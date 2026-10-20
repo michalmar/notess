@@ -49,6 +49,18 @@ extension AppModel {
         Task { await browser.select(tag) }
     }
 
+    /// Saved Tags of the current Vault for Tag completion in the editor; nil
+    /// until the Vault's index is open. Each index is its own vocabulary, so
+    /// switching Vaults closes open completion.
+    var tagSuggestionSource: TagSuggestionSource? {
+        // `searchIndex` is not observed; it is replaced together with the
+        // observed `vault`, so reading `vault` keeps the editor's source current.
+        guard vault != nil, let index = searchIndex else { return nil }
+        return TagSuggestionSource(id: ObjectIdentifier(index)) { prefix in
+            try await index.tagSuggestions(matching: prefix)
+        }
+    }
+
     /// Opens the Vault's index (a cache outside the Vault) and catches up with
     /// changes made while the app was closed, in the background.
     func startSearchIndex(for vault: Vault) {

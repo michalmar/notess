@@ -268,6 +268,22 @@ public actor SearchIndex {
             .sorted { $0.localizedStandardCompare($1) == .orderedAscending }
     }
 
+    // MARK: - Tag suggestions
+
+    /// The Tag vocabulary: every Tag of the indexed (saved) notes of all kinds
+    /// in this Vault once, as normalised names in alphabetical order.
+    public func vaultTags() throws -> [String] {
+        let db = try openDatabase()
+        let rows = try db.query("SELECT DISTINCT t.tag FROM section_tags t JOIN sections s ON s.id = t.section_id")
+        return rows.compactMap { $0[0].text }.sorted(by: TagCompletion.sortsBefore)
+    }
+
+    /// The Tag completion suggestions for `prefix`: vocabulary names starting
+    /// with it (`TagCompletion.candidates(matching:in:)`).
+    public func tagSuggestions(matching prefix: String) throws -> [String] {
+        TagCompletion.candidates(matching: prefix, in: try vaultTags())
+    }
+
     /// The Tag Timeline of `tag` (with or without `#`, compared like any Tag):
     /// every indexed (saved) Daily Entry Section carrying it, complete, grouped
     /// by Daily Entry date with the newest day first and each day's Sections
