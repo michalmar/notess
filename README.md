@@ -45,6 +45,8 @@ Everything is a Swift package and runs from the command line; no Xcode project i
 
 `scripts/build-app.sh [debug|release]` wraps the `Notess` executable into an app bundle using [`Support/Info.plist`](Support/Info.plist) and signs it with [`Support/Notess.entitlements`](Support/Notess.entitlements), which disables App Sandbox (ADR 0004). It signs ad-hoc by default; set `CODESIGN_IDENTITY="Developer ID Application: …"` to sign for distribution (hardened runtime is enabled automatically).
 
+The bundle includes [`Support/AppIcon.icns`](Support/AppIcon.icns) for Finder, Dock, the app switcher and the standard About panel. The paper-and-pencil artwork is drawn by [`scripts/generate-app-icon.swift`](scripts/generate-app-icon.swift); [`Support/AppIcon.png`](Support/AppIcon.png) is its 1024-pixel preview. After changing the artwork, run `swift scripts/generate-app-icon.swift` on macOS to regenerate both assets using AppKit and Apple's `iconutil`, then commit them together with the source. Normal app and DMG builds copy the committed ICNS without regenerating it.
+
 Set `BUILD_ARCH=arm64` or `BUILD_ARCH=x86_64` to override the host architecture, and `BUILD_NUMBER=123.1` to override the built app's `CFBundleVersion` without editing the source plist. `OUTPUT_DIR` changes the output directory (default `build/`). `scripts/build-dmg.sh` always builds `arm64` in release mode and creates `Notess-<version>-<build>-arm64.dmg` with an Applications shortcut; it accepts the same output-directory, build-number and signing-identity overrides.
 
 `swift run Notess` also works for quick iteration, but the bundled app is what users run.
@@ -76,8 +78,8 @@ Tests/
   NotessCoreTests/    Unit tests for the domain logic
   NotessEditorTests/  Tests for the editor view (TextKit 2, formatting, tasks)
   NotessTests/        Tests for app-level orchestration
-Support/          Info.plist and entitlements for the .app bundle
-scripts/          App bundle and preview DMG packaging
+Support/          Info.plist, entitlements and generated app icon assets for the .app bundle
+scripts/          App bundle and preview DMG packaging, native app icon generator
 ```
 
 Dependencies point inwards: `Notess` → `NotessEditor` → `NotessCore`. `NotessCore` must not import AppKit or SwiftUI so it stays fast to test; Markdown parsing (formatting, Tags, wiki-links) lives there so search and backlinks can reuse it, while `NotessEditor` only turns tokens into fonts and colours.
