@@ -63,6 +63,7 @@ struct MarkdownTextViewTagCompletionTests {
 
     private var rows: [String] { textView.visibleTagSuggestions }
     private var selected: String? { textView.selectedTagSuggestion }
+    private var rowsInView: [String] { textView.tagSuggestionsInView }
 
     // MARK: Type, filter, Tab, undo
 
@@ -188,6 +189,124 @@ struct MarkdownTextViewTagCompletionTests {
             await settle()
             #expect(rows.isEmpty, "\(text)")
         }
+    }
+
+    // MARK: Choosing a suggestion
+
+    @Test("Up and Down move the highlight without wrapping or moving the caret; Tab accepts the highlighted Tag")
+    func arrows() async {
+        load("Dnes ‸")
+        type("#a")
+        await settle()
+        #expect(rows == ["#acme", "#acme-2026", "#akce"])
+        #expect(selected == "#acme")
+
+        command(#selector(NSResponder.moveUp(_:)))
+        #expect(selected == "#acme")
+        #expect(marked == "Dnes #a‸")
+
+        command(#selector(NSResponder.moveDown(_:)))
+        #expect(selected == "#acme-2026")
+        command(#selector(NSResponder.moveDown(_:)))
+        #expect(selected == "#akce")
+        command(#selector(NSResponder.moveDown(_:)))
+        #expect(selected == "#akce")
+        #expect(marked == "Dnes #a‸")
+        command(#selector(NSResponder.moveUp(_:)))
+        #expect(selected == "#acme-2026")
+        #expect(rows == ["#acme", "#acme-2026", "#akce"])
+        await settle()
+        #expect(vault.requests == ["a"])
+
+        command(#selector(NSResponder.insertTab(_:)))
+        #expect(marked == "Dnes #acme-2026‸")
+        #expect(rows.isEmpty)
+        undoManager.undo()
+        #expect(marked == "Dnes #a‸")
+        undoManager.redo()
+        #expect(textView.string == "Dnes #acme-2026")
+    }
+
+    @Test("without a list Up and Down move the caret as usual")
+    func arrowsWithoutList() async {
+        load("první\n#zz‸")
+        command(#selector(NSResponder.moveUp(_:)))
+        #expect(textView.selectedRange().location <= 5)
+
+        vault.isSuspended = true
+        load("první\n‸")
+        type("#a")
+        #expect(selected == nil)
+        command(#selector(NSResponder.moveUp(_:)))
+        #expect(textView.selectedRange().location <= 5)
+        #expect(rows.isEmpty)
+        vault.resumeAll()
+        await settle()
+        #expect(rows.isEmpty)
+    }
+
+    @Test("a highlighted Tag that still matches stays highlighted while the prefix changes; otherwise the first is")
+    func retainedSelection() async {
+        load("‸")
+        type("#a")
+        await settle()
+        command(#selector(NSResponder.moveDown(_:)))
+        #expect(selected == "#acme-2026")
+
+        type("c")
+        await settle()
+        #expect(rows == ["#acme", "#acme-2026"])
+        #expect(selected == "#acme-2026")
+
+        command(#selector(NSTextView.deleteBackward(_:)))
+        await settle()
+        #expect(rows == ["#acme", "#acme-2026", "#akce"])
+        #expect(selected == "#acme-2026")
+
+        command(#selector(NSResponder.moveDown(_:)))
+        #expect(selected == "#akce")
+        type("c")
+        await settle()
+        #expect(rows == ["#acme", "#acme-2026"])
+        #expect(selected == "#acme")
+
+        command(#selector(NSResponder.moveDown(_:)))
+        type("me")
+        await settle()
+        #expect(rows == ["#acme-2026"])
+        #expect(selected == "#acme-2026")
+        command(#selector(NSResponder.insertTab(_:)))
+        #expect(marked == "#acme-2026‸")
+    }
+
+    @Test("more than eight matches: eight rows are in view, the rest scroll, and the highlight stays in view")
+    func manyMatches() async {
+        let tags = (1...12).map { String(format: "téma%02d", $0) }
+        vault.tags = tags.reversed()
+        load("‸")
+        type("#té")
+        await settle()
+        #expect(rows == tags.map { "#" + $0 })
+        #expect(rowsInView == Array(rows.prefix(8)))
+        #expect(selected == "#téma01")
+
+        for _ in 0..<10 { command(#selector(NSResponder.moveDown(_:))) }
+        #expect(selected == "#téma11")
+        #expect(rowsInView.count == 8)
+        #expect(rowsInView.contains("#téma11"))
+        #expect(!rowsInView.contains("#téma01"))
+
+        for _ in 0..<5 { command(#selector(NSResponder.moveDown(_:))) }
+        #expect(selected == "#téma12")
+        #expect(rowsInView.last == "#téma12")
+
+        for _ in 0..<11 { command(#selector(NSResponder.moveUp(_:))) }
+        #expect(selected == "#téma01")
+        #expect(rowsInView.first == "#téma01")
+
+        for _ in 0..<9 { command(#selector(NSResponder.moveDown(_:))) }
+        command(#selector(NSResponder.insertTab(_:)))
+        #expect(marked == "#téma10‸")
     }
 
     // MARK: Dismissal

@@ -155,14 +155,35 @@ final class TagCompleter {
         dismiss()
     }
 
+    // MARK: Choosing
+
+    /// Moves the highlight `offset` rows, stopping at the first and last
+    /// suggestion. Returns false when no suggestion is actionable, so the key
+    /// keeps its usual meaning (moving the caret).
+    func moveSelection(by offset: Int) -> Bool {
+        guard context != nil, let selectedIndex else { return false }
+        let index = max(0, min(selectedIndex + offset, suggestions.count - 1))
+        if index != selectedIndex {
+            self.selectedIndex = index
+            list.select(index)
+        }
+        return true
+    }
+
     // MARK: Accepting
 
     /// Replaces the Tag at the caret with the selected suggestion, as one
     /// undoable edit. Returns false, changing nothing, when no suggestion is
     /// actionable, so the key keeps its usual meaning.
     func acceptSelected() -> Bool {
-        guard let context, let selectedIndex else { return false }
-        let tag = suggestions[selectedIndex]
+        guard let selectedIndex else { return false }
+        return accept(suggestions[selectedIndex])
+    }
+
+    /// Replaces the Tag at the caret with `tag`, provided the caret is still
+    /// in the Tag the suggestions were looked up for.
+    private func accept(_ tag: String) -> Bool {
+        guard let context else { return false }
         guard textView.tagCompletionContextAtCaret() == context else {
             dismiss()
             return false
@@ -232,5 +253,10 @@ final class TagCompleter {
     var selectedRow: String? {
         guard list.superview != nil, let index = list.selectedIndex else { return nil }
         return "#" + list.tags[index]
+    }
+
+    /// The shown rows not scrolled out of the list (`#tag`).
+    var rowsInView: [String] {
+        list.superview == nil ? [] : list.rowsInView.map { "#" + list.tags[$0] }
     }
 }

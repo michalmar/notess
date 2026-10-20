@@ -79,12 +79,38 @@ final class TagSuggestionList: NSView {
         self.tags = tags
         self.selectedIndex = selectedIndex.flatMap { tags.indices.contains($0) ? $0 : nil }
         tableView.reloadData()
-        if let index = self.selectedIndex {
+        applySelection()
+    }
+
+    /// Highlights row `index`, scrolling it into view.
+    func select(_ index: Int) {
+        guard tags.indices.contains(index) else { return }
+        selectedIndex = index
+        applySelection()
+    }
+
+    private func applySelection() {
+        if let index = selectedIndex {
             tableView.selectRowIndexes([index], byExtendingSelection: false)
             tableView.scrollRowToVisible(index)
         } else {
             tableView.deselectAll(nil)
         }
+    }
+
+    /// Keeps the highlighted row in view after the list is resized.
+    func scrollSelectionToVisible() {
+        if let selectedIndex { tableView.scrollRowToVisible(selectedIndex) }
+    }
+
+    /// Indexes of the rows wholly in view, i.e. not scrolled away.
+    var rowsInView: [Int] {
+        layoutSubtreeIfNeeded()
+        let insets = scrollView.contentInsets
+        var visible = scrollView.contentView.bounds
+        visible.origin.y += insets.top
+        visible.size.height -= insets.top + insets.bottom
+        return tags.indices.filter { visible.insetBy(dx: 0, dy: -0.5).contains(tableView.rect(ofRow: $0)) }
     }
 
     private final class TableView: NSTableView {

@@ -67,6 +67,9 @@ public final class MarkdownTextView: NSTextView {
     /// The highlighted suggestion (`#tag`), the one Tab accepts.
     var selectedTagSuggestion: String? { tagCompleter.selectedRow }
 
+    /// The suggestions in view in the list, i.e. not scrolled away (`#tag`).
+    var tagSuggestionsInView: [String] { tagCompleter.rowsInView }
+
     public override var isEditable: Bool {
         didSet {
             if !isEditable { tagCompleter.dismiss() }
@@ -77,6 +80,17 @@ public final class MarkdownTextView: NSTextView {
         let resigned = super.resignFirstResponder()
         if resigned { tagCompleter.dismiss() }
         return resigned
+    }
+
+    /// Up and Down move the highlight in open Tag suggestions instead of the caret.
+    public override func moveUp(_ sender: Any?) {
+        if tagCompleter.moveSelection(by: -1) { return }
+        super.moveUp(sender)
+    }
+
+    public override func moveDown(_ sender: Any?) {
+        if tagCompleter.moveSelection(by: 1) { return }
+        super.moveDown(sender)
     }
 
     /// Escape closes open Tag suggestions without editing.
