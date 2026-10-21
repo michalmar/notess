@@ -516,6 +516,13 @@ struct MarkdownTextViewTagCompletionTests {
         load(String(repeating: "řádek\n", count: 40) + "‸")
         type("#a")
         await settle()
+        // Scrolling to the caret repositions the list; under load that can
+        // take more than a few main-queue turns.
+        let deadline = ContinuousClock.now + .seconds(2)
+        while let (list, tag, _) = try? placement(of: "#a"), abs(list.minY - (tag.maxY + 2)) >= 1,
+              ContinuousClock.now < deadline {
+            await settle()
+        }
         let (list, tag, visible) = try placement(of: "#a")
         #expect(visible.contains(tag))
         #expect(abs(list.minY - (tag.maxY + 2)) < 1)

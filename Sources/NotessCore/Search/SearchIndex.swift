@@ -21,7 +21,8 @@ public actor SearchIndex {
     /// - 2: Tags in headings of any level mark their Section.
     /// - 3: Sections keep their complete Markdown for the Tag Timeline.
     /// - 4: Tag Timeline spans follow heading hierarchy at every level.
-    static let schemaVersion = 4
+    /// - 5: FTS5 prefix indexes for 1–3 characters keep short queries fast.
+    static let schemaVersion = 5
     private static let batchSize = 50
 
     public let vault: Vault
@@ -89,14 +90,23 @@ public actor SearchIndex {
     /// Notes under `scopes` are read again if their stamp differs from the
     /// cache or they lie under `rereading` (explicit invalidation).
     private func synchronize(scopes: Set<String>, rereading: Set<String>) async throws {
+        // Scanning 10,000 files takes about half a second; doing it off the
+        // actor keeps searches typed meanwhile from waiting for it (#83).
+        let vault = vault
+        let onDisk = await Task.detached {
+            var files: [String: NoteFile] = [:]
+            for scope in scopes {
+                for file in Self.scanNotes(in: vault, under: scope) { files[file.relativePath] = file }
+            }
+            return files
+        }.value
+        try Task.checkCancellation()
         let db = try openDatabase()
-        var onDisk: [String: NoteFile] = [:]
-        for scope in scopes {
-            for file in scanNotes(under: scope) { onDisk[file.relativePath] = file }
-        }
         let indexed = try indexedStamps(in: db).filter { path, _ in Self.isCovered(path, by: scopes) }
 
-        let removed = indexed.keys.filter { onDisk[$0] == nil }
+        // A note saved and indexed while the scan ran is missing from it, so
+        // only notes that are gone now count as removed.
+        let removed = indexed.keys.filter { onDisk[$0] == nil && Self.scanNotes(in: vault, under: $0).isEmpty }
         let changed = onDisk.values
             .filter {
                 indexed[$0.relativePath] != $0.stamp || unreadable.contains($0.relativePath)
@@ -228,9 +238,18 @@ public actor SearchIndex {
     /// grouping by file, so many matching Sections in one note never hide
     /// other notes. Files are ranked by their best Section; Tag-only queries
     /// list Daily Entries newest first and other notes by path.
+    ///
+    /// Throws `CancellationError` when the calling task is cancelled, also
+    /// while a query runs, so a superseded search does not hold up the next one.
     public func search(_ query: SearchQuery, scope: SearchScope = .all, limit: Int = 50) throws -> [SearchResultGroup] {
         guard !query.isEmpty else { return [] }
         let db = try openDatabase()
+        return try db.cancellable(when: { Task.isCancelled }) {
+            try search(query, scope: scope, limit: limit, in: db)
+        }
+    }
+
+    private func search(_ query: SearchQuery, scope: SearchScope, limit: Int, in db: SQLiteDatabase) throws -> [SearchResultGroup] {
         let tagFilter = query.tags.map { _ in " AND s.id IN (SELECT section_id FROM section_tags WHERE tag = ?)" }.joined()
         let tagValues = query.tags.map { SQLiteDatabase.Value.text($0) }
 
@@ -253,12 +272,14 @@ public actor SearchIndex {
                     """, [.text(expression), kindValue] + tagValues + [.int(Int64(limit))]).compactMap(MatchingFile.init)
                 guard !files.isEmpty else { return nil }
                 let ids = files.map(\.firstSectionID)
+                // The unary + keeps FTS5 from re-running the MATCH once per rowid in the list,
+                // which costs ~90 ms per kind for two-word queries on 10,000 files (#83).
                 let rows = try db.query("""
                     SELECT s.id, s.title,
                            highlight(sections_fts, 0, char(2), char(3)),
                            snippet(sections_fts, 1, char(2), char(3), '…', 16)
                     FROM sections_fts JOIN sections s ON s.id = sections_fts.rowid
-                    WHERE sections_fts MATCH ? AND sections_fts.rowid IN (\(ids.map { _ in "?" }.joined(separator: ",")))
+                    WHERE sections_fts MATCH ? AND +sections_fts.rowid IN (\(ids.map { _ in "?" }.joined(separator: ",")))
                     """, [.text(expression)] + ids.map { .int($0) })
                 previews = Dictionary(uniqueKeysWithValues: rows.map { row in
                     (row[0].int.map(Int64.init) ?? 0, (
@@ -420,7 +441,7 @@ public actor SearchIndex {
             CREATE INDEX IF NOT EXISTS timeline_by_tag ON timeline_sections (tag);
             CREATE INDEX IF NOT EXISTS timeline_by_path ON timeline_sections (path);
             CREATE VIRTUAL TABLE IF NOT EXISTS sections_fts USING fts5 (
-                title, body, tokenize = 'unicode61 remove_diacritics 2');
+                title, body, tokenize = 'unicode61 remove_diacritics 2', prefix = '1 2 3');
             PRAGMA user_version = \(schemaVersion);
             """)
         return db
@@ -466,7 +487,7 @@ public actor SearchIndex {
 
     /// Markdown notes at or below a Vault-relative path, like `Vault.quickOpenFiles()`:
     /// hidden items and symbolic links are skipped.
-    private func scanNotes(under scope: String) -> [NoteFile] {
+    private static func scanNotes(in vault: Vault, under scope: String) -> [NoteFile] {
         let fm = FileManager.default
         let root = vault.rootURL.resolvingSymlinksInPath().path(percentEncoded: false)
         let rootPrefix = root.hasSuffix("/") ? root : root + "/"

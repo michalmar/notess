@@ -96,6 +96,33 @@ final class SQLiteDatabase {
         }
     }
 
+    /// Runs `body`, stopping it with `CancellationError` once `isCancelled`
+    /// returns true: before it starts, or while one of its statements runs
+    /// (SQLite polls `isCancelled` every few thousand instructions). Only for
+    /// read-only work: an interrupted write would not be rolled back here.
+    func cancellable<T>(when isCancelled: @escaping () -> Bool, _ body: () throws -> T) throws -> T {
+        if isCancelled() { throw CancellationError() }
+        let poll = CancellationPoll(isCancelled)
+        sqlite3_progress_handler(handle, 4_000, { context in
+            guard let context else { return 0 }
+            return Unmanaged<CancellationPoll>.fromOpaque(context).takeUnretainedValue().isCancelled() ? 1 : 0
+        }, Unmanaged.passUnretained(poll).toOpaque())
+        defer {
+            sqlite3_progress_handler(handle, 0, nil, nil)
+            withExtendedLifetime(poll) {}
+        }
+        do {
+            return try body()
+        } catch let error as Error where error.code == SQLITE_INTERRUPT {
+            throw CancellationError()
+        }
+    }
+
+    private final class CancellationPoll {
+        let isCancelled: () -> Bool
+        init(_ isCancelled: @escaping () -> Bool) { self.isCancelled = isCancelled }
+    }
+
     private func lastError() -> Error {
         Error(code: sqlite3_errcode(handle), message: String(cString: sqlite3_errmsg(handle)))
     }
