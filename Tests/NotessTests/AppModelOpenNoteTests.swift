@@ -1,4 +1,5 @@
 import Foundation
+import SwiftUI
 import Testing
 @testable import Notess
 @testable import NotessCore
@@ -172,5 +173,33 @@ private final class AppModelFixture {
             ),
             now: { Date(timeIntervalSince1970: 1_760_765_000) }
         )
+    }
+}
+
+@MainActor
+@Suite("Search commands")
+struct SearchCommandTests {
+    @Test("Command+F and Command+Shift+F are different shortcuts")
+    func distinctShortcuts() {
+        #expect(SearchCommand.findInNote.modifiers == .command)
+        #expect(SearchCommand.globalSearch.modifiers == [.command, .shift])
+        #expect(SearchCommand.findInNote.key == SearchCommand.globalSearch.key)
+        #expect(SearchCommand.findInNote.modifiers != SearchCommand.globalSearch.modifiers)
+    }
+
+    @Test("global search opens the search window; find in note does not")
+    func routing() throws {
+        let fixture = try AppModelFixture()
+        let model = fixture.makeModel()
+        #expect(model.isSearchPresented == false)
+
+        var editorFindShown = 0
+        SearchCommand.findInNote.perform(on: model) { editorFindShown += 1 }
+        #expect(model.isSearchPresented == false)
+        #expect(editorFindShown == 1)
+
+        SearchCommand.globalSearch.perform(on: model) { editorFindShown += 1 }
+        #expect(model.isSearchPresented)
+        #expect(editorFindShown == 1)
     }
 }
