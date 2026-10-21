@@ -213,6 +213,7 @@ public final class MarkdownTextView: NSTextView {
 
     /// Called when the user clicks a `[[wiki-link]]`; the click then does not move the caret.
     public var onWikiLinkClick: ((WikiLink) -> Void)?
+    public var onOpenWebLink: ((URL) -> Void)?
 
     /// Fonts and colours; setting a different style restyles the whole note.
     public var markdownStyle: MarkdownEditorStyle {
@@ -395,7 +396,20 @@ public final class MarkdownTextView: NSTextView {
             onWikiLinkClick?(link)
             return
         }
+        if openWebLink(with: event, at: convert(event.locationInWindow, from: nil)) { return }
         super.mouseDown(with: event)
+    }
+
+    /// Handles the editor's Command+click web-link gesture; ordinary clicks
+    /// return false so `NSTextView` can place the caret.
+    func openWebLink(with event: NSEvent, at point: NSPoint) -> Bool {
+        let modifiers = event.modifierFlags.intersection([.shift, .command, .option, .control])
+        guard event.clickCount == 1, modifiers == .command,
+              let onOpenWebLink, let url = webLink(atPoint: point) else {
+            return false
+        }
+        onOpenWebLink(url)
+        return true
     }
 
     /// The wiki-link whose text lies under `point` (view coordinates), if any.
@@ -412,6 +426,91 @@ public final class MarkdownTextView: NSTextView {
             return link
         }
         return nil
+    }
+
+    /// The HTTP(S) destination whose visible link text lies under `point`.
+    func webLink(atPoint point: NSPoint) -> URL? {
+        guard textStorage != nil else { return nil }
+        let text = string as NSString
+        let index = characterIndexForInsertion(at: point)
+        let candidates = [index, index - 1].filter { $0 >= 0 && $0 < text.length }
+        guard !candidates.isEmpty else { return nil }
+        let tokens = MarkdownSyntax.tokens(in: string)
+
+        for candidate in candidates {
+            guard boxRect(NSRange(location: candidate, length: 1))
+                .insetBy(dx: -2, dy: -2).contains(point) else { continue }
+
+            if let destination = tokens.first(where: {
+                $0.kind == .linkDestination && NSLocationInRange(candidate, $0.range)
+            }), !Self.isImageLink(destination.range, tokens: tokens),
+               let url = Self.httpURL(Self.linkDestination(in: text, range: destination.range)) {
+                return url
+            }
+
+            guard let link = tokens.first(where: {
+                $0.kind == .link && NSLocationInRange(candidate, $0.range)
+            }), !Self.isImageLink(link.range, tokens: tokens) else { continue }
+
+            let source: String
+            if let destination = tokens.first(where: { token in
+                guard token.kind == .linkDestination, token.range.location >= link.range.upperBound else {
+                    return false
+                }
+                let gap = NSRange(
+                    location: link.range.upperBound,
+                    length: token.range.location - link.range.upperBound
+                )
+                return text.substring(with: gap) == "]("
+            }) {
+                source = Self.linkDestination(in: text, range: destination.range)
+            } else {
+                source = text.substring(with: link.range)
+            }
+            if let url = Self.httpURL(source) { return url }
+        }
+        return nil
+    }
+
+    private static func isImageLink(_ range: NSRange, tokens: [MarkdownToken]) -> Bool {
+        tokens.contains { token in
+            guard case .image = token.kind else { return false }
+            return NSLocationInRange(range.location, token.range)
+                && range.upperBound <= token.range.upperBound
+        }
+    }
+
+    private static func httpURL(_ source: String) -> URL? {
+        guard let url = URL(string: source),
+              let scheme = url.scheme?.lowercased(),
+              scheme == "http" || scheme == "https" else { return nil }
+        return url
+    }
+
+    private static func linkDestination(in text: NSString, range: NSRange) -> String {
+        let value = text.substring(with: range) as NSString
+        var start = 0
+        while start < value.length, isWhitespace(value.character(at: start)) {
+            start += 1
+        }
+        guard start < value.length else { return "" }
+        if value.character(at: start) == 0x3C {
+            let closing = value.range(of: ">", options: [], range: NSRange(location: start + 1, length: value.length - start - 1))
+            guard closing.location != NSNotFound else { return "" }
+            return value.substring(with: NSRange(location: start + 1, length: closing.location - start - 1))
+        }
+        var end = start
+        while end < value.length {
+            let unit = value.character(at: end)
+            if isWhitespace(unit) { break }
+            if unit == 0x5C, end + 1 < value.length { end += 2 } else { end += 1 }
+        }
+        return value.substring(with: NSRange(location: start, length: end - start))
+    }
+
+    private static func isWhitespace(_ unit: unichar) -> Bool {
+        guard let scalar = UnicodeScalar(unit) else { return false }
+        return CharacterSet.whitespacesAndNewlines.contains(scalar)
     }
 
     public override func setFrameSize(_ newSize: NSSize) {

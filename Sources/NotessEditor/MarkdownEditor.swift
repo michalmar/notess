@@ -81,6 +81,7 @@ public struct MarkdownEditor: NSViewRepresentable {
     private let initialText: () -> String
     private let reveal: EditorReveal?
     private let onOpenWikiLink: ((WikiLink) -> Void)?
+    private let onOpenWebLink: ((URL) -> Void)?
     private let onTextChange: (String) -> Void
     private let noteURL: URL?
     private let onPasteImage: ((Data, String) -> String?)?
@@ -107,6 +108,7 @@ public struct MarkdownEditor: NSViewRepresentable {
         colors: MarkdownEditorStyle.Colors = .init(),
         reveal: EditorReveal? = nil,
         onOpenWikiLink: ((WikiLink) -> Void)? = nil,
+        onOpenWebLink: ((URL) -> Void)? = nil,
         isEditable: Bool = true,
         isInteractionEnabled: Bool = true,
         noteURL: URL? = nil,
@@ -127,6 +129,7 @@ public struct MarkdownEditor: NSViewRepresentable {
         self.initialText = initialText
         self.reveal = reveal
         self.onOpenWikiLink = onOpenWikiLink
+        self.onOpenWebLink = onOpenWebLink
         self.noteURL = noteURL
         self.onPasteImage = onPasteImage
         self.onPasteImageFailure = onPasteImageFailure
@@ -151,6 +154,7 @@ public struct MarkdownEditor: NSViewRepresentable {
         configureTagCompletion(in: textView)
         context.coordinator.onTextChange = onTextChange
         textView.onWikiLinkClick = onOpenWikiLink
+        textView.onOpenWebLink = onOpenWebLink
         textView.onMagnify = onMagnify
         configureInteraction(in: textView, coordinator: context.coordinator)
         load(into: textView, coordinator: context.coordinator)
@@ -162,6 +166,7 @@ public struct MarkdownEditor: NSViewRepresentable {
         context.coordinator.onTextChange = onTextChange
         guard let textView = scrollView.documentView as? MarkdownTextView else { return }
         textView.onWikiLinkClick = onOpenWikiLink
+        textView.onOpenWebLink = onOpenWebLink
         textView.onMagnify = onMagnify
         configureImages(in: textView)
         configureTagCompletion(in: textView)

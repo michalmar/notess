@@ -9,6 +9,7 @@ struct NoteEditorScreen: View {
     var reveal: EditorReveal?
     var backlinks: [Backlink] = []
     var onOpenWikiLink: (WikiLink) -> Void = { _ in }
+    var onOpenWebLink: (URL) -> Void = { _ = NSWorkspace.shared.open($0) }
     var onOpenBacklink: (Backlink) -> Void = { _ in }
     var onPasteImageFailure: (Error) -> Void = { _ in }
     var onOpenImagePreview: (ImagePreviewContent) -> Void = { _ in }
@@ -32,6 +33,7 @@ struct NoteEditorScreen: View {
                         : nil
                 },
                 onOpenWikiLink: onOpenWikiLink,
+                onOpenWebLink: onOpenWebLink,
                 isEditable: !document.isReadOnly,
                 isInteractionEnabled: !isImagePreviewPresented,
                 noteURL: document.fileURL,
