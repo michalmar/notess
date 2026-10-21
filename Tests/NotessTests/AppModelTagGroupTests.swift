@@ -234,6 +234,20 @@ struct AppModelTagGroupTests {
         #expect(reopened.errorMessage != nil)
         #expect(try Data(contentsOf: file) == Data("not json".utf8))
     }
+
+    @Test("a group change that cannot be saved is reported and not shown")
+    func unsavableChangeIsReported() async throws {
+        let fixture = try TagGroupFixture()
+        try fixture.write("# 2026-06-02\n\n## Porada #acme\n", to: "Journal/2026/06/2026-06-02.md")
+        try FileManager.default.createDirectory(at: fixture.settingsURL, withIntermediateDirectories: true)
+        try Data().write(to: fixture.settingsURL.appending(path: "TagGroups", directoryHint: .notDirectory))
+        let model = try await fixture.makeModelShowingTags()
+
+        #expect(model.createTagGroup(named: "Projekty") == nil)
+
+        #expect(model.errorMessage != nil)
+        #expect(try sidebarGroups(model) == [])
+    }
 }
 
 /// What a reader sees of one group: its name, whether it is open and its Tags.

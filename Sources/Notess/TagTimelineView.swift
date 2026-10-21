@@ -5,7 +5,7 @@ import SwiftUI
 /// Tags mode of the sidebar: Tag Groups above All Tags, the Tags of saved
 /// Daily Entries; one Tag is selected at a time.
 struct TagList: View {
-    @Bindable var model: AppModel
+    let model: AppModel
     /// The clicked row; a Tag can have several rows (in groups and All Tags).
     @State private var selectedRow: TagRow?
     @State private var newGroupRequest: NewGroupRequest?
@@ -161,13 +161,14 @@ struct TagList: View {
             }
     }
 
-    /// The clicked row while it shows the selected Tag; otherwise the Tag's
-    /// All Tags row, e.g. after the selection changed elsewhere.
+    /// The clicked row while it still shows the selected Tag; otherwise the
+    /// Tag's All Tags row, e.g. after the selection changed elsewhere or the
+    /// Tag left the clicked group.
     private var selection: Binding<TagRow?> {
         Binding(
             get: {
                 guard let tag = browser.selectedTag else { return nil }
-                if let selectedRow, selectedRow.tag == tag { return selectedRow }
+                if let selectedRow, selectedRow.tag == tag, isShown(selectedRow) { return selectedRow }
                 return TagRow(groupID: nil, tag: tag)
             },
             set: { row in
@@ -176,6 +177,11 @@ struct TagList: View {
                 model.selectTimelineTag(row.tag)
             }
         )
+    }
+
+    private func isShown(_ row: TagRow) -> Bool {
+        guard let groupID = row.groupID else { return true }
+        return model.tagSidebar?.groups.contains { $0.id == groupID && $0.tags.contains(row.tag) } ?? false
     }
 
     private func requestNewGroup(for tag: String?) {

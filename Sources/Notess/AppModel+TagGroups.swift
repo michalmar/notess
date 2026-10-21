@@ -55,7 +55,9 @@ extension AppModel {
         }
     }
 
-    /// Applies `change` and remembers the result for the open Vault.
+    /// Applies `change` and remembers the result for the open Vault; a change
+    /// that cannot be saved is reported and not shown, so the sidebar never
+    /// shows groups that would be lost on the next launch.
     private func changeTagGroups<Result>(_ change: (inout TagGroups) throws -> Result) -> Result? {
         guard let vault else { return nil }
         if let tagGroupsLoadFailure {
@@ -71,12 +73,13 @@ extension AppModel {
             return nil
         }
         guard groups != tagGroups else { return result }
-        tagGroups = groups
         do {
             try tagGroupStore.remember(groups, for: vault)
         } catch {
             errorMessage = "Skupiny Tagů se nepodařilo uložit: \(error.localizedDescription)"
+            return nil
         }
+        tagGroups = groups
         return result
     }
 }
