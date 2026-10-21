@@ -171,6 +171,9 @@ private final class AppModelFixture {
             brainRunStateStore: BrainRunStateStore(
                 directoryURL: rootURL.appending(path: ".test-brain-runs", directoryHint: .isDirectory)
             ),
+            tagGroupStore: TagGroupStore(
+                directoryURL: rootURL.appending(path: ".test-tag-groups", directoryHint: .isDirectory)
+            ),
             now: { Date(timeIntervalSince1970: 1_760_765_000) }
         )
     }

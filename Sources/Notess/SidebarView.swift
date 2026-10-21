@@ -26,12 +26,7 @@ struct SidebarView: View {
             case .journal:
                 journalList
             case .tags:
-                TagList(
-                    browser: model.tagTimeline,
-                    isIndexing: model.isIndexing,
-                    indexFailure: model.searchIndexFailure,
-                    select: model.selectTimelineTag
-                )
+                TagList(model: model)
             }
         }
         .onChange(of: model.document?.id) { _, _ in

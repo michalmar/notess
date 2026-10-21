@@ -39,6 +39,11 @@ final class AppModel {
     }
     /// The Tags of saved Daily Entries and the selected Tag's timeline (Tags mode).
     let tagTimeline = TagTimelineBrowser()
+    /// The open Vault's Tag Groups; change them through `AppModel+TagGroups`.
+    var tagGroups = TagGroups()
+    /// Why the open Vault's Tag Groups could not be read; they are then not
+    /// changed, so the unreadable settings are not overwritten.
+    var tagGroupsLoadFailure: String?
     /// Vault-relative folder chosen in the Notes section ("" is the Vault root); target for new Free Notes.
     var selectedFolder = ""
     var errorMessage: String?
@@ -65,6 +70,7 @@ final class AppModel {
     @ObservationIgnored var searchIndex: SearchIndex?
     @ObservationIgnored var searchIndexTask: Task<Void, Never>?
     @ObservationIgnored let brainRunStateStore: BrainRunStateStore
+    @ObservationIgnored let tagGroupStore: TagGroupStore
     @ObservationIgnored var brainRun: BrainRun?
     @ObservationIgnored var brainRunTask: Task<Void, Never>?
     @ObservationIgnored var brainRunCleanupTask: Task<Void, Never>?
@@ -79,12 +85,14 @@ final class AppModel {
         tabRestorationStore: TabRestorationStore = TabRestorationStore(),
         settings: AppSettings = AppSettings(),
         brainRunStateStore: BrainRunStateStore = BrainRunStateStore(),
+        tagGroupStore: TagGroupStore = TagGroupStore(),
         now: @escaping () -> Date = Date.init
     ) {
         self.vaultLocationStore = vaultLocationStore
         self.tabRestorationStore = tabRestorationStore
         self.settings = settings
         self.brainRunStateStore = brainRunStateStore
+        self.tagGroupStore = tagGroupStore
         self.now = now
         if let saved = vaultLocationStore.savedVault() {
             open(saved)
@@ -275,6 +283,7 @@ final class AppModel {
         selectedFolder = ""
         isQuickOpenPresented = false
         isSearchPresented = false
+        loadTagGroups(for: vault)
         watch(vault)
         do {
             try vault.ensureBrainInstructions()
