@@ -36,12 +36,23 @@ struct MarkdownTextViewHeadingSpacingTests {
         return manager.usageBoundsForTextContainer.height - lines
     }
 
+    /// The height of a body line as TextKit 2 lays it out.
+    private func bodyLineHeight(fontSize: CGFloat) -> CGFloat {
+        let (_, view) = makeView("tělo", fontSize: fontSize)
+        let manager = view.textLayoutManager!
+        var height: CGFloat = 0
+        manager.enumerateTextSegments(in: manager.documentRange, type: .standard, options: []) { _, frame, _, _ in
+            height = frame.height
+            return false
+        }
+        return height
+    }
+
     @Test("every heading level gains half a body line above and below", arguments: 1...6, [12.0, 15.0, 22.5, 45.0])
     func halfBodyLineEachSide(level: Int, size: Double) {
         let size = CGFloat(size)
         let half = MarkdownEditorStyle(fontName: "System", fontSize: size).headingSpacing
-        let body = NSFont.systemFont(ofSize: size)
-        #expect(abs(half - (body.ascender - body.descender + body.leading) / 2) < 1)
+        #expect(abs(half - bodyLineHeight(fontSize: size) / 2) < 1)
 
         let heading = String(repeating: "#", count: level) + " Nadpis"
         let space = addedSpace("tělo\n\(heading)\ntělo", fontSize: size)

@@ -219,8 +219,8 @@ final class MarkdownHighlighter: NSObject, NSTextStorageDelegate, NSTextLayoutMa
     private func applyHeadingSpacing(to range: NSRange, in storage: NSTextStorage) {
         let string = storage.string as NSString
         let spacing = style.headingSpacing
-        let before = NSMutableParagraphStyle()
-        before.paragraphSpacingBefore = spacing
+        let heading = NSMutableParagraphStyle()
+        heading.paragraphSpacingBefore = spacing
         let line = string.lineRange(for: range)
         let underline = line.upperBound < string.length ? string.lineRange(for: NSRange(location: line.upperBound, length: 0)) : nil
         let isSetext = !string.substring(with: range).hasPrefix("#") && underline.map { Self.isSetextUnderline(string.substring(with: $0)) } == true
@@ -229,9 +229,9 @@ final class MarkdownHighlighter: NSObject, NSTextStorageDelegate, NSTextLayoutMa
             after.paragraphSpacing = spacing
             storage.addAttributes([.paragraphStyle: after, .notessBaseParagraphSpacing: spacing], range: underline)
         } else {
-            before.paragraphSpacing = spacing
+            heading.paragraphSpacing = spacing
         }
-        storage.addAttribute(.paragraphStyle, value: before, range: range)
+        storage.addAttribute(.paragraphStyle, value: heading, range: range)
         if !isSetext { storage.addAttribute(.notessBaseParagraphSpacing, value: spacing, range: range) }
     }
 
