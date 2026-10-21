@@ -16,9 +16,12 @@ struct AppModelDeletionTests {
         let fileURL = directory.appending(path: "Disposable.md", directoryHint: .notDirectory)
         try "# Disposable\n".write(to: fileURL, atomically: true, encoding: .utf8)
 
-        try FileTrash.moveToTrash(fileURL)
+        let trashedURL = try FileTrash.moveToTrashReturningURL(fileURL)
+        defer { try? FileManager.default.removeItem(at: trashedURL) }
 
         #expect(!FileManager.default.fileExists(atPath: fileURL.path))
+        #expect(FileManager.default.fileExists(atPath: trashedURL.path))
+        #expect(try String(contentsOf: trashedURL, encoding: .utf8) == "# Disposable\n")
     }
 
     @Test("a confirmed clean Free Note moves to Trash and disappears from app state")
@@ -150,6 +153,26 @@ struct AppModelDeletionTests {
         #expect(model.tabSession.document(at: document.fileURL) === document)
         #expect(document.text == "# Mine\n")
         #expect(document.externalChange == .modified("# External\n"))
+        #expect(model.noteDeletionConfirmation == nil)
+    }
+
+    @Test("an ordinary save failure reports the error and does not Trash or close the note")
+    func saveFailureKeepsDocument() throws {
+        let fixture = try DeletionFixture()
+        try fixture.write("# Saved\n", to: "Notes/Idea.md")
+        let model = fixture.makeModel()
+        let document = try #require(model.openExistingNote(relativePath: "Notes/Idea.md"))
+        document.text = "# Mine\n"
+        model.requestNoteDeletion(relativePath: "Notes/Idea.md")
+        try FileManager.default.removeItem(at: document.fileURL)
+        try FileManager.default.createDirectory(at: document.fileURL, withIntermediateDirectories: false)
+
+        model.confirmNoteDeletion(.saveAndMoveToTrash)
+
+        #expect(fixture.trashedPaths.isEmpty)
+        #expect(model.tabSession.document(at: document.fileURL) === document)
+        #expect(document.text == "# Mine\n")
+        #expect(model.errorMessage?.hasPrefix("Uložení se nezdařilo:") == true)
         #expect(model.noteDeletionConfirmation == nil)
     }
 

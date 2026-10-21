@@ -57,7 +57,10 @@ struct SidebarView: View {
                     Label("Dnes", systemImage: "calendar")
                 }
                 .contextMenu {
-                    deleteButton(relativePath: model.todayDailyEntry.relativePath)
+                    DeleteNoteButton(
+                        relativePath: model.todayDailyEntry.relativePath,
+                        model: model
+                    )
                 }
                 ForEach(model.tree.journal.years) { year in
                     DisclosureGroup(String(year.year)) {
@@ -67,7 +70,10 @@ struct SidebarView: View {
                                     Label(day.isoString, systemImage: "doc.text")
                                         .tag(SidebarItem.day(day))
                                         .contextMenu {
-                                            deleteButton(relativePath: DailyEntry(day: day).relativePath)
+                                            DeleteNoteButton(
+                                                relativePath: DailyEntry(day: day).relativePath,
+                                                model: model
+                                            )
                                         }
                                 }
                             }
@@ -98,15 +104,6 @@ struct SidebarView: View {
             }
         }
         .listStyle(.sidebar)
-    }
-
-    private func deleteButton(relativePath: String) -> some View {
-        Button(role: .destructive) {
-            model.requestNoteDeletion(relativePath: relativePath)
-        } label: {
-            Label("Smazat…", systemImage: "trash")
-        }
-        .disabled(!model.canDeleteNote(relativePath: relativePath))
     }
 
     /// Keeps the highlight on the file that is actually open, e.g. after a refused or failed open.
@@ -146,12 +143,22 @@ private struct FolderContents: View {
             Label(note.title, systemImage: "doc.text")
                 .tag(SidebarItem.note(note.relativePath))
                 .contextMenu {
-                    Button(role: .destructive) {
-                        model.requestNoteDeletion(relativePath: note.relativePath)
-                    } label: {
-                        Label("Smazat…", systemImage: "trash")
-                    }
+                    DeleteNoteButton(relativePath: note.relativePath, model: model)
                 }
         }
+    }
+}
+
+private struct DeleteNoteButton: View {
+    let relativePath: String
+    let model: AppModel
+
+    var body: some View {
+        Button(role: .destructive) {
+            model.requestNoteDeletion(relativePath: relativePath)
+        } label: {
+            Label("Smazat…", systemImage: "trash")
+        }
+        .disabled(!model.canDeleteNote(relativePath: relativePath))
     }
 }
