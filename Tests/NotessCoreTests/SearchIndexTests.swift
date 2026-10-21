@@ -493,6 +493,45 @@ final class SearchIndexTests {
         #expect(try await index.search(SearchQuery("káva")).count == 1)
     }
 
+    @Test("word prefixes of one to three characters have their own FTS5 index, so short queries stay fast")
+    func shortPrefixIndex() async throws {
+        let index = makeIndex()
+        try await index.synchronize()
+        let db = try SQLiteDatabase(url: databaseURL)
+        let sql = try #require(try db.query("SELECT sql FROM sqlite_master WHERE name = 'sections_fts'").first?.first?.text)
+        #expect(sql.contains("prefix = '1 2 3'"))
+        for query in ["k", "ki", "kic", "p", "př", "pre"] {
+            #expect(!(try await index.search(SearchQuery(query))).isEmpty, "\(query)")
+        }
+    }
+
+    @Test("a search whose task is cancelled stops with CancellationError, and the index keeps working")
+    func cancelledSearch() async throws {
+        let index = makeIndex()
+        try await index.synchronize()
+        let search = Task {
+            withUnsafeCurrentTask { $0?.cancel() }
+            return try await index.search(SearchQuery("kickoff"))
+        }
+        await #expect(throws: CancellationError.self) { try await search.value }
+        #expect(ids(try await index.search(SearchQuery("kickoff"))).count == 3)
+    }
+
+    @Test("a running statement stops once cancelled, and later statements run normally")
+    func cancellableStatement() throws {
+        try FileManager.default.createDirectory(at: databaseURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let db = try SQLiteDatabase(url: databaseURL)
+        let long = "WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM c WHERE x < 50000000) SELECT count(*) FROM c"
+        var polls = 0
+        #expect(throws: CancellationError.self) {
+            try db.cancellable(when: { polls += 1; return polls > 3 }) { try db.query(long) }
+        }
+        #expect(polls > 3, "cancellation is noticed while the statement runs")
+        let short = "WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM c WHERE x < 100000) SELECT count(*) FROM c"
+        #expect(try db.query(short).first?.first?.int == 100_000, "no handler is left behind")
+        #expect(try db.cancellable(when: { false }) { try db.query(short) }.first?.first?.int == 100_000)
+    }
+
     // MARK: - Tags in headings
 
     /// Every matching Section, as note name and ordinal, file by file.

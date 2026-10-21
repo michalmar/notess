@@ -24,11 +24,6 @@ struct SearchView: View {
                     .font(.title3)
                     .focused($isSearchFocused)
                     .onSubmit(openSelection)
-                if isIndexing {
-                    ProgressView()
-                        .controlSize(.small)
-                        .help("Index hledání se aktualizuje")
-                }
             }
             .padding(14)
 
@@ -92,23 +87,34 @@ struct SearchView: View {
                 ContentUnavailableView.search(text: search.query)
             }
         } else {
-            ScrollViewReader { proxy in
-                List(selection: $search.selection) {
-                    ForEach(search.groups) { group in
-                        Section(group.kind.searchGroupTitle) {
-                            ForEach(group.results) { result in
-                                SearchResultRow(result: result)
-                                    .tag(result.id)
-                                    .id(result.id)
-                                    .onTapGesture { open(result) }
+            VStack(spacing: 0) {
+                ScrollViewReader { proxy in
+                    List(selection: $search.selection) {
+                        ForEach(search.groups) { group in
+                            Section(group.kind.searchGroupTitle) {
+                                ForEach(group.results) { result in
+                                    SearchResultRow(result: result)
+                                        .tag(result.id)
+                                        .id(result.id)
+                                        .onTapGesture { open(result) }
+                                }
                             }
                         }
                     }
+                    .listStyle(.plain)
+                    .onChange(of: search.selection) { _, selected in
+                        guard let selected else { return }
+                        proxy.scrollTo(selected)
+                    }
                 }
-                .listStyle(.plain)
-                .onChange(of: search.selection) { _, selected in
-                    guard let selected else { return }
-                    proxy.scrollTo(selected)
+                if isIndexing {
+                    // Results found so far stay usable; the footer says more may come.
+                    ProgressView("Indexuji poznámky… výsledky mohou být neúplné")
+                        .controlSize(.small)
+                        .font(.caption)
+                        .padding(8)
+                        .frame(maxWidth: .infinity)
+                        .background(.bar)
                 }
             }
         }

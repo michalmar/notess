@@ -135,6 +135,32 @@ struct GlobalSearchPresentationTests {
         let firstMatch = (dirtyText as NSString).range(of: "Kickoff")
         #expect(editor.selectedRange() == NSRange(location: firstMatch.location, length: 0))
     }
+
+    @Test("while the index is being built, the open search says its results may be incomplete, also above results")
+    func indexingStatus() async throws {
+        let fixture = try SearchPresentationFixture()
+        try fixture.write("# Plán\n\n## Kickoff\nKickoff s klientem\n", to: "Notes/Plán.md")
+        let harness = try await fixture.makeHarness()
+        harness.model.presentSearch()
+        await harness.settle()
+        let search = try #require(harness.model.globalSearch)
+        #expect(!harness.indexingStatusIsShown)
+
+        harness.type("kickoff")
+        try await harness.waitUntil { !search.isSearching && !search.results.isEmpty }
+        harness.model.isIndexing = true
+        await harness.settle()
+        #expect(harness.indexingStatusIsShown, "results found so far are shown with the status")
+
+        harness.type("x")
+        try await harness.waitUntil { !search.isSearching && search.query == "kickoffx" }
+        #expect(search.results.isEmpty)
+        #expect(harness.indexingStatusIsShown, "no results yet is not presented as an empty search")
+
+        harness.model.isIndexing = false
+        await harness.settle()
+        #expect(!harness.indexingStatusIsShown)
+    }
 }
 
 @MainActor
