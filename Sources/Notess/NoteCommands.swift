@@ -32,6 +32,14 @@ struct NoteCommands: Commands {
             Button("Hledat…") { model.presentSearch() }
                 .keyboardShortcut("f", modifiers: [.command, .shift])
                 .disabled(model.vault == nil || isPreviewPresented)
+            // Local find in the open note; ⇧⌘F above stays the global search.
+            Button("Najít v poznámce…") {
+                if !NSApp.sendAction(#selector(MarkdownTextView.showFind(_:)), to: nil, from: nil) {
+                    NSSound.beep()
+                }
+            }
+            .keyboardShortcut("f", modifiers: .command)
+            .disabled(model.document == nil || model.sidebarMode == .tags || isPreviewPresented)
             Button("Přegenerovat index hledání") { model.rebuildSearchIndex() }
                 .disabled(model.vault == nil || model.isIndexing || isPreviewPresented)
             Button("Zavřít tab", action: onCloseActiveTab)

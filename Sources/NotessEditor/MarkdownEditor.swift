@@ -29,8 +29,9 @@ public enum MarkdownTextViewFactory {
         textView.isRichText = false
         textView.importsGraphics = false
         textView.allowsUndo = true
-        textView.usesFindBar = true
-        textView.isIncrementalSearchingEnabled = true
+        // Cmd+F opens Notess's own find bar (EditorFind), not AppKit's, which offers replacement.
+        textView.usesFindBar = false
+        textView.isIncrementalSearchingEnabled = false
         textView.backgroundColor = .textBackgroundColor
         textView.drawsBackground = true
         textView.textContainerInset = NSSize(width: 24, height: 20)
