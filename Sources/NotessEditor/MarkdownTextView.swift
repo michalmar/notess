@@ -213,6 +213,7 @@ public final class MarkdownTextView: NSTextView {
 
     /// Called when the user clicks a `[[wiki-link]]`; the click then does not move the caret.
     public var onWikiLinkClick: ((WikiLink) -> Void)?
+    public var onOpenWebLink: ((URL) -> Void)?
 
     /// Fonts and colours; setting a different style restyles the whole note.
     public var markdownStyle: MarkdownEditorStyle {
@@ -395,7 +396,20 @@ public final class MarkdownTextView: NSTextView {
             onWikiLinkClick?(link)
             return
         }
+        if openWebLink(with: event, at: convert(event.locationInWindow, from: nil)) { return }
         super.mouseDown(with: event)
+    }
+
+    /// Handles the editor's Command+click web-link gesture; ordinary clicks
+    /// return false so `NSTextView` can place the caret.
+    func openWebLink(with event: NSEvent, at point: NSPoint) -> Bool {
+        let modifiers = event.modifierFlags.intersection([.shift, .command, .option, .control])
+        guard event.clickCount == 1, modifiers == .command,
+              let onOpenWebLink, let url = webLink(atPoint: point) else {
+            return false
+        }
+        onOpenWebLink(url)
+        return true
     }
 
     /// The wiki-link whose text lies under `point` (view coordinates), if any.
@@ -410,6 +424,25 @@ public final class MarkdownTextView: NSTextView {
                   boxRect(NSRange(location: candidate, length: 1)).insetBy(dx: -2, dy: -2).contains(point)
             else { continue }
             return link
+        }
+        return nil
+    }
+
+    /// The HTTP(S) destination whose visible link text lies under `point`.
+    func webLink(atPoint point: NSPoint) -> URL? {
+        guard textStorage != nil else { return nil }
+        let text = string as NSString
+        let index = characterIndexForInsertion(at: point)
+        let candidates = [index, index - 1].filter { $0 >= 0 && $0 < text.length }
+        guard !candidates.isEmpty else { return nil }
+        let links = WebLink.links(in: string)
+
+        for candidate in candidates {
+            guard boxRect(NSRange(location: candidate, length: 1))
+                .insetBy(dx: -2, dy: -2).contains(point) else { continue }
+            if let link = links.first(where: { NSLocationInRange(candidate, $0.range) }) {
+                return link.url
+            }
         }
         return nil
     }

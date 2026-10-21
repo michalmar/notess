@@ -1,5 +1,37 @@
 import Foundation
 
+enum MarkdownLinkDestination {
+    struct Parsed {
+        var source: String
+        var range: Range<Int>
+    }
+
+    static func parse(_ characters: [UInt16], from start: Int, to end: Int) -> Parsed? {
+        var sourceStart = start
+        while sourceStart < end && Char.isWhitespace(characters[sourceStart]) { sourceStart += 1 }
+        guard sourceStart < end else { return nil }
+        if characters[sourceStart] == Char.lt {
+            var sourceEnd = sourceStart + 1
+            while sourceEnd < end && characters[sourceEnd] != Char.gt { sourceEnd += 1 }
+            guard sourceEnd < end else { return nil }
+            let range = (sourceStart + 1)..<sourceEnd
+            return Parsed(source: String(decoding: characters[range], as: UTF16.self), range: range)
+        }
+        var sourceEnd = sourceStart
+        while sourceEnd < end {
+            if characters[sourceEnd] == Char.backslash {
+                sourceEnd = min(sourceEnd + 2, end)
+            } else if Char.isWhitespace(characters[sourceEnd]) {
+                break
+            } else {
+                sourceEnd += 1
+            }
+        }
+        let range = sourceStart..<sourceEnd
+        return Parsed(source: String(decoding: characters[range], as: UTF16.self), range: range)
+    }
+}
+
 /// What one line of Markdown tells the lexer about the line after it.
 ///
 /// The lexer stores the state at the start of every line so that after an edit
@@ -526,25 +558,7 @@ struct MarkdownLineLexer {
     }
 
     private func linkDestinationSource(from start: Int, to end: Int) -> String {
-        var sourceStart = start
-        while sourceStart < end && Char.isWhitespace(c[sourceStart]) { sourceStart += 1 }
-        guard sourceStart < end else { return "" }
-        if c[sourceStart] == Char.lt {
-            var sourceEnd = sourceStart + 1
-            while sourceEnd < end && c[sourceEnd] != Char.gt { sourceEnd += 1 }
-            return String(decoding: c[(sourceStart + 1)..<sourceEnd], as: UTF16.self)
-        }
-        var sourceEnd = sourceStart
-        while sourceEnd < end {
-            if c[sourceEnd] == Char.backslash {
-                sourceEnd = min(sourceEnd + 2, end)
-            } else if Char.isWhitespace(c[sourceEnd]) {
-                break
-            } else {
-                sourceEnd += 1
-            }
-        }
-        return String(decoding: c[sourceStart..<sourceEnd], as: UTF16.self)
+        MarkdownLinkDestination.parse(c, from: start, to: end)?.source ?? ""
     }
 
     /// `<https://example.com>` or `<name@example.com>`.
