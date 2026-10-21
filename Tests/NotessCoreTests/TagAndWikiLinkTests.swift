@@ -191,3 +191,29 @@ struct WikiLinkTests {
         #expect(WikiLink.links(in: "[[A]] a [[B#C]]").map(\.target) == ["A", "B"])
     }
 }
+
+@Suite("Web-link recognition")
+struct WebLinkTests {
+    @Test("bare and Markdown HTTP links expose their clickable text")
+    func linksAndRanges() {
+        let text = "https://one.example and [Two](http://two.example/path \"title\")"
+        let links = WebLink.links(in: text)
+
+        #expect(links.map(\.url.absoluteString) == [
+            "https://one.example",
+            "http://two.example/path",
+            "http://two.example/path"
+        ])
+        #expect(links.map { (text as NSString).substring(with: $0.range) } == [
+            "https://one.example",
+            "Two",
+            "http://two.example/path"
+        ])
+    }
+
+    @Test("code, scheme-less addresses and images are not web links")
+    func exclusions() {
+        let text = "`https://inline.example`\n```\nhttp://fenced.example\n```\nwww.example.com ![alt](https://image.example)"
+        #expect(WebLink.links(in: text).isEmpty)
+    }
+}

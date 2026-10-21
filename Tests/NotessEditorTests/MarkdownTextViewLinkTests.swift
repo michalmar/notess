@@ -106,11 +106,9 @@ struct MarkdownTextViewLinkTests {
             opened.append($0)
         }
 
-        let consumed = try harness.webLinkEvent("the documentation", modifiers: .command)
-        let destinationConsumed = try harness.webLinkEvent("http://example.com/docs", modifiers: .command)
+        try harness.click("the documentation", modifiers: .command)
+        try harness.click("http://example.com/docs", modifiers: .command)
 
-        #expect(consumed)
-        #expect(destinationConsumed)
         #expect(opened == [
             URL(string: "http://example.com/docs")!,
             URL(string: "http://example.com/docs")!
@@ -148,27 +146,21 @@ struct MarkdownTextViewLinkTests {
     @Test("web-link handling preserves ordinary and Command-click Wiki-link navigation")
     func wikiLinksRemainUnchanged() throws {
         let harness = Harness("See [[Acme#Plan]] and https://example.com.")
+        var wikiLinks: [WikiLink] = []
         var webLinks: [URL] = []
-        harness.textView.onWikiLinkClick = { _ in }
+        harness.textView.onWikiLinkClick = { wikiLinks.append($0) }
         harness.textView.onOpenWebLink = {
             webLinks.append($0)
         }
 
-        let ordinary = try #require(harness.textView.wikiLink(atPoint: harness.point(for: "Acme")))
-        let command = try #require(harness.textView.wikiLink(atPoint: harness.point(for: "Plan")))
+        try harness.click("Acme", modifiers: [])
+        try harness.click("Plan", modifiers: .command)
 
-        #expect(ordinary.target == "Acme")
-        #expect(ordinary.section == "Plan")
-        #expect(command == ordinary)
-        #expect(try harness.webLinkEvent("Acme", modifiers: .command) == false)
+        #expect(wikiLinks.map(\.target) == ["Acme", "Acme"])
+        #expect(wikiLinks.map(\.section) == ["Plan", "Plan"])
         #expect(webLinks.isEmpty)
     }
 
-    @Test("macOS has a default application for the HTTPS handoff")
-    func defaultBrowserHandoffIsAvailable() throws {
-        let url = try #require(URL(string: "https://example.com"))
-        #expect(NSWorkspace.shared.urlForApplication(toOpen: url) != nil)
-    }
 }
 
 private extension NSRect {

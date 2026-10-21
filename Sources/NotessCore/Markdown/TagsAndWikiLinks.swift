@@ -80,3 +80,86 @@ public struct WikiLink: Hashable, Sendable {
         }
     }
 }
+
+/// An HTTP(S) link written in Markdown, with the text range that activates it.
+///
+/// A Markdown link contributes one value for its label and one for its visible
+/// destination. Bare URLs and autolinks contribute their URL text. Links in
+/// code and image syntax are excluded by the Markdown lexer.
+public struct WebLink: Hashable, Sendable {
+    public let url: URL
+    /// UTF-16 range that opens `url` when Command-clicked.
+    public let range: NSRange
+
+    public init(url: URL, range: NSRange) {
+        self.url = url
+        self.range = range
+    }
+
+    public static func links(in text: String) -> [WebLink] {
+        let string = text as NSString
+        let tokens = MarkdownSyntax.tokens(in: text)
+        let imageRanges = tokens.compactMap { token -> NSRange? in
+            if case .image = token.kind { token.range } else { nil }
+        }
+        func isInImage(_ range: NSRange) -> Bool {
+            imageRanges.contains {
+                NSLocationInRange(range.location, $0) && range.upperBound <= $0.upperBound
+            }
+        }
+        func httpURL(_ source: String) -> URL? {
+            guard let url = URL(string: source),
+                  let scheme = url.scheme?.lowercased(),
+                  scheme == "http" || scheme == "https" else { return nil }
+            return url
+        }
+        func destination(after link: MarkdownToken) -> MarkdownLinkDestination.Parsed? {
+            for token in tokens where token.kind == .linkDestination && token.range.location >= link.range.upperBound {
+                let gap = NSRange(
+                    location: link.range.upperBound,
+                    length: token.range.location - link.range.upperBound
+                )
+                guard string.substring(with: gap) == "](" else { continue }
+                let value = string.substring(with: token.range)
+                guard let parsed = MarkdownLinkDestination.parse(
+                    Array(value.utf16), from: 0, to: value.utf16.count
+                ) else {
+                    return nil
+                }
+                return parsed
+            }
+            return nil
+        }
+
+        var result: [WebLink] = []
+        for token in tokens {
+            switch token.kind {
+            case .link where !isInImage(token.range):
+                let source: String
+                if let destination = destination(after: token) {
+                    source = destination.source
+                } else {
+                    source = string.substring(with: token.range)
+                }
+                if let url = httpURL(source) {
+                    result.append(WebLink(url: url, range: token.range))
+                }
+            case .linkDestination where !isInImage(token.range):
+                let value = string.substring(with: token.range)
+                guard let parsed = MarkdownLinkDestination.parse(
+                    Array(value.utf16), from: 0, to: value.utf16.count
+                ), let url = httpURL(parsed.source) else { continue }
+                result.append(WebLink(
+                    url: url,
+                    range: NSRange(
+                        location: token.range.location + parsed.range.lowerBound,
+                        length: parsed.range.count
+                    )
+                ))
+            default:
+                break
+            }
+        }
+        return result
+    }
+}

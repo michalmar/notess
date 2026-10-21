@@ -38,6 +38,7 @@ Everything is a Swift package and runs from the command line; no Xcode project i
 | --- | --- |
 | Build (debug) | `swift build` (or `make build`) |
 | Run unit tests | `swift test` (or `make test`) |
+| Verify the real default-browser handoff | `NOTESS_REAL_BROWSER=1 swift test --filter RealSystemWebLinkOpenerTests` (opens a fixed `example.com` URL) |
 | Build `build/Notess.app` | `scripts/build-app.sh` (or `make app`) |
 | Build an Apple Silicon preview DMG | `scripts/build-dmg.sh` |
 | Build and open the app | `make run` |

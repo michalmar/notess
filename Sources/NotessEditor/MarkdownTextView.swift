@@ -435,82 +435,16 @@ public final class MarkdownTextView: NSTextView {
         let index = characterIndexForInsertion(at: point)
         let candidates = [index, index - 1].filter { $0 >= 0 && $0 < text.length }
         guard !candidates.isEmpty else { return nil }
-        let tokens = MarkdownSyntax.tokens(in: string)
+        let links = WebLink.links(in: string)
 
         for candidate in candidates {
             guard boxRect(NSRange(location: candidate, length: 1))
                 .insetBy(dx: -2, dy: -2).contains(point) else { continue }
-
-            if let destination = tokens.first(where: {
-                $0.kind == .linkDestination && NSLocationInRange(candidate, $0.range)
-            }), !Self.isImageLink(destination.range, tokens: tokens),
-               let url = Self.httpURL(Self.linkDestination(in: text, range: destination.range)) {
-                return url
+            if let link = links.first(where: { NSLocationInRange(candidate, $0.range) }) {
+                return link.url
             }
-
-            guard let link = tokens.first(where: {
-                $0.kind == .link && NSLocationInRange(candidate, $0.range)
-            }), !Self.isImageLink(link.range, tokens: tokens) else { continue }
-
-            let source: String
-            if let destination = tokens.first(where: { token in
-                guard token.kind == .linkDestination, token.range.location >= link.range.upperBound else {
-                    return false
-                }
-                let gap = NSRange(
-                    location: link.range.upperBound,
-                    length: token.range.location - link.range.upperBound
-                )
-                return text.substring(with: gap) == "]("
-            }) {
-                source = Self.linkDestination(in: text, range: destination.range)
-            } else {
-                source = text.substring(with: link.range)
-            }
-            if let url = Self.httpURL(source) { return url }
         }
         return nil
-    }
-
-    private static func isImageLink(_ range: NSRange, tokens: [MarkdownToken]) -> Bool {
-        tokens.contains { token in
-            guard case .image = token.kind else { return false }
-            return NSLocationInRange(range.location, token.range)
-                && range.upperBound <= token.range.upperBound
-        }
-    }
-
-    private static func httpURL(_ source: String) -> URL? {
-        guard let url = URL(string: source),
-              let scheme = url.scheme?.lowercased(),
-              scheme == "http" || scheme == "https" else { return nil }
-        return url
-    }
-
-    private static func linkDestination(in text: NSString, range: NSRange) -> String {
-        let value = text.substring(with: range) as NSString
-        var start = 0
-        while start < value.length, isWhitespace(value.character(at: start)) {
-            start += 1
-        }
-        guard start < value.length else { return "" }
-        if value.character(at: start) == 0x3C {
-            let closing = value.range(of: ">", options: [], range: NSRange(location: start + 1, length: value.length - start - 1))
-            guard closing.location != NSNotFound else { return "" }
-            return value.substring(with: NSRange(location: start + 1, length: closing.location - start - 1))
-        }
-        var end = start
-        while end < value.length {
-            let unit = value.character(at: end)
-            if isWhitespace(unit) { break }
-            if unit == 0x5C, end + 1 < value.length { end += 2 } else { end += 1 }
-        }
-        return value.substring(with: NSRange(location: start, length: end - start))
-    }
-
-    private static func isWhitespace(_ unit: unichar) -> Bool {
-        guard let scalar = UnicodeScalar(unit) else { return false }
-        return CharacterSet.whitespacesAndNewlines.contains(scalar)
     }
 
     public override func setFrameSize(_ newSize: NSSize) {

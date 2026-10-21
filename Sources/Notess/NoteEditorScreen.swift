@@ -3,13 +3,20 @@ import NotessCore
 import NotessEditor
 import SwiftUI
 
+@MainActor
+enum SystemWebLinkOpener {
+    static func open(_ url: URL) -> Bool {
+        NSWorkspace.shared.open(url)
+    }
+}
+
 struct NoteEditorScreen: View {
     let document: NoteDocument
     @Bindable var settings: AppSettings
     var reveal: EditorReveal?
     var backlinks: [Backlink] = []
     var onOpenWikiLink: (WikiLink) -> Void = { _ in }
-    var onOpenWebLink: (URL) -> Void = { _ = NSWorkspace.shared.open($0) }
+    var onOpenWebLink: (URL) -> Void = { _ = SystemWebLinkOpener.open($0) }
     var onOpenBacklink: (Backlink) -> Void = { _ in }
     var onPasteImageFailure: (Error) -> Void = { _ in }
     var onOpenImagePreview: (ImagePreviewContent) -> Void = { _ in }
