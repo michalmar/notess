@@ -23,7 +23,7 @@ A note the user creates in any folder of the Vault outside the Journal; it is no
 _Avoid_: Page, document
 
 **Section**:
-The span of a note from one second-level heading to the next heading of level 1 or 2; the unit that fulltext search returns and Brain Notes cite. The text before the first second-level heading is one more, introductory Section.
+The span of a note from one second-level heading to the next heading of level 1 or 2; the unit that fulltext search matches and Brain Notes cite (search shows each matching note once, at its first matching Section). The text before the first second-level heading is one more, introductory Section.
 _Avoid_: Block, chunk, topic, chapter
 
 **Tag**:

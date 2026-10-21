@@ -3,7 +3,7 @@ import Foundation
 /// One searchable span of a note: a Section (see `GLOSSARY.md`), the text
 /// before the first second-level heading, or the text after a first-level
 /// heading that ends a Section, up to the next Section. This is the unit search
-/// returns and Tags mark.
+/// matches and Tags mark.
 public struct SearchSection: Hashable, Sendable {
     /// Position among the note's non-empty segments, starting at 0.
     public let ordinal: Int

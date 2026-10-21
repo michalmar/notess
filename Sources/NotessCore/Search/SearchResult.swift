@@ -59,24 +59,35 @@ public struct SearchSnippet: Hashable, Sendable {
     }
 }
 
-/// A Section found by `SearchIndex`.
+/// A note found by `SearchIndex`: one result per matching file, shown by its
+/// first matching Section. Matching itself stays per Section.
 public struct SearchResult: Hashable, Sendable, Identifiable {
     public let relativePath: String
     public let kind: NoteKind
-    /// The segment's position in the note (`SearchSection.ordinal`).
+    /// Position of the first matching Section in the note (`SearchSection.ordinal`).
     public let ordinal: Int
-    /// The Section heading, or nil for untitled text at the start of a note.
+    /// That Section's heading, or nil for untitled text at the start of a note.
     public let title: String?
     /// The heading with matches marked; empty without a heading.
     public let highlightedTitle: SearchSnippet
-    /// A short excerpt of the Section's text with matches marked.
+    /// A short excerpt of that Section's text with matches marked.
     public let snippet: SearchSnippet
+    /// Ordinals of every matching Section of the note, ascending.
+    public let matchingOrdinals: [Int]
+    /// The query that found the note, to locate its first match when opened.
+    public let query: SearchQuery
 
-    public var id: String { "\(relativePath)#\(ordinal)" }
+    public var id: String { relativePath }
 
     /// The note's file name without `.md`.
     public var noteName: String {
         URL(filePath: relativePath).deletingPathExtension().lastPathComponent
+    }
+
+    /// Where to open the note: the query's first match in `text`, the note's
+    /// current text, which may hold unsaved edits (see `SearchQuery.firstMatchRange`).
+    public func firstMatchRange(in text: String) -> NSRange {
+        query.firstMatchRange(in: text, title: title, ordinal: ordinal)
     }
 }
 

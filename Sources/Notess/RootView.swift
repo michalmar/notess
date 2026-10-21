@@ -52,12 +52,12 @@ struct RootView: View {
                 )
             }
 
-            if model.isSearchPresented, let index = model.searchIndex {
+            if let search = model.globalSearch {
                 Color.black.opacity(0.2)
                     .ignoresSafeArea()
                     .onTapGesture { model.isSearchPresented = false }
                 SearchView(
-                    index: index,
+                    search: search,
                     isIndexing: model.isIndexing,
                     revision: model.searchIndexRevision,
                     open: model.openSearchResult,
@@ -120,7 +120,8 @@ struct RootView: View {
                     onTagSuggestionFailure: { error in
                         model.errorMessage = "Návrhy štítků se nepodařilo načíst: \(error.localizedDescription)"
                     },
-                    isImagePreviewPresented: model.imagePreview.content != nil
+                    // Overlays own the keyboard; closing one hands focus back to the editor.
+                    isImagePreviewPresented: model.imagePreview.content != nil || model.isSearchPresented
                 )
             } else {
                 ContentUnavailableView(

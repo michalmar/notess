@@ -3,7 +3,7 @@ import Foundation
 /// What the user typed into search: `#tag` words filter to Sections with that
 /// Tag (case-insensitively, all of them must match); the other words are
 /// fulltext terms that all have to occur, each also as a word prefix.
-public struct SearchQuery: Equatable, Sendable {
+public struct SearchQuery: Hashable, Sendable {
     /// Normalised Tag names (`Tag.normalize`), without duplicates.
     public let tags: [String]
     /// Fulltext words in Unicode NFC.

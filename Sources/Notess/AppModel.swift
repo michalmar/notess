@@ -19,7 +19,19 @@ final class AppModel {
     private(set) var tabSession = TabSession()
     private(set) var tree: VaultTree = .empty
     var isQuickOpenPresented = false
-    var isSearchPresented = false
+    /// The open Cmd+Shift+F global search, or nil while it is closed.
+    var globalSearch: GlobalSearch?
+    var isSearchPresented: Bool {
+        get { globalSearch != nil }
+        set {
+            if newValue {
+                presentSearch()
+            } else {
+                globalSearch?.cancel()
+                globalSearch = nil
+            }
+        }
+    }
     /// Whether the main note window is the key window (not Settings or a dialog).
     var isNoteWindowKey = false
     /// The search index is catching up with the Vault or being rebuilt.

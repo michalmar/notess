@@ -41,17 +41,98 @@ final class SearchIndexTests {
         })
     }
 
-    @Test("results are Sections grouped Journal, Notes, Brain")
+    @Test("results are matching files grouped Journal, Notes, Brain, each at its first matching Section")
     func groupsByKind() async throws {
         let index = makeIndex()
         try await index.synchronize()
         let groups = try await index.search(SearchQuery("kickoff"))
         #expect(groups.map(\.kind) == [.dailyEntry, .freeNote])
-        #expect(titles(groups)[.dailyEntry]?.sorted() == ["2026-03-14#Kickoff Acme", "2026-03-14#Retro"])
+        #expect(titles(groups)[.dailyEntry] == ["2026-03-14#Kickoff Acme"])
         #expect(titles(groups)[.freeNote] == ["Plán#Požadavky"])
+        #expect(ids(groups) == ["2026-03-14#1", "2026-03-14#2", "Plán#1"])
 
         let brain = try await index.search(SearchQuery("klient"))
         #expect(brain.map(\.kind) == [.dailyEntry, .brainNote])
+    }
+
+    @Test("a file with several matching Sections is one result with a matching preview and all its matching Sections")
+    func oneResultPerFile() async throws {
+        let index = makeIndex()
+        try await index.synchronize()
+        let journal = try #require(try await index.search(SearchQuery("kickoff"), scope: .journal).first)
+        let result = try #require(journal.results.first)
+        #expect(journal.results.count == 1)
+        #expect(result.id == "Journal/2026/03/2026-03-14.md")
+        #expect(result.ordinal == 1)
+        #expect(result.matchingOrdinals == [1, 2])
+        #expect(result.highlightedTitle.parts.filter(\.isMatch).map(\.text) == ["Kickoff"])
+        #expect(result.query == SearchQuery("kickoff"))
+
+        let retro = try #require(try await index.search(SearchQuery("dobře")).first?.results.first)
+        #expect(retro.matchingOrdinals == [2])
+        #expect(retro.snippet.parts.filter(\.isMatch).map(\.text) == ["dobře"])
+    }
+
+    @Test("many matching Sections in one file do not crowd out other matching files")
+    func sectionsDoNotCrowdOutFiles() async throws {
+        let crowded = (1...60).map { "## Klient \($0)\nklient klient klient" }.joined(separator: "\n\n")
+        try vault.write("# Mnoho\n\n" + crowded + "\n", to: "Projekty/Mnoho.md")
+        for name in ["Alfa", "Beta", "Gama"] {
+            try vault.write("# \(name)\n\n## Poznámky\nDlouhý text o všem možném a jednou i klient.\n", to: "Projekty/\(name).md")
+        }
+        let index = makeIndex()
+        try await index.synchronize()
+
+        let results = try #require(try await index.search(SearchQuery("klient"), scope: .notes, limit: 50).first).results
+        #expect(results.count == 4)
+        #expect(Set(results.map(\.noteName)) == ["Mnoho", "Alfa", "Beta", "Gama"])
+        let crowdedResult = try #require(results.first { $0.noteName == "Mnoho" })
+        #expect(crowdedResult.matchingOrdinals.count == 60)
+        #expect(crowdedResult.ordinal == 1)
+        #expect(crowdedResult.title == "Klient 1")
+
+        let limited = try #require(try await index.search(SearchQuery("klient"), scope: .notes, limit: 3).first).results
+        #expect(Set(limited.map(\.relativePath)).count == 3)
+
+        let tagged = (1...60).map { "## Den \($0)\n#porada" }.joined(separator: "\n\n")
+        try vault.write(tagged + "\n", to: "Projekty/Mnoho.md")
+        try vault.write("## Jinde\n#porada\n", to: "Projekty/Alfa.md")
+        try await index.update(relativePaths: ["Projekty/Mnoho.md", "Projekty/Alfa.md"])
+        let tagResults = try #require(try await index.search(SearchQuery("#porada"), scope: .notes, limit: 50).first).results
+        #expect(tagResults.map(\.noteName) == ["Alfa", "Mnoho"])
+        #expect(tagResults.last?.matchingOrdinals.count == 60)
+        #expect(tagResults.last?.ordinal == 0)
+    }
+
+    @Test("each scope finds only its note kinds; All finds every kind")
+    func scopes() async throws {
+        let index = makeIndex()
+        try await index.synchronize()
+        let query = SearchQuery("klient")
+        #expect(try await index.search(query, scope: .all).map(\.kind) == [.dailyEntry, .brainNote])
+        #expect(try await index.search(query).map(\.kind) == [.dailyEntry, .brainNote])
+        #expect(try await index.search(query, scope: .journal).map(\.kind) == [.dailyEntry])
+        #expect(try await index.search(query, scope: .notes).isEmpty)
+        #expect(try await index.search(query, scope: .brain).map(\.kind) == [.brainNote])
+        #expect(try await index.search(SearchQuery("kickoff"), scope: .notes).flatMap(\.results).map(\.relativePath)
+            == ["Projekty/Plán.md"])
+    }
+
+    @Test("Tag filters work in every scope, Notes and Brain included")
+    func tagFiltersInEveryScope() async throws {
+        try vault.write("# Acme\n\n## Fakta #acme\nKlient fakt\n", to: "_brain/companies/Acme2.md")
+        let index = makeIndex()
+        try await index.synchronize()
+        let paths = { (query: String, scope: SearchScope) in
+            try await index.search(SearchQuery(query), scope: scope).flatMap(\.results).map(\.relativePath)
+        }
+        #expect(try await paths("#acme", .journal) == ["Journal/2026/03/2026-03-14.md"])
+        #expect(try await paths("#acme", .notes) == ["Projekty/Plán.md"])
+        #expect(try await paths("#acme", .brain) == ["_brain/companies/Acme2.md"])
+        #expect(try await paths("#acme klient", .brain) == ["_brain/companies/Acme2.md"])
+        // A longer Tag name and plain-text occurrences of the name are not the Tag.
+        #expect(try await paths("#acm", .all).isEmpty)
+        #expect(try await paths("#acme káva", .journal).isEmpty)
     }
 
     @Test("the text before the first Section is searchable on its own")
@@ -84,6 +165,10 @@ final class SearchIndexTests {
         }
         let title = try #require(try await index.search(SearchQuery("pozadavky")).first?.results.first)
         #expect(title.highlightedTitle.parts.filter(\.isMatch).map(\.text) == ["Požadavky"])
+        // A substring inside a word is not a prefix, in any scope.
+        for scope in SearchScope.allCases {
+            #expect(try await index.search(SearchQuery("ehled"), scope: scope).isEmpty, "\(scope)")
+        }
     }
 
     @Test("#tag filters to Sections with that Tag, ignoring case")
@@ -135,8 +220,11 @@ final class SearchIndexTests {
     /// Not valid UTF-8, so reading the note as text fails deterministically.
     private static let invalidUTF8 = Data([0x23, 0x23, 0x20, 0xFF, 0xFE, 0x0A, 0x61])
 
-    private func fileIDs(_ query: String, in index: SearchIndex) async throws -> [String] {
-        try await index.search(SearchQuery(query)).flatMap(\.results).map(\.relativePath)
+    /// The note path of every matching Section, so one file can appear more than once.
+    private func sectionPaths(_ query: String, in index: SearchIndex) async throws -> [String] {
+        try await index.search(SearchQuery(query)).flatMap(\.results).flatMap { result in
+            result.matchingOrdinals.map { _ in result.relativePath }
+        }
     }
 
     @Test("a new unreadable note reports a failure, is not recorded and is tried again with an unchanged stamp")
@@ -149,13 +237,13 @@ final class SearchIndexTests {
         let failure = await #expect(throws: SearchIndex.IndexingFailure.self) { try await index.synchronize() }
         #expect(failure?.files.map(\.relativePath) == ["Rozbitá.md"])
         // The readable notes of the same run are indexed.
-        #expect(try await fileIDs("přehled", in: index).contains("Projekty/Plán.md"))
-        #expect(!(try await fileIDs("ok", in: index).contains("Rozbitá.md")))
+        #expect(try await sectionPaths("přehled", in: index).contains("Projekty/Plán.md"))
+        #expect(!(try await sectionPaths("ok", in: index).contains("Rozbitá.md")))
 
         try Data("## Ok\nb".utf8).write(to: url)
         try FileManager.default.setAttributes([.modificationDate: modified], ofItemAtPath: url.path)
         try await index.synchronize()
-        #expect(try await fileIDs("ok", in: index) == ["Rozbitá.md"])
+        #expect(try await sectionPaths("ok", in: index) == ["Rozbitá.md"])
     }
 
     @Test("a failed replacement keeps the previous Sections, search text, Tags and Tag Timeline, and recovery replaces them")
@@ -176,8 +264,8 @@ final class SearchIndexTests {
         #expect(failure?.files.map(\.relativePath).sorted() == [journal, "Projekty/Plán.md"])
         #expect(try await index.tagTimeline(for: "acme") == timeline)
         #expect(try await index.journalTags() == tags)
-        #expect(try await fileIDs("kickoff", in: index).sorted() == [journal, journal, "Projekty/Plán.md"].sorted())
-        #expect(try await fileIDs("#acme", in: index).sorted() == [journal, "Projekty/Plán.md"].sorted())
+        #expect(try await sectionPaths("kickoff", in: index).sorted() == [journal, journal, "Projekty/Plán.md"].sorted())
+        #expect(try await sectionPaths("#acme", in: index).sorted() == [journal, "Projekty/Plán.md"].sorted())
 
         // Reopening the committed cache shows the same consistent data.
         let reopened = makeIndex()
@@ -190,8 +278,8 @@ final class SearchIndexTests {
         try await reopened.synchronize()
         #expect(try await reopened.tagTimeline(for: "acme").isEmpty)
         #expect(try await reopened.journalTags() == ["novy"])
-        #expect(try await fileIDs("kickoff", in: reopened).isEmpty)
-        #expect(try await fileIDs("zcela", in: reopened).sorted() == [journal, "Projekty/Plán.md"].sorted())
+        #expect(try await sectionPaths("kickoff", in: reopened).isEmpty)
+        #expect(try await sectionPaths("zcela", in: reopened).sorted() == [journal, "Projekty/Plán.md"].sorted())
     }
 
     @Test("a note whose explicit reread failed is retried by passive catch-up although its stamp matches the cache")
@@ -207,11 +295,11 @@ final class SearchIndexTests {
         try pinModificationDate(path)
         await #expect(throws: SearchIndex.IndexingFailure.self) { try await index.update(relativePaths: [path]) }
         await #expect(throws: SearchIndex.IndexingFailure.self) { try await index.synchronize() }
-        #expect(try await fileIDs("požadavky", in: index) == [path])
+        #expect(try await sectionPaths("požadavky", in: index) == [path])
 
         try replaceKeepingStamp(path, with: String(repeating: "x", count: bytes))
         try await index.synchronize()
-        #expect(try await fileIDs("požadavky", in: index).isEmpty)
+        #expect(try await sectionPaths("požadavky", in: index).isEmpty)
     }
 
     @Test("a confirmed deletion still removes the records of an unreadable note without failing")
@@ -225,7 +313,7 @@ final class SearchIndexTests {
         try FileManager.default.removeItem(at: vault.vault.rootURL.appending(path: journal))
         try await index.update(relativePaths: [journal])
         #expect(try await index.tagTimeline(for: "acme").isEmpty)
-        #expect(try await fileIDs("kickoff", in: index) == ["Projekty/Plán.md"])
+        #expect(try await sectionPaths("kickoff", in: index) == ["Projekty/Plán.md"])
     }
 
     @Test("a source that vanished after the scan is told apart from one that cannot be read")
@@ -280,21 +368,21 @@ final class SearchIndexTests {
         try vault.write("# Druhé\n\n## Řada\nalpha\n", to: "Projekty/Druhé.md")
         try pinModificationDate("Projekty/Pořadí.md", "Projekty/Druhé.md")
         try await index.synchronize()
-        #expect(try await fileIDs("alpha", in: index).sorted() == ["Projekty/Druhé.md", "Projekty/Pořadí.md"])
+        #expect(try await sectionPaths("alpha", in: index).sorted() == ["Projekty/Druhé.md", "Projekty/Pořadí.md"])
 
         try replaceKeepingStamp("Projekty/Pořadí.md", with: "# Pořadí\n\n## Řada\nomega\n")
         try replaceKeepingStamp("Projekty/Druhé.md", with: "# Druhé\n\n## Řada\nomega\n")
         // Passive catch-up trusts the matching stamps.
         try await index.synchronize()
-        #expect(try await fileIDs("omega", in: index).isEmpty)
+        #expect(try await sectionPaths("omega", in: index).isEmpty)
 
         try await index.update(fileAt: vault.vault.rootURL.appending(path: "Projekty/Pořadí.md"))
-        #expect(try await fileIDs("omega", in: index) == ["Projekty/Pořadí.md"])
-        #expect(try await fileIDs("alpha", in: index) == ["Projekty/Druhé.md"])
+        #expect(try await sectionPaths("omega", in: index) == ["Projekty/Pořadí.md"])
+        #expect(try await sectionPaths("alpha", in: index) == ["Projekty/Druhé.md"])
 
         try await index.update(relativePaths: ["Projekty/Druhé.md"])
-        #expect(try await fileIDs("omega", in: index).sorted() == ["Projekty/Druhé.md", "Projekty/Pořadí.md"])
-        #expect(try await fileIDs("alpha", in: index).isEmpty)
+        #expect(try await sectionPaths("omega", in: index).sorted() == ["Projekty/Druhé.md", "Projekty/Pořadí.md"])
+        #expect(try await sectionPaths("alpha", in: index).isEmpty)
     }
 
     @Test("folder and root scopes read the notes they contain again, Tags and Tag Timeline included")
@@ -326,11 +414,11 @@ final class SearchIndexTests {
         #expect(try await index.journalTags().contains("beta"))
         #expect(try await index.tagTimeline(for: "beta").first?.sections.first?.markdown
             == "## Kickoff Acme\nPřehled požadavků od klienta. #beta")
-        #expect(try await fileIDs("kickoff", in: index).contains("Projekty/Plán.md"))
+        #expect(try await sectionPaths("kickoff", in: index).contains("Projekty/Plán.md"))
 
         try await index.update(relativePaths: [""])
-        #expect(try await fileIDs("kickoff", in: index) == [journal, journal])
-        #expect(try await fileIDs("rozpisy", in: index) == ["Projekty/Plán.md"])
+        #expect(try await sectionPaths("kickoff", in: index) == [journal, journal])
+        #expect(try await sectionPaths("rozpisy", in: index) == ["Projekty/Plán.md"])
     }
 
     @Test("a catch-up can reread the paths a watcher reported while skipping everything else by stamp")
@@ -344,8 +432,8 @@ final class SearchIndexTests {
         try replaceKeepingStamp("Projekty/Dva.md", with: "# Dva\n\n## Řada\nomega\n")
 
         try await index.synchronize(rereading: ["Projekty/Jedna.md"])
-        #expect(try await fileIDs("omega", in: index) == ["Projekty/Jedna.md"])
-        #expect(try await fileIDs("alpha", in: index) == ["Projekty/Dva.md"])
+        #expect(try await sectionPaths("omega", in: index) == ["Projekty/Jedna.md"])
+        #expect(try await sectionPaths("alpha", in: index) == ["Projekty/Dva.md"])
     }
 
     @Test("an explicit update still forgets deleted and renamed notes and ignores files outside the Vault")
@@ -355,12 +443,12 @@ final class SearchIndexTests {
         let root = vault.vault.rootURL
         try FileManager.default.moveItem(at: root.appending(path: "Projekty/Plán.md"), to: root.appending(path: "Projekty/Nový plán.md"))
         try await index.update(relativePaths: ["Projekty"])
-        #expect(try await fileIDs("požadavky", in: index) == ["Projekty/Nový plán.md"])
+        #expect(try await sectionPaths("požadavky", in: index) == ["Projekty/Nový plán.md"])
 
         try FileManager.default.removeItem(at: root.appending(path: "Projekty/Nový plán.md"))
         try await index.update(fileAt: root.appending(path: "Projekty/Nový plán.md"))
         try await index.update(fileAt: URL(filePath: "/tmp/elsewhere.md"))
-        #expect(try await fileIDs("požadavky", in: index).isEmpty)
+        #expect(try await sectionPaths("požadavky", in: index).isEmpty)
     }
 
     @Test("on start the index catches up with changes made while the app was closed")
@@ -390,9 +478,9 @@ final class SearchIndexTests {
         try Data("not a database".utf8).write(to: databaseURL)
         let index = makeIndex()
         try await index.synchronize()
-        #expect(try await index.search(SearchQuery("kickoff")).flatMap(\.results).count == 3)
+        #expect(ids(try await index.search(SearchQuery("kickoff"))).count == 3)
         try await index.rebuild()
-        #expect(try await index.search(SearchQuery("kickoff")).flatMap(\.results).count == 3)
+        #expect(ids(try await index.search(SearchQuery("kickoff"))).count == 3)
     }
 
     @Test("an index from another schema version is discarded")
@@ -407,8 +495,9 @@ final class SearchIndexTests {
 
     // MARK: - Tags in headings
 
+    /// Every matching Section, as note name and ordinal, file by file.
     private func ids(_ groups: [SearchResultGroup]) -> [String] {
-        groups.flatMap(\.results).map { "\($0.noteName)#\($0.ordinal)" }
+        groups.flatMap(\.results).flatMap { result in result.matchingOrdinals.map { "\(result.noteName)#\($0)" } }
     }
 
     private func writeHeadingTagNotes() throws {

@@ -222,59 +222,110 @@ public actor SearchIndex {
 
     // MARK: - Searching
 
-    /// Sections matching `query`, grouped Journal, Notes, Brain; at most
-    /// `limit` per group, best matches first. Tag-only queries list Journal
-    /// Sections newest first.
-    public func search(_ query: SearchQuery, limit: Int = 50) throws -> [SearchResultGroup] {
+    /// Notes with a Section matching `query` in the note kinds of `scope`,
+    /// grouped Journal, Notes, Brain: one result per file, shown by its first
+    /// matching Section. At most `limit` files per group, counted after
+    /// grouping by file, so many matching Sections in one note never hide
+    /// other notes. Files are ranked by their best Section; Tag-only queries
+    /// list Daily Entries newest first and other notes by path.
+    public func search(_ query: SearchQuery, scope: SearchScope = .all, limit: Int = 50) throws -> [SearchResultGroup] {
         guard !query.isEmpty else { return [] }
         let db = try openDatabase()
         let tagFilter = query.tags.map { _ in " AND s.id IN (SELECT section_id FROM section_tags WHERE tag = ?)" }.joined()
         let tagValues = query.tags.map { SQLiteDatabase.Value.text($0) }
 
-        return try NoteKind.searchOrder.compactMap { kind in
-            let results: [SearchResult]
+        return try scope.kinds.compactMap { kind in
+            let kindValue = SQLiteDatabase.Value.int(Int64(kind.searchIndexCode))
+            let files: [MatchingFile]
+            let previews: [Int64: (title: String?, highlightedTitle: SearchSnippet, snippet: SearchSnippet)]
             if let expression = query.ftsExpression {
+                // Files rank by their best Section. MATERIALIZED keeps bm25() in the
+                // fulltext query; group_concat keeps no order, so ordinals are sorted later.
+                files = try db.query("""
+                    WITH hits AS MATERIALIZED (
+                        SELECT s.id, s.path, s.ordinal, bm25(sections_fts, 4.0, 1.0) AS rank
+                        FROM sections_fts JOIN sections s ON s.id = sections_fts.rowid
+                        WHERE sections_fts MATCH ? AND s.kind = ?\(tagFilter)
+                    )
+                    SELECT path, group_concat(ordinal || ':' || id) FROM hits
+                    GROUP BY path ORDER BY MIN(rank), path
+                    LIMIT ?
+                    """, [.text(expression), kindValue] + tagValues + [.int(Int64(limit))]).compactMap(MatchingFile.init)
+                guard !files.isEmpty else { return nil }
+                let ids = files.map(\.firstSectionID)
                 let rows = try db.query("""
-                    SELECT s.path, s.ordinal, s.title,
+                    SELECT s.id, s.title,
                            highlight(sections_fts, 0, char(2), char(3)),
                            snippet(sections_fts, 1, char(2), char(3), '…', 16)
                     FROM sections_fts JOIN sections s ON s.id = sections_fts.rowid
-                    WHERE sections_fts MATCH ? AND s.kind = ?\(tagFilter)
-                    ORDER BY bm25(sections_fts, 4.0, 1.0), s.path, s.ordinal
-                    LIMIT ?
-                    """, [.text(expression), .int(Int64(kind.searchIndexCode))] + tagValues + [.int(Int64(limit))])
-                results = rows.map { row in
-                    SearchResult(
-                        relativePath: row[0].text ?? "",
-                        kind: kind,
-                        ordinal: row[1].int ?? 0,
-                        title: row[2].text,
-                        highlightedTitle: SearchSnippet(marked: row[3].text ?? "", start: "\u{2}", end: "\u{3}"),
-                        snippet: SearchSnippet(marked: row[4].text ?? "", start: "\u{2}", end: "\u{3}")
-                    )
-                }
+                    WHERE sections_fts MATCH ? AND sections_fts.rowid IN (\(ids.map { _ in "?" }.joined(separator: ",")))
+                    """, [.text(expression)] + ids.map { .int($0) })
+                previews = Dictionary(uniqueKeysWithValues: rows.map { row in
+                    (row[0].int.map(Int64.init) ?? 0, (
+                        row[1].text,
+                        SearchSnippet(marked: row[2].text ?? "", start: "\u{2}", end: "\u{3}"),
+                        SearchSnippet(marked: row[3].text ?? "", start: "\u{2}", end: "\u{3}")
+                    ))
+                })
             } else {
                 let order = kind == .dailyEntry ? "s.path DESC" : "s.path"
-                let rows = try db.query("""
-                    SELECT s.path, s.ordinal, s.title, f.body
-                    FROM sections s JOIN sections_fts f ON f.rowid = s.id
+                files = try db.query("""
+                    SELECT s.path, group_concat(s.ordinal || ':' || s.id) FROM sections s
                     WHERE s.kind = ?\(tagFilter)
-                    ORDER BY \(order), s.ordinal
+                    GROUP BY s.path ORDER BY \(order)
                     LIMIT ?
-                    """, [.int(Int64(kind.searchIndexCode))] + tagValues + [.int(Int64(limit))])
-                results = rows.map { row in
-                    let title = row[2].text
-                    return SearchResult(
-                        relativePath: row[0].text ?? "",
-                        kind: kind,
-                        ordinal: row[1].int ?? 0,
-                        title: title,
-                        highlightedTitle: SearchSnippet(text: title ?? "", highlighting: "#" + query.tags[0]),
-                        snippet: SearchSnippet(text: row[3].text ?? "", highlighting: "#" + query.tags[0])
-                    )
-                }
+                    """, [kindValue] + tagValues + [.int(Int64(limit))]).compactMap(MatchingFile.init)
+                guard !files.isEmpty else { return nil }
+                let ids = files.map(\.firstSectionID)
+                let rows = try db.query("""
+                    SELECT s.id, s.title, f.body FROM sections s JOIN sections_fts f ON f.rowid = s.id
+                    WHERE s.id IN (\(ids.map { _ in "?" }.joined(separator: ",")))
+                    """, ids.map { .int($0) })
+                let needle = "#" + query.tags[0]
+                previews = Dictionary(uniqueKeysWithValues: rows.map { row in
+                    let title = row[1].text
+                    return (row[0].int.map(Int64.init) ?? 0, (
+                        title,
+                        SearchSnippet(text: title ?? "", highlighting: needle),
+                        SearchSnippet(text: row[2].text ?? "", highlighting: needle)
+                    ))
+                })
+            }
+            let results = files.compactMap { file -> SearchResult? in
+                guard let preview = previews[file.firstSectionID] else { return nil }
+                return SearchResult(
+                    relativePath: file.path,
+                    kind: kind,
+                    ordinal: file.ordinals[0],
+                    title: preview.title,
+                    highlightedTitle: preview.highlightedTitle,
+                    snippet: preview.snippet,
+                    matchingOrdinals: file.ordinals,
+                    query: query
+                )
             }
             return results.isEmpty ? nil : SearchResultGroup(kind: kind, results: results)
+        }
+    }
+
+    /// A row of the per-file search query: the path and its matching Sections
+    /// as `ordinal:id` pairs.
+    private struct MatchingFile {
+        let path: String
+        let ordinals: [Int]
+        let firstSectionID: Int64
+
+        init?(_ row: [SQLiteDatabase.Value]) {
+            guard let path = row[0].text, let pairs = row[1].text else { return nil }
+            let sections = pairs.split(separator: ",").compactMap { pair -> (ordinal: Int, id: Int64)? in
+                let parts = pair.split(separator: ":")
+                guard parts.count == 2, let ordinal = Int(parts[0]), let id = Int64(parts[1]) else { return nil }
+                return (ordinal, id)
+            }.sorted { $0.ordinal < $1.ordinal }
+            guard let first = sections.first else { return nil }
+            self.path = path
+            ordinals = sections.map(\.ordinal)
+            firstSectionID = first.id
         }
     }
 

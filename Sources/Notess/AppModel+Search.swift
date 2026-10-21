@@ -3,17 +3,21 @@ import NotessCore
 import NotessEditor
 
 extension AppModel {
-    /// Cmd+Shift+F: the Spotlight-style search over Sections.
+    /// Cmd+Shift+F: the Spotlight-style global search of saved notes. Every
+    /// opening starts empty and on All; an open search stays as it is.
     func presentSearch() {
-        guard vault != nil else { return }
+        guard vault != nil, let index = searchIndex else { return }
         isQuickOpenPresented = false
-        isSearchPresented = true
+        guard globalSearch == nil else { return }
+        globalSearch = GlobalSearch(index: index)
     }
 
-    /// Opens the note of a search result in a tab and scrolls to its Section.
+    /// Opens the note of a search result in a tab, reusing its tab and any
+    /// unsaved text, at the first match in the tab's current text.
     func openSearchResult(_ result: SearchResult) {
         isSearchPresented = false
-        openSection(relativePath: result.relativePath, title: result.title, ordinal: result.ordinal)
+        guard let document = openExistingNote(relativePath: result.relativePath) else { return }
+        reveal = EditorReveal(documentID: document.id, range: result.firstMatchRange(in: document.text))
     }
 
     /// The saved file of the note a Tag Timeline Section comes from; its images
@@ -27,15 +31,6 @@ extension AppModel {
         guard let document = openExistingNote(relativePath: section.relativePath) else { return }
         let heading = HeadingSection.locate(title: section.title, ordinal: section.ordinal, in: document.text)
         let range = heading?.headingRange ?? NSRange(location: heading?.range.location ?? 0, length: 0)
-        reveal = EditorReveal(documentID: document.id, range: range)
-    }
-
-    /// Opens a note in Journal mode, reusing its tab (and any unsaved text), and
-    /// reveals the Section as found in the tab's current text.
-    private func openSection(relativePath: String, title: String?, ordinal: Int) {
-        guard let document = openExistingNote(relativePath: relativePath) else { return }
-        let section = SearchSection.locate(title: title, ordinal: ordinal, in: document.text)
-        let range = section?.headingRange ?? NSRange(location: section?.range.location ?? 0, length: 0)
         reveal = EditorReveal(documentID: document.id, range: range)
     }
 
