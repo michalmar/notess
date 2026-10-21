@@ -42,6 +42,43 @@ public final class MarkdownTextView: NSTextView {
         }
     }
 
+    // MARK: Find in note
+
+    lazy var find = EditorFind(textView: self)
+
+    /// Cmd+F: opens the find bar for this note and focuses its query field.
+    @objc public func showFind(_ sender: Any?) {
+        guard isSelectable else {
+            NSSound.beep()
+            return
+        }
+        find.show()
+    }
+
+    /// The Edit ▸ Find items (Find, Find Next, Find Previous, Use Selection for Find)
+    /// drive the in-note find bar instead of AppKit's own, which also offers replacement.
+    public override func performFindPanelAction(_ sender: Any?) {
+        let tag = (sender as? NSValidatedUserInterfaceItem)?.tag ?? NSTextFinder.Action.showFindInterface.rawValue
+        // Replacement is out of scope: its actions are ignored.
+        switch NSTextFinder.Action(rawValue: tag) {
+        case .nextMatch: find.step(forward: true)
+        case .previousMatch: find.step(forward: false)
+        case .setSearchString: find.useSelectionAsQuery()
+        case .showFindInterface: showFind(sender)
+        default: NSSound.beep()
+        }
+    }
+
+    /// The ranges the open find bar highlights, in note order.
+    var findMatches: [NSRange] { find.matches }
+
+    func findHighlightRects(for range: NSRange) -> [NSRect] { find.rects(for: range) }
+
+    public override func drawBackground(in rect: NSRect) {
+        super.drawBackground(in: rect)
+        find.drawHighlights(in: rect)
+    }
+
     public override func scrollRangeToVisible(_ range: NSRange) {
         headingFolding.reveal(range)
         super.scrollRangeToVisible(range)
@@ -134,6 +171,10 @@ public final class MarkdownTextView: NSTextView {
 
     /// Escape closes open Tag suggestions without editing.
     public override func cancelOperation(_ sender: Any?) {
+        if find.isOpen, tagCompleter.visibleRows.isEmpty {
+            find.close()
+            return
+        }
         let wasShowing = !tagCompleter.visibleRows.isEmpty
         tagCompleter.dismiss()
         if !wasShowing { super.cancelOperation(sender) }
@@ -290,6 +331,7 @@ public final class MarkdownTextView: NSTextView {
             pendingEditedRange = nil
             tagCompleter.dismiss()
             headingFolding.reset()
+            find.textDidChange()
         }
     }
 
@@ -310,6 +352,7 @@ public final class MarkdownTextView: NSTextView {
         hasUnreportedTextEdit = false
         pendingEditedRange = nil
         super.didChangeText()
+        find.textDidChange()
         if !isApplyingTagCompletion {
             tagCompleter.textDidChange(editedRange: editedRange)
         }
@@ -409,10 +452,16 @@ public final class MarkdownTextView: NSTextView {
         if item.action == #selector(toggleHeadingFold(_:)) {
             return isSelectable && headingFolding.canToggle(at: selectedRange().location)
         }
+        if item.action == #selector(performFindPanelAction(_:)) || item.action == #selector(showFind(_:)) {
+            return isSelectable
+        }
         return validatePaste(item.action) ?? validateTableCommand(item.action) ?? super.validateUserInterfaceItem(item)
     }
 
     public override func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        if menuItem.action == #selector(performFindPanelAction(_:)) || menuItem.action == #selector(showFind(_:)) {
+            return isSelectable
+        }
         if menuItem.action == #selector(toggleHeadingFold(_:)) {
             let location = menuItem.representedObject as? Int ?? selectedRange().location
             return isSelectable && headingFolding.canToggle(at: location)
