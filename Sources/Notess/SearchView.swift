@@ -1,8 +1,9 @@
 import NotessCore
 import SwiftUI
 
-/// The Cmd+Shift+F overlay: fulltext search of saved notes, grouped Journal /
-/// Notes / Brain and narrowed by an All / Journal / Notes / Brain scope.
+/// The Cmd+Shift+F overlay: fulltext search of saved notes, one row per
+/// matching note, grouped Journal / Notes / Brain and narrowed by an All /
+/// Journal / Notes / Brain scope.
 /// `#tag` words in the query filter by Tag.
 struct SearchView: View {
     @Bindable var search: GlobalSearch
@@ -127,6 +128,8 @@ struct SearchView: View {
     }
 }
 
+/// One matching note: its name and path, the first matching Section's heading
+/// and a preview of the match.
 private struct SearchResultRow: View {
     let result: SearchResult
 
@@ -136,17 +139,18 @@ private struct SearchResultRow: View {
                 .foregroundStyle(.secondary)
             VStack(alignment: .leading, spacing: 3) {
                 HStack(alignment: .firstTextBaseline) {
-                    if result.title != nil {
-                        Text(Self.attributed(result.highlightedTitle))
-                            .lineLimit(1)
-                    } else {
-                        Text(result.noteName)
-                            .lineLimit(1)
-                    }
-                    Spacer()
-                    Text(result.title == nil ? result.relativePath : result.noteName)
+                    Text(result.noteName)
+                        .fontWeight(.medium)
+                        .lineLimit(1)
+                    Text(result.relativePath)
                         .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.tertiary)
+                        .lineLimit(1)
+                        .truncationMode(.head)
+                }
+                if result.title != nil, result.title != result.noteName || result.highlightedTitle.parts.contains(where: \.isMatch) {
+                    Text(Self.attributed(result.highlightedTitle))
+                        .font(.callout)
                         .lineLimit(1)
                 }
                 if !result.snippet.parts.isEmpty {

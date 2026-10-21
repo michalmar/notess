@@ -53,10 +53,13 @@ struct AppModelOpenNoteTests {
             ordinal: 1,
             title: "Current",
             highlightedTitle: SearchSnippet(text: "Current", highlighting: "Current"),
-            snippet: SearchSnippet(text: "Local text", highlighting: "Local")
+            snippet: SearchSnippet(text: "Local text", highlighting: "Local"),
+            matchingOrdinals: [1],
+            query: SearchQuery("local")
         ))
         #expect(model.document === document)
         #expect(model.reveal?.documentID == AnyHashable(document.id))
+        #expect(model.reveal?.range == (document.text as NSString).range(of: "Local"))
 
         _ = model.openExistingNote(relativePath: "Notes/Other.md")
         model.openTimelineSection(TagTimelineSection(

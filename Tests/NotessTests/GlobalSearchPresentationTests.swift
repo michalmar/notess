@@ -92,6 +92,49 @@ struct GlobalSearchPresentationTests {
         harness.type("novinka")
         try await harness.waitUntil { after.results.map(\.relativePath) == ["Notes/Plán.md"] }
     }
+
+    @Test("a note with several matching Sections is one row with a matching preview; Enter opens its dirty tab at the first match")
+    func fileResultsOpenAtFirstMatch() async throws {
+        let fixture = try SearchPresentationFixture()
+        let saved = "# Plán\n\nÚvod bez shody\n\n## Kickoff\nKickoff s klientem\n\n## Retro\nkickoff znovu\n"
+        try fixture.write(saved, to: "Notes/Plán.md")
+        try fixture.write("## Jinde\nTaky kickoff\n", to: "Notes/Jiný.md")
+        let harness = try await fixture.makeHarness()
+        let editor = try #require(harness.editor)
+        let document = try #require(harness.model.document)
+        editor.setSelectedRange(NSRange(location: 0, length: 0))
+        editor.insertText("Neuložený řádek\n", replacementRange: NSRange(location: 0, length: 0))
+        let dirtyText = "Neuložený řádek\n" + saved
+        #expect(document.text == dirtyText)
+        #expect(document.hasUnsavedChanges)
+
+        let tablesBeforeSearch = Set(harness.tables.map(ObjectIdentifier.init))
+        harness.model.presentSearch()
+        await harness.settle()
+        harness.type("kickoff")
+        let search = try #require(harness.model.globalSearch)
+        try await harness.waitUntil { search.results.count == 2 && !search.isSearching }
+        #expect(Set(search.results.map(\.relativePath)) == ["Notes/Plán.md", "Notes/Jiný.md"])
+        let plan = try #require(search.results.first { $0.relativePath == "Notes/Plán.md" })
+        #expect(plan.matchingOrdinals.count == 2)
+        #expect(plan.title == "Kickoff")
+        #expect((plan.highlightedTitle.parts + plan.snippet.parts).contains { $0.isMatch && $0.text.lowercased() == "kickoff" })
+        await harness.settle()
+        let list = try #require(harness.tables.first { !tablesBeforeSearch.contains(ObjectIdentifier($0)) })
+        #expect(list.numberOfRows == search.groups.count + search.results.count, "one header and one row per note")
+
+        search.selection = plan.id
+        await harness.settle()
+        harness.pressReturn()
+        try await harness.waitUntil { harness.model.globalSearch == nil && harness.window.firstResponder === editor }
+        await harness.settle()
+
+        #expect(harness.model.document === document)
+        #expect(document.text == dirtyText, "unsaved text is kept")
+        #expect(editor.string == dirtyText)
+        let firstMatch = (dirtyText as NSString).range(of: "Kickoff")
+        #expect(editor.selectedRange() == NSRange(location: firstMatch.location, length: 0))
+    }
 }
 
 @MainActor
@@ -146,6 +189,27 @@ final class SearchPresentationHarness {
             )
             if let event { window.sendEvent(event) }
         }
+    }
+
+    /// The tables shown, such as the sidebar and the search result list.
+    var tables: [NSTableView] {
+        allSubviews(of: hostingView).compactMap { $0 as? NSTableView }
+    }
+
+    func pressReturn() {
+        let event = NSEvent.keyEvent(
+            with: .keyDown,
+            location: .zero,
+            modifierFlags: [],
+            timestamp: 0,
+            windowNumber: window.windowNumber,
+            context: nil,
+            characters: "\r",
+            charactersIgnoringModifiers: "\r",
+            isARepeat: false,
+            keyCode: 36
+        )
+        if let event { window.sendEvent(event) }
     }
 
     /// Lets SwiftUI update and runs deferred focus changes queued on the main queue.
@@ -229,3 +293,4 @@ final class SearchPresentationFixture {
         return harness
     }
 }
+
