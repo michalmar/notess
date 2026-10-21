@@ -1,30 +1,24 @@
 import NotessCore
 import SwiftUI
 
-/// The Cmd+Shift+F overlay: fulltext search over Sections, grouped Journal /
-/// Notes / Brain. `#tag` words in the query filter by Tag.
+/// The Cmd+Shift+F overlay: fulltext search of saved notes, grouped Journal /
+/// Notes / Brain and narrowed by an All / Journal / Notes / Brain scope.
+/// `#tag` words in the query filter by Tag.
 struct SearchView: View {
-    let index: SearchIndex
+    @Bindable var search: GlobalSearch
     let isIndexing: Bool
     let revision: Int
     let open: (SearchResult) -> Void
     let dismiss: () -> Void
 
-    @State private var query = ""
-    @State private var groups: [SearchResultGroup] = []
-    @State private var selection: SearchResult.ID?
-    @State private var searchTask: Task<Void, Never>?
-    @State private var searchError: String?
     @FocusState private var isSearchFocused: Bool
-
-    private var results: [SearchResult] { groups.flatMap(\.results) }
 
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: 10) {
                 Image(systemName: "magnifyingglass")
                     .foregroundStyle(.secondary)
-                TextField("Hledat v poznámkách… (#tag filtruje)", text: $query)
+                TextField("Hledat v uložených poznámkách… (#tag filtruje)", text: $search.query)
                     .textFieldStyle(.plain)
                     .font(.title3)
                     .focused($isSearchFocused)
@@ -37,6 +31,25 @@ struct SearchView: View {
             }
             .padding(14)
 
+            HStack(spacing: 10) {
+                Picker("Rozsah hledání", selection: $search.scope) {
+                    ForEach(SearchScope.allCases, id: \.self) { scope in
+                        Text(scope.title).tag(scope)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .fixedSize()
+                .focusable(false)
+                Spacer()
+                Label("Jen uložené poznámky", systemImage: "internaldrive")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .help("Hledání používá uložené soubory. Neuložené změny v otevřených poznámkách se v něm neprojeví, dokud je neuložíte.")
+            }
+            .padding(.horizontal, 14)
+            .padding(.bottom, 10)
+
             Divider()
 
             content
@@ -45,39 +58,42 @@ struct SearchView: View {
         .frame(width: 640)
         .background(.regularMaterial, in: .rect(cornerRadius: 12))
         .shadow(radius: 16)
-        .onAppear { isSearchFocused = true }
-        .onChange(of: query) { _, _ in runSearch(debounce: true) }
-        .onChange(of: revision) { _, _ in runSearch(debounce: false) }
+        // Deferred one turn: focusing during the overlay's first appearance is
+        // dropped while the editor still holds first responder.
+        .onAppear { DispatchQueue.main.async { isSearchFocused = true } }
+        .onChange(of: revision) { _, _ in search.refresh() }
         .onMoveCommand(perform: moveSelection)
         .onExitCommand(perform: dismiss)
-        .onDisappear { searchTask?.cancel() }
+        .onDisappear { search.cancel() }
     }
 
     @ViewBuilder
     private var content: some View {
-        if SearchQuery(query).isEmpty {
+        if search.parsedQuery.isEmpty {
             ContentUnavailableView(
-                "Hledání v Sekcích",
+                "Hledání v uložených poznámkách",
                 systemImage: "text.magnifyingglass",
-                description: Text("Pište slova, která má Sekce obsahovat. `#tag` omezí výsledky na Sekce s Tagem.")
+                description: Text("Pište slova, která má Sekce obsahovat. `#tag` omezí výsledky na Sekce s Tagem. Neuložené změny se nehledají.")
             )
-        } else if let searchError {
+        } else if let error = search.error {
             ContentUnavailableView(
                 "Hledání selhalo",
                 systemImage: "exclamationmark.triangle",
-                description: Text(searchError)
+                description: Text(error)
             )
-        } else if results.isEmpty {
+        } else if search.results.isEmpty {
             if isIndexing {
                 ProgressView("Indexuji poznámky…")
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if search.isSearching {
+                Color.clear
             } else {
-                ContentUnavailableView.search(text: query)
+                ContentUnavailableView.search(text: search.query)
             }
         } else {
             ScrollViewReader { proxy in
-                List(selection: $selection) {
-                    ForEach(groups) { group in
+                List(selection: $search.selection) {
+                    ForEach(search.groups) { group in
                         Section(group.kind.searchGroupTitle) {
                             ForEach(group.results) { result in
                                 SearchResultRow(result: result)
@@ -89,7 +105,7 @@ struct SearchView: View {
                     }
                 }
                 .listStyle(.plain)
-                .onChange(of: selection) { _, selected in
+                .onChange(of: search.selection) { _, selected in
                     guard let selected else { return }
                     proxy.scrollTo(selected)
                 }
@@ -97,49 +113,16 @@ struct SearchView: View {
         }
     }
 
-    private func runSearch(debounce: Bool) {
-        searchTask?.cancel()
-        let query = SearchQuery(query)
-        searchTask = Task {
-            if debounce {
-                do { try await Task.sleep(for: .milliseconds(120)) } catch { return }
-            }
-            let outcome: Result<[SearchResultGroup], Error>
-            do {
-                outcome = .success(try await index.search(query))
-            } catch {
-                outcome = .failure(error)
-            }
-            guard !Task.isCancelled else { return }
-            let found = (try? outcome.get()) ?? []
-            if case .failure(let error) = outcome {
-                searchError = error.localizedDescription
-            } else {
-                searchError = nil
-            }
-            groups = found
-            if selection.map({ id in !found.contains { $0.results.contains { $0.id == id } } }) ?? true {
-                selection = found.first?.results.first?.id
-            }
-        }
-    }
-
     private func moveSelection(_ direction: MoveCommandDirection) {
-        let ids = results.map(\.id)
-        guard !ids.isEmpty else { return }
-        guard let current = selection.flatMap({ ids.firstIndex(of: $0) }) else {
-            selection = ids.first
-            return
-        }
         switch direction {
-        case .up: selection = ids[max(0, current - 1)]
-        case .down: selection = ids[min(ids.count - 1, current + 1)]
+        case .up: search.moveSelection(by: -1)
+        case .down: search.moveSelection(by: 1)
         default: break
         }
     }
 
     private func openSelection() {
-        guard let result = results.first(where: { $0.id == selection }) ?? results.first else { return }
+        guard let result = search.selectedResult else { return }
         open(result)
     }
 }
@@ -187,6 +170,17 @@ private struct SearchResultRow: View {
                 text.backgroundColor = Color.accentColor.opacity(0.25)
             }
             result += text
+        }
+    }
+}
+
+private extension SearchScope {
+    var title: String {
+        switch self {
+        case .all: "Vše"
+        case .journal: "Journal"
+        case .notes: "Notes"
+        case .brain: "Brain"
         }
     }
 }

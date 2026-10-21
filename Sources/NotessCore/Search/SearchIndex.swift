@@ -222,16 +222,16 @@ public actor SearchIndex {
 
     // MARK: - Searching
 
-    /// Sections matching `query`, grouped Journal, Notes, Brain; at most
-    /// `limit` per group, best matches first. Tag-only queries list Journal
-    /// Sections newest first.
-    public func search(_ query: SearchQuery, limit: Int = 50) throws -> [SearchResultGroup] {
+    /// Sections matching `query` in the note kinds of `scope`, grouped Journal,
+    /// Notes, Brain; at most `limit` per group, best matches first. Tag-only
+    /// queries list Journal Sections newest first.
+    public func search(_ query: SearchQuery, scope: SearchScope = .all, limit: Int = 50) throws -> [SearchResultGroup] {
         guard !query.isEmpty else { return [] }
         let db = try openDatabase()
         let tagFilter = query.tags.map { _ in " AND s.id IN (SELECT section_id FROM section_tags WHERE tag = ?)" }.joined()
         let tagValues = query.tags.map { SQLiteDatabase.Value.text($0) }
 
-        return try NoteKind.searchOrder.compactMap { kind in
+        return try scope.kinds.compactMap { kind in
             let results: [SearchResult]
             if let expression = query.ftsExpression {
                 let rows = try db.query("""

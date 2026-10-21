@@ -54,6 +54,37 @@ final class SearchIndexTests {
         #expect(brain.map(\.kind) == [.dailyEntry, .brainNote])
     }
 
+    @Test("each scope finds only its note kinds; All finds every kind")
+    func scopes() async throws {
+        let index = makeIndex()
+        try await index.synchronize()
+        let query = SearchQuery("klient")
+        #expect(try await index.search(query, scope: .all).map(\.kind) == [.dailyEntry, .brainNote])
+        #expect(try await index.search(query).map(\.kind) == [.dailyEntry, .brainNote])
+        #expect(try await index.search(query, scope: .journal).map(\.kind) == [.dailyEntry])
+        #expect(try await index.search(query, scope: .notes).isEmpty)
+        #expect(try await index.search(query, scope: .brain).map(\.kind) == [.brainNote])
+        #expect(try await index.search(SearchQuery("kickoff"), scope: .notes).flatMap(\.results).map(\.relativePath)
+            == ["Projekty/Plán.md"])
+    }
+
+    @Test("Tag filters work in every scope, Notes and Brain included")
+    func tagFiltersInEveryScope() async throws {
+        try vault.write("# Acme\n\n## Fakta #acme\nKlient fakt\n", to: "_brain/companies/Acme2.md")
+        let index = makeIndex()
+        try await index.synchronize()
+        let paths = { (query: String, scope: SearchScope) in
+            try await index.search(SearchQuery(query), scope: scope).flatMap(\.results).map(\.relativePath)
+        }
+        #expect(try await paths("#acme", .journal) == ["Journal/2026/03/2026-03-14.md"])
+        #expect(try await paths("#acme", .notes) == ["Projekty/Plán.md"])
+        #expect(try await paths("#acme", .brain) == ["_brain/companies/Acme2.md"])
+        #expect(try await paths("#acme klient", .brain) == ["_brain/companies/Acme2.md"])
+        // A longer Tag name and plain-text occurrences of the name are not the Tag.
+        #expect(try await paths("#acm", .all).isEmpty)
+        #expect(try await paths("#acme káva", .journal).isEmpty)
+    }
+
     @Test("the text before the first Section is searchable on its own")
     func preamble() async throws {
         let index = makeIndex()
@@ -84,6 +115,10 @@ final class SearchIndexTests {
         }
         let title = try #require(try await index.search(SearchQuery("pozadavky")).first?.results.first)
         #expect(title.highlightedTitle.parts.filter(\.isMatch).map(\.text) == ["Požadavky"])
+        // A substring inside a word is not a prefix, in any scope.
+        for scope in SearchScope.allCases {
+            #expect(try await index.search(SearchQuery("ehled"), scope: scope).isEmpty, "\(scope)")
+        }
     }
 
     @Test("#tag filters to Sections with that Tag, ignoring case")

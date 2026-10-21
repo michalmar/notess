@@ -3,11 +3,13 @@ import NotessCore
 import NotessEditor
 
 extension AppModel {
-    /// Cmd+Shift+F: the Spotlight-style search over Sections.
+    /// Cmd+Shift+F: the Spotlight-style global search of saved notes. Every
+    /// opening starts empty and on All; an open search stays as it is.
     func presentSearch() {
-        guard vault != nil else { return }
+        guard vault != nil, let index = searchIndex else { return }
         isQuickOpenPresented = false
-        isSearchPresented = true
+        guard globalSearch == nil else { return }
+        globalSearch = GlobalSearch(index: index)
     }
 
     /// Opens the note of a search result in a tab and scrolls to its Section.
