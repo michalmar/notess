@@ -165,6 +165,7 @@ final class MarkdownHighlighter: NSObject, NSTextStorageDelegate, NSTextLayoutMa
         case .heading(let level):
             let size = style.font.pointSize * MarkdownEditorStyle.headingScale(level)
             storage.addAttribute(.font, value: font(style.font, size: size, traits: .bold), range: range)
+            applyHeadingSpacing(to: range, in: storage)
         case .codeBlock:
             storage.addAttributes([.font: style.codeFont, .backgroundColor: colors.codeBackground], range: range)
         case .frontMatter:
@@ -207,6 +208,33 @@ final class MarkdownHighlighter: NSObject, NSTextStorageDelegate, NSTextLayoutMa
         case .task:
             storage.addAttributes([.foregroundColor: colors.task, .cursor: NSCursor.pointingHand], range: range)
         }
+    }
+
+    /// Visual-only spacing above and below a heading via paragraph style; the
+    /// text is untouched. A setext heading takes the space below after its
+    /// underline line, so the two lines stay together.
+    private func applyHeadingSpacing(to range: NSRange, in storage: NSTextStorage) {
+        let string = storage.string as NSString
+        let spacing = style.headingSpacing
+        let before = NSMutableParagraphStyle()
+        before.paragraphSpacingBefore = spacing
+        let line = string.lineRange(for: range)
+        let underline = line.upperBound < string.length ? string.lineRange(for: NSRange(location: line.upperBound, length: 0)) : nil
+        let isSetext = !string.substring(with: range).hasPrefix("#") && underline.map { Self.isSetextUnderline(string.substring(with: $0)) } == true
+        if isSetext, let underline {
+            let after = NSMutableParagraphStyle()
+            after.paragraphSpacing = spacing
+            storage.addAttribute(.paragraphStyle, value: after, range: underline)
+        } else {
+            before.paragraphSpacing = spacing
+        }
+        storage.addAttribute(.paragraphStyle, value: before, range: range)
+    }
+
+    private static func isSetextUnderline(_ line: String) -> Bool {
+        let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let first = trimmed.first, first == "=" || first == "-" else { return false }
+        return trimmed.allSatisfy { $0 == first }
     }
 
     private func addTraits(_ traits: NSFontDescriptor.SymbolicTraits, in range: NSRange, of storage: NSTextStorage) {
