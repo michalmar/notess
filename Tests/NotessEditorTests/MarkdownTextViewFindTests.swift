@@ -161,6 +161,50 @@ struct MarkdownTextViewFindTests {
         #expect(after == background)
     }
 
+    @Test("Edit ▸ Find Next and Find Previous step through matches; replacement does nothing")
+    func findMenuActions() throws {
+        func item(_ action: NSTextFinder.Action) -> NSMenuItem {
+            let item = NSMenuItem(title: "", action: #selector(NSTextView.performFindPanelAction(_:)), keyEquivalent: "")
+            item.tag = action.rawValue
+            return item
+        }
+        textView.performFindPanelAction(item(.showFindInterface))
+        runMainLoop()
+        #expect(scrollView.isFindBarVisible)
+        try type("plán")
+        let locations = textView.findMatches.map(\.location)
+
+        textView.performFindPanelAction(item(.nextMatch))
+        #expect(textView.selectedRange().location == locations[1])
+        textView.performFindPanelAction(item(.previousMatch))
+        #expect(textView.selectedRange().location == locations[0])
+
+        let original = textView.string
+        textView.performFindPanelAction(item(.replaceAll))
+        #expect(textView.string == original)
+    }
+
+    @Test("loading another note does not leave a stale current match")
+    func loadingResetsCurrentMatch() throws {
+        openFind()
+        try type("plán")
+        textView.string = "jiný plán a plán"
+        runMainLoop()
+        #expect(textView.findMatches.count == 2)
+        #expect(textView.find.currentIndex == nil)
+    }
+
+    @Test("the current match follows the selection after an edit before it")
+    func currentMatchAfterEdit() throws {
+        openFind()
+        try type("plán")
+        try press(keyCode: 36, characters: "\r")
+        #expect(textView.find.currentIndex == 1)
+        textView.insertText("xx", replacementRange: NSRange(location: 0, length: 0))
+        #expect(textView.find.currentIndex == 1)
+        #expect(textView.findMatches[1] == textView.selectedRange())
+    }
+
     @Test("TextKit 2 stays active")
     func textKit2() throws {
         openFind()

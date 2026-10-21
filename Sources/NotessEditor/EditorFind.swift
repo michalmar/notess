@@ -76,9 +76,14 @@ final class EditorFind {
             let caret = textView.selectedRange().location
             currentIndex = NoteFind.indexOfFirstMatch(in: matches, atOrAfter: caret)
             if let currentIndex { select(matches[currentIndex]) }
-        } else if let current = currentIndex {
-            currentIndex = matches.isEmpty ? nil : min(current, matches.count - 1)
+        } else {
+            // Indices shift with edits and another note's text: the current match is the selected one.
+            currentIndex = matches.firstIndex(of: textView.selectedRange())
         }
+        updateDisplay()
+    }
+
+    private func updateDisplay() {
         bar.showCount(matches.count, current: currentIndex, hasQuery: !query.isEmpty)
         textView.needsDisplay = true
     }
@@ -101,8 +106,7 @@ final class EditorFind {
         }
         currentIndex = next
         select(matches[next])
-        bar.showCount(matches.count, current: next, hasQuery: true)
-        textView.needsDisplay = true
+        updateDisplay()
     }
 
     private func select(_ range: NSRange) {
@@ -144,9 +148,21 @@ final class EditorFind {
         return result
     }
 
+    /// The characters laid out around the visible area, so drawing skips the other matches.
+    private func viewportCharacterRange() -> NSRange? {
+        guard let manager = textView.textLayoutManager,
+              let content = manager.textContentManager,
+              let viewport = manager.textViewportLayoutController.viewportRange else { return nil }
+        let start = content.offset(from: content.documentRange.location, to: viewport.location)
+        let length = content.offset(from: viewport.location, to: viewport.endLocation)
+        return NSRange(location: start, length: length)
+    }
+
     func drawHighlights(in dirtyRect: NSRect) {
         guard isOpen, !matches.isEmpty else { return }
+        let viewport = viewportCharacterRange()
         for (index, match) in matches.enumerated() {
+            if let viewport, NSIntersectionRange(viewport, match).length == 0 { continue }
             (index == currentIndex ? Self.currentColor : Self.matchColor).setFill()
             for rect in rects(for: match) where rect.intersects(dirtyRect) {
                 NSBezierPath(roundedRect: rect.insetBy(dx: -1, dy: 0), xRadius: 3, yRadius: 3).fill()
@@ -264,7 +280,7 @@ final class FindBarView: NSView, NSSearchFieldDelegate {
     }
 
     /// Return in the field selects the next match, Shift+Return the previous one.
-    /// Handled here because the field editor reports both as the same command.
+    /// Handled as a key equivalent because the field editor reports both as the same command.
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
         guard hasFocus, event.keyCode == 36 || event.keyCode == 76 else {
             return super.performKeyEquivalent(with: event)
@@ -281,15 +297,6 @@ final class FindBarView: NSView, NSSearchFieldDelegate {
 
     func control(_ control: NSControl, textView: NSTextView, doCommandBy selector: Selector) -> Bool {
         switch selector {
-        case #selector(NSResponder.insertNewline(_:)),
-             #selector(NSResponder.insertLineBreak(_:)),
-             #selector(NSResponder.insertNewlineIgnoringFieldEditor(_:)):
-            if window?.currentEvent?.modifierFlags.contains(.shift) == true {
-                onPrevious()
-            } else {
-                onNext()
-            }
-            return true
         case #selector(NSResponder.cancelOperation(_:)):
             onClose()
             return true
