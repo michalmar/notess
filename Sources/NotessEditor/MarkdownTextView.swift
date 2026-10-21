@@ -517,7 +517,7 @@ public final class MarkdownTextView: NSTextView {
 
         for preview in inlineImagePreviews {
             if preview.paragraphRange.upperBound <= textStorage.length {
-                textStorage.removeAttribute(.paragraphStyle, range: preview.paragraphRange)
+                setParagraphSpacing(imagesHeight: 0, in: preview.paragraphRange)
             }
             preview.imageView.removeFromSuperview()
         }
@@ -619,15 +619,29 @@ public final class MarkdownTextView: NSTextView {
             .reduce(0) { $0 + fittedSize(for: $1.image).height + 8 }
     }
 
+    /// Space below a paragraph for its image previews, added to the spacing it
+    /// already has (a heading's), which is kept in `notessBaseParagraphSpacing`.
+    private func setParagraphSpacing(imagesHeight: CGFloat, in range: NSRange) {
+        guard let textStorage, range.length > 0, range.upperBound <= textStorage.length else { return }
+        let base = textStorage.attribute(.notessBaseParagraphSpacing, at: range.location, effectiveRange: nil) as? CGFloat ?? 0
+        let existing = textStorage.attribute(.paragraphStyle, at: range.location, effectiveRange: nil) as? NSParagraphStyle
+        if imagesHeight == 0, base == 0, (existing?.paragraphSpacingBefore ?? 0) == 0 {
+            textStorage.removeAttribute(.paragraphStyle, range: range)
+            return
+        }
+        let style = (existing?.mutableCopy() as? NSMutableParagraphStyle) ?? NSMutableParagraphStyle()
+        style.paragraphSpacing = base + imagesHeight
+        textStorage.addAttribute(.paragraphStyle, value: style, range: range)
+    }
+
     private func updateParagraphSpacing(for paragraphRanges: Set<NSRange>) {
         guard let textStorage else { return }
         for paragraphRange in paragraphRanges where paragraphRange.upperBound <= textStorage.length {
             let previews = inlineImagePreviews.filter { $0.paragraphRange == paragraphRange }
-            let style = NSMutableParagraphStyle()
-            style.paragraphSpacing = previews.reduce(0) {
-                $0 + fittedSize(for: $1.image).height + 8
-            }
-            textStorage.addAttribute(.paragraphStyle, value: style, range: paragraphRange)
+            setParagraphSpacing(
+                imagesHeight: previews.reduce(0) { $0 + fittedSize(for: $1.image).height + 8 },
+                in: paragraphRange
+            )
         }
     }
 

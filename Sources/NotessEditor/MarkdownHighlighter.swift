@@ -2,6 +2,9 @@ import AppKit
 import NotessCore
 
 extension NSAttributedString.Key {
+    /// The paragraph spacing a paragraph has without inline image previews,
+    /// which add to it.
+    static let notessBaseParagraphSpacing = NSAttributedString.Key("NotessBaseParagraphSpacing")
     static let notessImageSource = NSAttributedString.Key("NotessImageSource")
 }
 
@@ -165,6 +168,7 @@ final class MarkdownHighlighter: NSObject, NSTextStorageDelegate, NSTextLayoutMa
         case .heading(let level):
             let size = style.font.pointSize * MarkdownEditorStyle.headingScale(level)
             storage.addAttribute(.font, value: font(style.font, size: size, traits: .bold), range: range)
+            applyHeadingSpacing(to: range, in: storage)
         case .codeBlock:
             storage.addAttributes([.font: style.codeFont, .backgroundColor: colors.codeBackground], range: range)
         case .frontMatter:
@@ -207,6 +211,34 @@ final class MarkdownHighlighter: NSObject, NSTextStorageDelegate, NSTextLayoutMa
         case .task:
             storage.addAttributes([.foregroundColor: colors.task, .cursor: NSCursor.pointingHand], range: range)
         }
+    }
+
+    /// Visual-only spacing above and below a heading via paragraph style; the
+    /// text is untouched. A setext heading takes the space below after its
+    /// underline line, so the two lines stay together.
+    private func applyHeadingSpacing(to range: NSRange, in storage: NSTextStorage) {
+        let string = storage.string as NSString
+        let spacing = style.headingSpacing
+        let heading = NSMutableParagraphStyle()
+        heading.paragraphSpacingBefore = spacing
+        let line = string.lineRange(for: range)
+        let underline = line.upperBound < string.length ? string.lineRange(for: NSRange(location: line.upperBound, length: 0)) : nil
+        let isSetext = !string.substring(with: range).hasPrefix("#") && underline.map { Self.isSetextUnderline(string.substring(with: $0)) } == true
+        if isSetext, let underline {
+            let after = NSMutableParagraphStyle()
+            after.paragraphSpacing = spacing
+            storage.addAttributes([.paragraphStyle: after, .notessBaseParagraphSpacing: spacing], range: underline)
+        } else {
+            heading.paragraphSpacing = spacing
+        }
+        storage.addAttribute(.paragraphStyle, value: heading, range: range)
+        if !isSetext { storage.addAttribute(.notessBaseParagraphSpacing, value: spacing, range: range) }
+    }
+
+    private static func isSetextUnderline(_ line: String) -> Bool {
+        let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let first = trimmed.first, first == "=" || first == "-" else { return false }
+        return trimmed.allSatisfy { $0 == first }
     }
 
     private func addTraits(_ traits: NSFontDescriptor.SymbolicTraits, in range: NSRange, of storage: NSTextStorage) {

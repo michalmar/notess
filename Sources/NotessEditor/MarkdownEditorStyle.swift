@@ -69,6 +69,12 @@ public struct MarkdownEditorStyle: Equatable {
 
     public static var standard: MarkdownEditorStyle { MarkdownEditorStyle() }
 
+    /// Extra space above and below every heading: half a body-text line, so it
+    /// follows the editor font size and text zoom, not the heading's own size.
+    public var headingSpacing: CGFloat {
+        ((font.ascender - font.descender + font.leading) / 2).rounded(.up)
+    }
+
     /// Heading size relative to the body font, by level.
     static func headingScale(_ level: Int) -> CGFloat {
         switch level {
