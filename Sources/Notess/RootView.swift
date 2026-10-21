@@ -74,6 +74,17 @@ struct RootView: View {
             }
         }
         .background(KeyWindowObserver { model.isNoteWindowKey = $0 })
+        .confirmationDialog(
+            model.noteDeletionConfirmation.map { "Smazat \($0.displayName)?" } ?? "Smazat poznámku?",
+            isPresented: Binding(
+                get: { model.noteDeletionConfirmation != nil },
+                set: { if !$0 { model.cancelNoteDeletion() } }
+            ),
+            titleVisibility: .visible,
+            presenting: model.noteDeletionConfirmation,
+            actions: deletionActions,
+            message: { Text(deletionMessage(for: $0)) }
+        )
         .alert(
             "Chyba",
             isPresented: Binding(
@@ -83,6 +94,42 @@ struct RootView: View {
             actions: { Button("OK", role: .cancel) {} },
             message: { Text(model.errorMessage ?? "") }
         )
+    }
+
+    @ViewBuilder
+    private func deletionActions(for confirmation: NoteDeletionConfirmation) -> some View {
+        switch confirmation.kind {
+        case .savedFile:
+            Button("Přesunout do Koše", role: .destructive) {
+                model.confirmNoteDeletion(.moveToTrash)
+            }
+        case .dirtyFile:
+            Button("Uložit a přesunout do Koše", role: .destructive) {
+                model.confirmNoteDeletion(.saveAndMoveToTrash)
+            }
+            Button("Zahodit změny a přesunout do Koše", role: .destructive) {
+                model.confirmNoteDeletion(.discardChangesAndMoveToTrash)
+            }
+        case .draftDailyEntry:
+            Button("Zahodit rozepsaný záznam", role: .destructive) {
+                model.confirmNoteDeletion(.discardDraft)
+            }
+        }
+        Button("Zrušit", role: .cancel) {
+            model.cancelNoteDeletion()
+        }
+    }
+
+    private func deletionMessage(for confirmation: NoteDeletionConfirmation) -> String {
+        let referenceWarning = "Příchozí wiki-odkazy a citace mohou přestat fungovat."
+        switch confirmation.kind {
+        case .savedFile:
+            return "Soubor bude přesunut do systémového Koše, odkud jej lze obnovit. \(referenceWarning)"
+        case .dirtyFile:
+            return "Poznámka obsahuje neuložené změny. Zvolte, zda je před přesunutím do systémového Koše uložit, nebo zahodit. \(referenceWarning)"
+        case .draftDailyEntry:
+            return "Tento Daily Entry ještě nebyl uložen. Jeho rozepsaný obsah bude zahoden bez vytvoření souboru nebo položky v Koši. \(referenceWarning)"
+        }
     }
 
     private var journalDetail: some View {

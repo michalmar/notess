@@ -56,6 +56,9 @@ struct SidebarView: View {
                 } label: {
                     Label("Dnes", systemImage: "calendar")
                 }
+                .contextMenu {
+                    deleteButton(relativePath: model.todayDailyEntry.relativePath)
+                }
                 ForEach(model.tree.journal.years) { year in
                     DisclosureGroup(String(year.year)) {
                         ForEach(year.months) { month in
@@ -63,6 +66,9 @@ struct SidebarView: View {
                                 ForEach(month.days, id: \.self) { day in
                                     Label(day.isoString, systemImage: "doc.text")
                                         .tag(SidebarItem.day(day))
+                                        .contextMenu {
+                                            deleteButton(relativePath: DailyEntry(day: day).relativePath)
+                                        }
                                 }
                             }
                         }
@@ -72,7 +78,7 @@ struct SidebarView: View {
             Section("Notes") {
                 Label("Vault", systemImage: "tray.full")
                     .tag(SidebarItem.folder(""))
-                FolderContents(folder: model.tree.notes)
+                FolderContents(folder: model.tree.notes, model: model)
             }
             Section("Brain") {
                 if model.vault?.isBrainFolderAvailable ?? false {
@@ -92,6 +98,15 @@ struct SidebarView: View {
             }
         }
         .listStyle(.sidebar)
+    }
+
+    private func deleteButton(relativePath: String) -> some View {
+        Button(role: .destructive) {
+            model.requestNoteDeletion(relativePath: relativePath)
+        } label: {
+            Label("Smazat…", systemImage: "trash")
+        }
+        .disabled(!model.canDeleteNote(relativePath: relativePath))
     }
 
     /// Keeps the highlight on the file that is actually open, e.g. after a refused or failed open.
@@ -116,11 +131,12 @@ struct SidebarView: View {
 
 private struct FolderContents: View {
     let folder: NotesFolder
+    let model: AppModel
 
     var body: some View {
         ForEach(folder.folders) { sub in
             DisclosureGroup {
-                FolderContents(folder: sub)
+                FolderContents(folder: sub, model: model)
             } label: {
                 Label(sub.name, systemImage: "folder")
                     .tag(SidebarItem.folder(sub.relativePath))
@@ -129,6 +145,13 @@ private struct FolderContents: View {
         ForEach(folder.notes) { note in
             Label(note.title, systemImage: "doc.text")
                 .tag(SidebarItem.note(note.relativePath))
+                .contextMenu {
+                    Button(role: .destructive) {
+                        model.requestNoteDeletion(relativePath: note.relativePath)
+                    } label: {
+                        Label("Smazat…", systemImage: "trash")
+                    }
+                }
         }
     }
 }
