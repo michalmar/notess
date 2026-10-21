@@ -34,6 +34,10 @@ _Avoid_: Label, category, topic
 For one Tag, the complete tagged heading subtrees in saved Daily Entries, grouped by date newest first and in note order within a day, without repeating descendants already included by a tagged ancestor. It is read-only and includes neither unsaved edits nor Free Notes or Brain Notes.
 _Avoid_: Tag view, Tag feed, Tag page
 
+**Tag Group**:
+A flat, named collection of Tags in the Tags sidebar that only organises them: a Tag may belong to several Tag Groups and stays in All Tags, and grouping never changes notes, files or what a Tag means. Tag Groups are kept per Vault on this Mac, outside the Vault and the search index.
+_Avoid_: Tag folder, parent Tag, category
+
 **Wiki-link**:
 A `[[Note]]` reference to another note by its file name, optionally to one of its headings with `[[Note#Heading]]`. The note is found by file name anywhere in the Vault, ignoring case; duplicate names resolve by the rule documented on `WikiLinkResolver`.
 _Avoid_: Internal link, backlink (a backlink is a wiki-link seen from its target)

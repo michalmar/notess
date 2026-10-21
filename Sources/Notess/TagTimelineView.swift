@@ -2,17 +2,70 @@ import NotessCore
 import NotessEditor
 import SwiftUI
 
-/// Tags mode of the sidebar: the Tags of saved Daily Entries; one is selected at a time.
+/// Tags mode of the sidebar: Tag Groups above All Tags, the Tags of saved
+/// Daily Entries; one Tag is selected at a time.
 struct TagList: View {
-    let browser: TagTimelineBrowser
-    let isIndexing: Bool
-    let indexFailure: String?
-    let select: (String?) -> Void
+    @Bindable var model: AppModel
+    /// The clicked row; a Tag can have several rows (in groups and All Tags).
+    @State private var selectedRow: TagRow?
+    @State private var newGroupRequest: NewGroupRequest?
+    @State private var newGroupName = ""
+    @State private var groupPendingDeletion: TagSidebar.Group?
+
+    private var browser: TagTimelineBrowser { model.tagTimeline }
 
     var body: some View {
+        VStack(spacing: 0) {
+            content
+            Divider()
+            HStack {
+                Button {
+                    requestNewGroup(for: nil)
+                } label: {
+                    Label("Nová skupina", systemImage: "plus")
+                }
+                .buttonStyle(.borderless)
+                .help("Vytvoří skupinu Tagů; Tagy, poznámky ani soubory se nezmění")
+                Spacer()
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+        }
+        .alert(
+            newGroupRequest?.tag.map { "Nová skupina s Tagem #\($0)" } ?? "Nová skupina Tagů",
+            isPresented: Binding(
+                get: { newGroupRequest != nil },
+                set: { if !$0 { newGroupRequest = nil } }
+            ),
+            presenting: newGroupRequest
+        ) { request in
+            TextField("Název skupiny", text: $newGroupName)
+            Button("Vytvořit") { createGroup(for: request) }
+            Button("Zrušit", role: .cancel) {}
+        } message: { _ in
+            Text("Skupina jen třídí Tagy v postranním panelu; poznámky se nezmění.")
+        }
+        .confirmationDialog(
+            groupPendingDeletion.map { "Smazat skupinu „\($0.name)“?" } ?? "",
+            isPresented: Binding(
+                get: { groupPendingDeletion != nil },
+                set: { if !$0 { groupPendingDeletion = nil } }
+            ),
+            presenting: groupPendingDeletion
+        ) { group in
+            Button("Smazat skupinu", role: .destructive) {
+                model.deleteTagGroup(group.id)
+            }
+        } message: { _ in
+            Text("Tagy, ostatní skupiny ani poznámky se nezmění.")
+        }
+    }
+
+    @ViewBuilder
+    private var content: some View {
         switch browser.tags {
         case .loading:
-            ProgressView(isIndexing ? indexingLabel : "Načítám Tagy…")
+            ProgressView(model.isIndexing ? indexingLabel : "Načítám Tagy…")
                 .controlSize(.small)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         case .failed(let message):
@@ -21,29 +74,133 @@ struct TagList: View {
                 systemImage: "exclamationmark.triangle",
                 description: Text(message)
             )
-        case .loaded(let tags) where tags.isEmpty:
+        case .loaded(let tags) where tags.isEmpty && model.tagGroups.groups.isEmpty:
             EmptyIndexedContent(
-                isIndexing: isIndexing,
-                indexFailure: indexFailure,
+                isIndexing: model.isIndexing,
+                indexFailure: model.searchIndexFailure,
                 title: "Žádné Tagy",
                 description: "Uložené záznamy v Journalu zatím nemají žádný Tag."
             )
-        case .loaded(let tags):
-            List(selection: Binding(
-                get: { browser.selectedTag },
-                set: { tag in if let tag { select(tag) } }
-            )) {
-                ForEach(tags, id: \.self) { tag in
-                    Label(tag, systemImage: "number")
-                        .tag(tag)
-                }
-            }
-            .listStyle(.sidebar)
-            .safeAreaInset(edge: .bottom) {
-                IndexStatusFooter(isIndexing: isIndexing, indexFailure: indexFailure)
+        case .loaded:
+            if let sidebar = model.tagSidebar {
+                list(sidebar)
             }
         }
     }
+
+    private func list(_ sidebar: TagSidebar) -> some View {
+        List(selection: selection) {
+            if !sidebar.groups.isEmpty {
+                Section("Skupiny") {
+                    ForEach(sidebar.groups) { group in
+                        DisclosureGroup(isExpanded: Binding(
+                            get: { group.isExpanded },
+                            set: { model.setTagGroup(group.id, isExpanded: $0) }
+                        )) {
+                            if group.tags.isEmpty {
+                                Text("Žádné Tagy")
+                                    .foregroundStyle(.secondary)
+                                    .selectionDisabled()
+                            }
+                            ForEach(group.tags, id: \.self) { tag in
+                                tagRow(tag, in: group)
+                            }
+                        } label: {
+                            Label(group.name, systemImage: "rectangle.stack")
+                                .contextMenu {
+                                    Button("Smazat skupinu…", role: .destructive) {
+                                        groupPendingDeletion = group
+                                    }
+                                }
+                        }
+                    }
+                }
+            }
+            Section("Všechny Tagy") {
+                if sidebar.allTags.isEmpty {
+                    Text("Uložené záznamy v Journalu zatím nemají žádný Tag.")
+                        .foregroundStyle(.secondary)
+                        .selectionDisabled()
+                }
+                ForEach(sidebar.allTags, id: \.self) { tag in
+                    tagRow(tag, in: nil)
+                }
+            }
+        }
+        .listStyle(.sidebar)
+        .safeAreaInset(edge: .bottom) {
+            IndexStatusFooter(isIndexing: model.isIndexing, indexFailure: model.searchIndexFailure)
+        }
+    }
+
+    private func tagRow(_ tag: String, in group: TagSidebar.Group?) -> some View {
+        Label(tag, systemImage: "number")
+            .tag(TagRow(groupID: group?.id, tag: tag))
+            .contextMenu {
+                Menu("Přidat do skupiny") {
+                    ForEach(model.tagGroups.groups) { candidate in
+                        Toggle(candidate.name, isOn: Binding(
+                            get: { candidate.tags.contains(tag) },
+                            set: { isMember in
+                                if isMember {
+                                    model.addTag(tag, toGroup: candidate.id)
+                                } else {
+                                    model.removeTag(tag, fromGroup: candidate.id)
+                                }
+                            }
+                        ))
+                    }
+                    if !model.tagGroups.groups.isEmpty { Divider() }
+                    Button("Nová skupina…") { requestNewGroup(for: tag) }
+                }
+                if let group {
+                    Button("Odebrat ze skupiny „\(group.name)“") {
+                        model.removeTag(tag, fromGroup: group.id)
+                    }
+                }
+            }
+    }
+
+    /// The clicked row while it shows the selected Tag; otherwise the Tag's
+    /// All Tags row, e.g. after the selection changed elsewhere.
+    private var selection: Binding<TagRow?> {
+        Binding(
+            get: {
+                guard let tag = browser.selectedTag else { return nil }
+                if let selectedRow, selectedRow.tag == tag { return selectedRow }
+                return TagRow(groupID: nil, tag: tag)
+            },
+            set: { row in
+                guard let row else { return }
+                selectedRow = row
+                model.selectTimelineTag(row.tag)
+            }
+        )
+    }
+
+    private func requestNewGroup(for tag: String?) {
+        newGroupName = ""
+        newGroupRequest = NewGroupRequest(tag: tag)
+    }
+
+    private func createGroup(for request: NewGroupRequest) {
+        if let tag = request.tag {
+            model.addTagToNewGroup(tag, named: newGroupName)
+        } else {
+            model.createTagGroup(named: newGroupName)
+        }
+    }
+}
+
+/// One row of the Tag list: a Tag in a group, or in All Tags (no group).
+private struct TagRow: Hashable {
+    let groupID: TagGroup.ID?
+    let tag: String
+}
+
+/// "Nová skupina": for a Tag's context menu the new group gets that Tag.
+private struct NewGroupRequest {
+    let tag: String?
 }
 
 /// Tags mode detail: the selected Tag's Tag Timeline (see `GLOSSARY.md`), read-only.
