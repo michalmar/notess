@@ -59,6 +59,7 @@ final class AppModel {
     /// Vault-relative folder chosen in the Notes section ("" is the Vault root); target for new Free Notes.
     var selectedFolder = ""
     var errorMessage: String?
+    var noteDeletionConfirmation: NoteDeletionConfirmation?
     /// Section to scroll the editor to after following a wiki-link.
     var reveal: EditorReveal?
     let imagePreview = ImagePreviewPresentation()
@@ -73,6 +74,7 @@ final class AppModel {
 
     @ObservationIgnored private let vaultLocationStore: VaultLocationStore
     @ObservationIgnored private let tabRestorationStore: TabRestorationStore
+    @ObservationIgnored let moveToTrash: (URL) throws -> Void
     @ObservationIgnored private let now: () -> Date
     @ObservationIgnored private var watcher: VaultWatcher?
     @ObservationIgnored private var vaultReconciler: VaultReconciler?
@@ -98,10 +100,12 @@ final class AppModel {
         settings: AppSettings = AppSettings(),
         brainRunStateStore: BrainRunStateStore = BrainRunStateStore(),
         tagGroupStore: TagGroupStore = TagGroupStore(),
+        moveToTrash: @escaping (URL) throws -> Void = FileTrash.moveToTrash,
         now: @escaping () -> Date = Date.init
     ) {
         self.vaultLocationStore = vaultLocationStore
         self.tabRestorationStore = tabRestorationStore
+        self.moveToTrash = moveToTrash
         self.settings = settings
         self.brainRunStateStore = brainRunStateStore
         self.tagGroupStore = tagGroupStore
@@ -130,7 +134,11 @@ final class AppModel {
     }
 
     func openToday() {
-        openDailyEntry(DailyEntry(date: now()))
+        openDailyEntry(todayDailyEntry)
+    }
+
+    var todayDailyEntry: DailyEntry {
+        DailyEntry(date: now())
     }
 
     /// Cmd+N: a new Free Note in the folder selected in the Notes section.
