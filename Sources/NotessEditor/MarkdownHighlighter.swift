@@ -2,6 +2,9 @@ import AppKit
 import NotessCore
 
 extension NSAttributedString.Key {
+    /// The paragraph spacing a paragraph has without inline image previews,
+    /// which add to it.
+    static let notessBaseParagraphSpacing = NSAttributedString.Key("NotessBaseParagraphSpacing")
     static let notessImageSource = NSAttributedString.Key("NotessImageSource")
 }
 
@@ -224,11 +227,12 @@ final class MarkdownHighlighter: NSObject, NSTextStorageDelegate, NSTextLayoutMa
         if isSetext, let underline {
             let after = NSMutableParagraphStyle()
             after.paragraphSpacing = spacing
-            storage.addAttribute(.paragraphStyle, value: after, range: underline)
+            storage.addAttributes([.paragraphStyle: after, .notessBaseParagraphSpacing: spacing], range: underline)
         } else {
             before.paragraphSpacing = spacing
         }
         storage.addAttribute(.paragraphStyle, value: before, range: range)
+        if !isSetext { storage.addAttribute(.notessBaseParagraphSpacing, value: spacing, range: range) }
     }
 
     private static func isSetextUnderline(_ line: String) -> Bool {

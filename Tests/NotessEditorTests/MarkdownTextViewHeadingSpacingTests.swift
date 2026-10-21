@@ -85,4 +85,31 @@ struct MarkdownTextViewHeadingSpacingTests {
         #expect(style?.paragraphSpacingBefore == MarkdownEditorStyle(fontName: "System", fontSize: 30).headingSpacing)
         #expect(style?.paragraphSpacing == style?.paragraphSpacingBefore)
     }
+
+    @Test("a heading line with an inline image keeps its spacing and adds the image's")
+    func headingWithInlineImage() throws {
+        let size: CGFloat = 15
+        let half = MarkdownEditorStyle(fontName: "System", fontSize: size).headingSpacing
+        let (_, view) = makeView("", fontSize: size)
+        let image = NSImage(size: NSSize(width: 40, height: 40))
+        image.lockFocus()
+        NSColor.red.setFill()
+        NSRect(x: 0, y: 0, width: 40, height: 40).fill()
+        image.unlockFocus()
+        let png = NSBitmapImageRep(data: image.tiffRepresentation!)!.representation(using: .png, properties: [:])!
+        view.inlineImageData = { _ in png }
+        view.noteURL = URL(filePath: "/tmp/heading-image.md")
+        view.string = "tělo\n# Nadpis ![a](a.png)\ntělo"
+        view.refreshInlineImages()
+        view.layoutSubtreeIfNeeded()
+
+        let at = (view.string as NSString).range(of: "Nadpis").location
+        func style() -> NSParagraphStyle? { view.textStorage!.attribute(.paragraphStyle, at: at, effectiveRange: nil) as? NSParagraphStyle }
+        let withImage = try #require(style())
+        #expect(withImage.paragraphSpacingBefore == half)
+        #expect(withImage.paragraphSpacing > half)
+
+        view.refreshInlineImages()
+        #expect(style()?.paragraphSpacing == withImage.paragraphSpacing)
+    }
 }
