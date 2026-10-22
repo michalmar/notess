@@ -4,7 +4,7 @@ import NotessCore
 /// The standard pointing-hand cursor over the editor's interactive targets.
 ///
 /// One cursor-rect set serves every target (links and heading disclosure
-/// buttons). `NSTextView` still supplies the text cursor everywhere else, so
+/// buttons, over each button's existing clickable frame). `NSTextView` still supplies the text cursor everywhere else, so
 /// leaving a target restores the cursor the text view would show anyway.
 /// Hovering is cursor-only: clicks, selection and folding are unchanged.
 extension MarkdownTextView {
@@ -21,7 +21,7 @@ extension MarkdownTextView {
 
     /// The visible areas, in view coordinates, that show the pointing hand.
     func pointingHandRects() -> [NSRect] {
-        linkPointingHandRects()
+        headingFolding.visibleButtonFrames + linkPointingHandRects()
     }
 
     /// The activation areas of links that are interactive right now: those

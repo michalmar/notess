@@ -58,6 +58,11 @@ final class HeadingFolding: NSObject, NSTextContentStorageDelegate {
         }
     }
 
+    /// Where the disclosure buttons currently on screen sit, in text view coordinates.
+    var visibleButtonFrames: [NSRect] {
+        buttons.filter { !$0.isHidden }.map(\.frame)
+    }
+
     func hides(_ location: Int) -> Bool {
         guard !hiddenRanges.isEmpty else { return false }
         var low = 0
@@ -144,7 +149,10 @@ final class HeadingFolding: NSObject, NSTextContentStorageDelegate {
               let manager = textView.textLayoutManager,
               let content = manager.textContentManager else { return }
         isUpdatingLayout = true
-        defer { isUpdatingLayout = false }
+        defer {
+            isUpdatingLayout = false
+            textView.invalidatePointingHandTargets()
+        }
         let viewport: NSRange? = textView.enclosingScrollView.flatMap { _ in
             guard let range = manager.textViewportLayoutController.viewportRange else { return nil }
             let start = content.offset(from: content.documentRange.location, to: range.location)

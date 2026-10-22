@@ -49,6 +49,8 @@ struct MarkdownTextViewPointerTests {
             return textView.rect(forCharacterRange: range).center
         }
 
+        var buttons: [NSButton] { textView.subviews.compactMap { $0 as? NSButton } }
+
         /// The pointing hand shows at the middle of `substring`.
         func hand(over substring: String) -> Bool {
             textView.pointingHandTarget(containing: center(of: substring))
@@ -164,6 +166,95 @@ struct MarkdownTextViewPointerTests {
         harness.layout()
         check(harness.hand(over: "https://example.com/hidden"))
         check(harness.hand(over: "[[Hidden]]"))
+    }
+
+    // MARK: Heading disclosure buttons
+
+    @Test("expanded and collapsed disclosure buttons show the pointing hand over their clickable area only")
+    func disclosureButtons() throws {
+        let harness = Harness("# Topic\nbody\n# Next\nmore")
+        let button = try #require(harness.buttons.first)
+        let frame = button.frame
+        #expect(frame.width == 20)
+        check(harness.textView.pointingHandTarget(containing: frame.center))
+        check(harness.textView.pointingHandTarget(containing: NSPoint(x: frame.minX + 1, y: frame.minY + 1)))
+        check(!harness.textView.pointingHandTarget(containing: NSPoint(x: frame.maxX + 3, y: frame.midY)))
+        check(!harness.hand(over: "Topic"))
+        check(!harness.hand(over: "body"))
+
+        button.performClick(nil)
+        harness.layout()
+        let collapsed = try #require(harness.buttons.first)
+        check(harness.textView.pointingHandTarget(containing: collapsed.frame.center))
+        check(!harness.hand(over: "Topic"))
+        #expect(harness.textView.string == "# Topic\nbody\n# Next\nmore")
+    }
+
+    @Test("read-only views show the hand over their disclosure buttons")
+    func readOnlyDisclosureButtons() throws {
+        let textView = MarkdownTextViewFactory.makeReadOnlyTextView()
+        textView.string = "# Topic\nbody\n# Next\nmore"
+        _ = textView.fittingHeight(forWidth: 500)
+        let button = try #require(textView.subviews.compactMap { $0 as? NSButton }.first)
+        check(textView.pointingHandTarget(containing: button.frame.center))
+        check(!textView.pointingHandTarget(containing: NSPoint(x: button.frame.maxX + 40, y: button.frame.midY)))
+        button.performClick(nil)
+        _ = textView.fittingHeight(forWidth: 500)
+        check(textView.pointingHandTarget(containing: button.frame.center))
+        #expect(textView.isEditable == false)
+    }
+
+    @Test("buttons hidden by a fold leave no hand and return on unfolding")
+    func hiddenButtons() throws {
+        let harness = Harness("# Parent\nintro\n## Child\nhidden\n# Next\nvisible")
+        let child = try #require(harness.buttons.dropFirst().first)
+        let childCenter = child.frame.center
+        check(harness.textView.pointingHandTarget(containing: childCenter))
+
+        harness.buttons[0].performClick(nil)
+        harness.layout()
+        check(!harness.textView.pointingHandTarget(containing: childCenter))
+        check(!harness.textView.pointingHandTarget(containing: child.frame.center))
+
+        harness.buttons[0].performClick(nil)
+        harness.layout()
+        check(harness.textView.pointingHandTarget(containing: child.frame.center))
+    }
+
+    @Test("button targets follow headings after edits and leave obsolete positions")
+    func buttonsAfterEditing() throws {
+        let harness = Harness("# Topic\nbody")
+        let before = try #require(harness.buttons.first).frame.center
+        check(harness.textView.pointingHandTarget(containing: before))
+
+        let insertion = NSRange(location: 0, length: 0)
+        harness.textView.setSelectedRange(insertion)
+        harness.textView.insertText("intro\nmore\n", replacementRange: insertion)
+        harness.layout()
+
+        let after = try #require(harness.buttons.first).frame.center
+        #expect(after.y > before.y + 20)
+        check(harness.textView.pointingHandTarget(containing: after))
+        check(!harness.textView.pointingHandTarget(containing: before))
+    }
+
+    @Test("only buttons of headings on screen are targets while scrolling")
+    func buttonsWhileScrolling() throws {
+        let sections = (0..<40).map { "# Heading \($0)\ntext \($0)" }.joined(separator: "\n")
+        let harness = Harness(sections)
+        let all = harness.buttons
+        let top = try #require(all.first)
+        check(harness.textView.pointingHandTarget(containing: top.frame.center))
+        let bottomLocation = (harness.textView.string as NSString).range(of: "# Heading 39").location
+        let bottomBefore = try #require(all.last).frame.center
+        check(!harness.textView.pointingHandTarget(containing: bottomBefore))
+
+        harness.textView.scrollRangeToVisible(NSRange(location: bottomLocation, length: 1))
+        harness.layout()
+        let visibleBottom = try #require(harness.buttons.last)
+        check(!visibleBottom.isHidden)
+        check(harness.textView.pointingHandTarget(containing: visibleBottom.frame.center))
+        check(!harness.textView.pointingHandTarget(containing: top.frame.center))
     }
 
     @Test("hover feedback leaves click behavior and TextKit 2 unchanged")
