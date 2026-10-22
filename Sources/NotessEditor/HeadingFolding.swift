@@ -151,7 +151,7 @@ final class HeadingFolding: NSObject, NSTextContentStorageDelegate {
         isUpdatingLayout = true
         defer {
             isUpdatingLayout = false
-            textView.invalidatePointingHandTargets()
+            textView.refreshPointingHand()
         }
         let viewport: NSRange? = textView.enclosingScrollView.flatMap { _ in
             guard let range = manager.textViewportLayoutController.viewportRange else { return nil }

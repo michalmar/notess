@@ -10,6 +10,7 @@ public final class MarkdownTextView: NSTextView {
     lazy var headingFolding = HeadingFolding(textView: self)
     var linkCache = LinkCache()
     private var scrollObserver: NSObjectProtocol?
+    private var pointerTrackingArea: NSTrackingArea?
     /// Called when disclosure changes the read-only view's fitting height.
     var onHeadingLayoutChange: (() -> Void)? {
         get { headingFolding.onLayoutChange }
@@ -19,15 +20,28 @@ public final class MarkdownTextView: NSTextView {
     public override func layout() {
         super.layout()
         headingFolding.layoutButtons()
-        invalidatePointingHandTargets()
+        refreshPointingHand()
     }
 
     /// See `MarkdownTextView+Pointer.swift`.
-    public override func resetCursorRects() {
-        super.resetCursorRects()
-        for rect in pointingHandRects() {
-            addCursorRect(rect, cursor: .pointingHand)
+    public override func cursorUpdate(with event: NSEvent) {
+        if !updatePointingHand(at: convert(event.locationInWindow, from: nil)) {
+            super.cursorUpdate(with: event)
         }
+    }
+
+    public override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let pointerTrackingArea { removeTrackingArea(pointerTrackingArea) }
+        let area = NSTrackingArea(
+            rect: .zero, options: [.mouseMoved, .cursorUpdate, .activeInKeyWindow, .inVisibleRect], owner: self)
+        addTrackingArea(area)
+        pointerTrackingArea = area
+    }
+
+    public override func mouseMoved(with event: NSEvent) {
+        super.mouseMoved(with: event)
+        if !updatePointingHand(at: convert(event.locationInWindow, from: nil)) { restoreTextCursor() }
     }
 
     public override func viewDidMoveToSuperview() {
@@ -35,11 +49,11 @@ public final class MarkdownTextView: NSTextView {
         if let scrollObserver { NotificationCenter.default.removeObserver(scrollObserver) }
         scrollObserver = nil
         guard let clipView = enclosingScrollView?.contentView else { return }
-        // Cursor rects cover only what is on screen, so scrolling must rebuild them.
+        // Scrolling moves targets under a still mouse.
         scrollObserver = NotificationCenter.default.addObserver(
             forName: NSView.boundsDidChangeNotification, object: clipView, queue: .main
         ) { [weak self] _ in
-            MainActor.assumeIsolated { self?.invalidatePointingHandTargets() }
+            MainActor.assumeIsolated { self?.refreshPointingHand() }
         }
     }
 
@@ -237,10 +251,10 @@ public final class MarkdownTextView: NSTextView {
 
     /// Called when the user clicks a `[[wiki-link]]`; the click then does not move the caret.
     public var onWikiLinkClick: ((WikiLink) -> Void)? {
-        didSet { invalidatePointingHandTargets() }
+        didSet { refreshPointingHand() }
     }
     public var onOpenWebLink: ((URL) -> Void)? {
-        didSet { invalidatePointingHandTargets() }
+        didSet { refreshPointingHand() }
     }
 
     /// Fonts and colours; setting a different style restyles the whole note.
@@ -381,7 +395,7 @@ public final class MarkdownTextView: NSTextView {
         hasUnreportedTextEdit = false
         pendingEditedRange = nil
         super.didChangeText()
-        invalidatePointingHandTargets()
+        refreshPointingHand()
         find.textDidChange()
         if !isApplyingTagCompletion {
             tagCompleter.textDidChange(editedRange: editedRange)
