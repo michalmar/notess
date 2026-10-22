@@ -197,7 +197,7 @@ struct TagList: View {
         case .allTags:
             return true
         case .ungrouped:
-            return !model.tagGroups.groups.isEmpty && (model.tagSidebar?.ungroupedTags.contains(row.tag) ?? false)
+            return model.tagSidebar?.ungroupedTags.contains(row.tag) ?? false
         case .group(let id):
             return model.tagSidebar?.groups.contains { $0.id == id && $0.tags.contains(row.tag) } ?? false
         }
