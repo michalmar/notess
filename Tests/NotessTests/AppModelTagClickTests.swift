@@ -100,6 +100,35 @@ struct AppModelTagClickTests {
         #expect(!FileManager.default.fileExists(atPath: today.fileURL.path))
     }
 
+    @Test("in Tags mode a clicked Tag switches the timeline; the Tag already shown stays without reloading")
+    func fromTagTimeline() async throws {
+        let fixture = try TagGroupFixture()
+        try fixture.write("# 2026-06-02\n\n## Porada #acme #beta\n", to: "Journal/2026/06/2026-06-02.md")
+        let model = fixture.makeModel()
+        try await fixture.settle(model)
+        model.openTagTimeline("acme")
+        try await waitForTimeline(model)
+
+        model.openTagTimeline("Beta")
+        #expect(model.sidebarMode == .tags)
+        try await waitForTimeline(model, of: "beta")
+        let shown = model.tagTimeline.timeline
+
+        let changed = ChangeFlag()
+        withObservationTracking {
+            _ = model.tagTimeline.timeline
+            _ = model.tagTimeline.selectedTag
+            _ = model.tagTimeline.tags
+        } onChange: { changed.set() }
+        model.openTagTimeline("#beta")
+        for _ in 0..<20 { await Task.yield() }
+        try await Task.sleep(for: .milliseconds(50))
+
+        #expect(!changed.isSet)
+        #expect(model.tagTimeline.selectedTag == "beta")
+        #expect(model.tagTimeline.timeline == shown)
+    }
+
     /// Waits until the timeline of `tag` has loaded.
     private func waitForTimeline(_ model: AppModel, of tag: String = "acme") async throws {
         try await waitUntil {
@@ -108,4 +137,11 @@ struct AppModelTagClickTests {
             return false
         }
     }
+}
+
+private final class ChangeFlag: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value = false
+    var isSet: Bool { lock.withLock { value } }
+    func set() { lock.withLock { value = true } }
 }

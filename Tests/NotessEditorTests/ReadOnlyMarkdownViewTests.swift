@@ -1,4 +1,5 @@
 import AppKit
+import SwiftUI
 import Testing
 @testable import NotessEditor
 
@@ -118,6 +119,49 @@ struct ReadOnlyMarkdownViewTests {
         textView.noteURL = root.appending(path: "2026-10-15.md")
         textView.refreshInlineImages()
         #expect(textView.fittingHeight(forWidth: 400) > before)
+    }
+
+    @Test("the read-only view forwards Tag clicks with the hand cursor; code, URLs and Wiki-links stay inert")
+    func forwardsTagClicks() throws {
+        var opened: [String] = []
+        let markdown = "## Porada #acme\nText #Beta `#kod` https://example.com/(#kotva) [[Pozn #Sekce]]"
+        let view = NSHostingView(rootView: ReadOnlyMarkdownView(markdown: markdown, onOpenTag: { opened.append($0) }))
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 600, height: 300), styleMask: [.titled], backing: .buffered, defer: true)
+        window.isReleasedWhenClosed = false
+        defer { window.close() }
+        window.contentView = view
+        window.makeKeyAndOrderFront(nil)
+        view.layoutSubtreeIfNeeded()
+        let textView = try #require(Self.markdownTextView(in: view))
+        textView.layoutSubtreeIfNeeded()
+        let text = markdown as NSString
+        func center(_ substring: String) -> NSPoint {
+            let rect = textView.rect(forCharacterRange: text.range(of: substring))
+            return NSPoint(x: rect.midX, y: rect.midY)
+        }
+        func event(_ type: NSEvent.EventType, at point: NSPoint) throws -> NSEvent {
+            try #require(NSEvent.mouseEvent(
+                with: type, location: textView.convert(point, to: nil), modifierFlags: [], timestamp: 0,
+                windowNumber: window.windowNumber, context: nil, eventNumber: 1, clickCount: 1, pressure: 1
+            ))
+        }
+
+        for tag in ["#acme", "#Beta"] {
+            textView.mouseDown(with: try event(.leftMouseDown, at: center(tag)))
+            textView.mouseUp(with: try event(.leftMouseUp, at: center(tag)))
+        }
+        #expect(opened == ["acme", "beta"])
+        #expect(textView.pointingHandTarget(containing: center("#Beta")))
+        for inert in ["kod", "kotva", "Sekce"] {
+            #expect(textView.beginTagClick(with: try event(.leftMouseDown, at: center(inert)), at: center(inert)) == false)
+        }
+        #expect(textView.isEditable == false)
+        #expect(textView.string == markdown)
+    }
+
+    private static func markdownTextView(in view: NSView) -> MarkdownTextView? {
+        if let textView = view as? MarkdownTextView { return textView }
+        return view.subviews.lazy.compactMap { markdownTextView(in: $0) }.first
     }
 
     private func clickImage(in textView: MarkdownTextView, window: NSWindow) -> Bool {
