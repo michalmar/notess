@@ -20,6 +20,7 @@ public final class MarkdownTextView: NSTextView {
     public override func layout() {
         super.layout()
         headingFolding.layoutButtons()
+        positionInlineImageViews(layingOutViewport: false)
         refreshPointingHand()
     }
 
@@ -248,6 +249,11 @@ public final class MarkdownTextView: NSTextView {
     private var reportedImageFailures: Set<String> = []
 
     var displayedInlineImageCount: Int { inlineImagePreviews.count }
+
+    /// Each drawn preview's Markdown source range and image frame (view coordinates).
+    var visibleInlineImageFrames: [(range: NSRange, frame: NSRect)] {
+        inlineImagePreviews.filter { !$0.imageView.isHidden }.map { ($0.range, $0.imageView.frame) }
+    }
 
     /// Called when the user clicks a `[[wiki-link]]`; the click then does not move the caret.
     public var onWikiLinkClick: ((WikiLink) -> Void)? {
@@ -842,21 +848,91 @@ public final class MarkdownTextView: NSTextView {
 
     @objc private func layoutInlineImageViews() {
         layoutSubtreeIfNeeded()
-        var paragraphOffsets: [NSRange: CGFloat] = [:]
+        positionInlineImageViews(layingOutViewport: true)
+    }
+
+    /// Places each preview in the space its paragraph's spacing reserves: below
+    /// the paragraph's last line, which for a wrapped image link is not the line
+    /// the link starts on.
+    ///
+    /// Like the heading fold buttons, only previews in the viewport are placed;
+    /// the rest are hidden until `layout()` runs for a scroll that reaches them.
+    /// Elsewhere TextKit 2 only estimates positions, and screen rects there are
+    /// empty. A viewport layout moves fragments that spacing changes left
+    /// stale, so `layingOutViewport` runs one unless the caller is the view's
+    /// own layout pass. Without a scroll view (read-only) all text is laid out.
+    private func positionInlineImageViews(layingOutViewport: Bool) {
+        guard !inlineImagePreviews.isEmpty, let textStorage, let textLayoutManager,
+              let content = textLayoutManager.textContentManager else { return }
+        let controller = textLayoutManager.textViewportLayoutController
+        if layingOutViewport {
+            if enclosingScrollView == nil {
+                textLayoutManager.ensureLayout(for: textLayoutManager.documentRange)
+            }
+            controller.layoutViewport()
+        }
+        let documentStart = content.documentRange.location
+        let viewport: NSRange? = enclosingScrollView == nil
+            ? NSRange(location: 0, length: textStorage.length)
+            : controller.viewportRange.map { range in
+                let start = content.offset(from: documentStart, to: range.location)
+                return NSRange(location: start, length: content.offset(from: documentStart, to: range.endLocation) - start)
+            }
+
+        let text = textStorage.string as NSString
+        var paragraphOffsets: [Int: CGFloat] = [:]
         for preview in inlineImagePreviews.sorted(by: { $0.range.location < $1.range.location }) {
-            preview.imageView.isHidden = headingFolding.hides(preview.range.location)
-            guard !preview.imageView.isHidden else { continue }
+            let paragraph = preview.range.upperBound <= text.length
+                ? paragraphContents(of: preview.range, in: text)
+                : nil
+            guard let paragraph, let viewport,
+                  NSIntersectionRange(paragraph, viewport).length > 0,
+                  !headingFolding.hides(preview.range.location),
+                  let anchor = imageAnchor(below: paragraph, textLayoutManager, content) else {
+                preview.imageView.isHidden = true
+                continue
+            }
+            preview.imageView.isHidden = false
             let size = fittedSize(for: preview.image)
-            let lineRect = rect(forCharacterRange: preview.range)
-            let offset = paragraphOffsets[preview.paragraphRange, default: 0]
+            let offset = paragraphOffsets[paragraph.location, default: 0]
             preview.imageView.frame = NSRect(
-                x: lineRect.minX,
-                y: lineRect.maxY + 8 + offset,
+                x: anchor.x,
+                y: anchor.y + 8 + offset,
                 width: size.width,
                 height: size.height
             )
-            paragraphOffsets[preview.paragraphRange] = offset + size.height + 8
+            paragraphOffsets[paragraph.location] = offset + size.height + 8
         }
+    }
+
+    /// The paragraph around `range`, without its line break.
+    private func paragraphContents(of range: NSRange, in text: NSString) -> NSRange {
+        var start = 0
+        var contentsEnd = 0
+        text.getParagraphStart(&start, end: nil, contentsEnd: &contentsEnd, for: range)
+        return NSRange(location: start, length: contentsEnd - start)
+    }
+
+    /// Where images below a laid-out paragraph start: its lines' leading edge
+    /// and the bottom of its last line, in view coordinates.
+    private func imageAnchor(
+        below paragraph: NSRange,
+        _ textLayoutManager: NSTextLayoutManager,
+        _ content: NSTextContentManager
+    ) -> NSPoint? {
+        guard paragraph.length > 0,
+              let start = content.location(content.documentRange.location, offsetBy: paragraph.location),
+              let end = content.location(start, offsetBy: paragraph.length),
+              let range = NSTextRange(location: start, end: end) else { return nil }
+        var minX = CGFloat.infinity
+        var maxY = -CGFloat.infinity
+        textLayoutManager.enumerateTextSegments(in: range, type: .standard, options: []) { _, frame, _, _ in
+            minX = min(minX, frame.minX)
+            maxY = max(maxY, frame.maxY)
+            return true
+        }
+        guard minX.isFinite, maxY.isFinite else { return nil }
+        return NSPoint(x: minX + textContainerOrigin.x, y: maxY + textContainerOrigin.y)
     }
 
     private func image(source: String, noteURL: URL) -> NSImage? {
