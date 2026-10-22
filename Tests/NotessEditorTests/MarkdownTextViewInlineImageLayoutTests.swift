@@ -2,8 +2,8 @@ import AppKit
 import Testing
 @testable import NotessEditor
 
-/// Inline image previews sit under the whole Markdown source of their
-/// paragraph, including paragraphs outside the visible area (issue #104).
+/// Inline image previews are drawn under the whole Markdown source of their
+/// paragraph, on open and once scrolled to (issue #104).
 @MainActor
 @Suite("Inline image layout")
 struct MarkdownTextViewInlineImageLayoutTests {
@@ -36,57 +36,33 @@ struct MarkdownTextViewInlineImageLayoutTests {
             RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.05))
         }
 
-        /// The bottom of the last line of the first paragraph containing `substring`.
-        func paragraphBottom(of substring: String) throws -> CGFloat {
-            let text = textView.string as NSString
-            let found = text.range(of: substring)
-            try #require(found.location != NSNotFound)
-            var paragraph = text.paragraphRange(for: found)
-            while paragraph.length > 0, text.character(at: paragraph.upperBound - 1) == 10 {
-                paragraph.length -= 1
-            }
-            let manager = try #require(textView.textLayoutManager)
-            let content = try #require(manager.textContentManager)
-            manager.ensureLayout(for: content.documentRange)
-            manager.textViewportLayoutController.layoutViewport()
-            let start = try #require(content.location(content.documentRange.location, offsetBy: paragraph.location))
-            let end = try #require(content.location(start, offsetBy: paragraph.length))
-            var bottom = -CGFloat.infinity
-            manager.enumerateTextSegments(
-                in: try #require(NSTextRange(location: start, end: end)), type: .standard, options: []
-            ) { _, frame, _, _ in
-                bottom = max(bottom, frame.maxY + textView.textContainerOrigin.y)
-                return true
-            }
-            return bottom
+        func scroll(toY y: CGFloat) {
+            let clip = scrollView.contentView
+            clip.scroll(to: NSPoint(x: 0, y: min(max(0, y), max(0, textView.bounds.height - clip.bounds.height))))
+            scrollView.reflectScrolledClipView(clip)
+            settle()
         }
 
-        /// The top of the first line containing `substring`.
-        func lineTop(of substring: String) throws -> CGFloat {
-            let text = textView.string as NSString
-            let found = text.range(of: substring)
-            try #require(found.location != NSNotFound)
-            let manager = try #require(textView.textLayoutManager)
-            let content = try #require(manager.textContentManager)
-            manager.ensureLayout(for: content.documentRange)
-            manager.textViewportLayoutController.layoutViewport()
-            let start = try #require(content.location(content.documentRange.location, offsetBy: found.location))
-            let end = try #require(content.location(start, offsetBy: 1))
-            var top = CGFloat.infinity
-            manager.enumerateTextSegments(
-                in: try #require(NSTextRange(location: start, end: end)), type: .standard, options: []
-            ) { _, frame, _, _ in
-                top = min(top, frame.minY + textView.textContainerOrigin.y)
-                return false
-            }
-            return top
+        func scrollToVisible(_ substring: String) {
+            textView.scrollRangeToVisible((textView.string as NSString).range(of: substring))
+            settle()
         }
 
-        func imageFrame(for substring: String) throws -> NSRect {
+        /// The drawn line rect of the character at `offset` from where `substring`
+        /// starts (a negative offset counts back from its end), via the screen rect
+        /// AppKit reports for it, so independent of how the editor places images.
+        func lineRect(of substring: String, at offset: Int = 0) throws -> NSRect {
+            let found = (textView.string as NSString).range(of: substring)
+            try #require(found.location != NSNotFound)
+            let index = offset >= 0 ? found.location + offset : found.upperBound + offset
+            let rect = textView.rect(forCharacterRange: NSRange(location: index, length: 1))
+            try #require(rect.height > 0, "\(substring) is not on screen")
+            return rect
+        }
+
+        func imageFrame(for substring: String) -> NSRect? {
             let location = (textView.string as NSString).range(of: substring).location
-            return try #require(
-                textView.inlineImageFrames.first { NSLocationInRange(location, $0.range) }?.frame
-            )
+            return textView.visibleInlineImageFrames.first { NSLocationInRange(location, $0.range) }?.frame
         }
 
         static func png(width: Int, height: Int) -> Data? {
@@ -104,31 +80,44 @@ struct MarkdownTextViewInlineImageLayoutTests {
     /// Headings each followed by an image whose long Markdown source wraps.
     private static func note() -> String {
         sections.map { name in
-            let slug = name.replacingOccurrences(of: " ", with: "-")
-            return "# \(name)\n![](attachments/image-dc67de7d-3977-4194-8a80-0056c338935e-\(slug).png)\n\nText under \(name).\n"
+            "# \(name)\n![](attachments/image-dc67de7d-3977-4194-8a80-0056c338935e-\(slug(name)).png)\n\nText under \(name).\n"
         }.joined(separator: "\n")
     }
 
-    private static func source(of name: String) -> String {
-        "0056c338935e-\(name.replacingOccurrences(of: " ", with: "-")).png"
+    private static func slug(_ name: String) -> String {
+        name.replacingOccurrences(of: " ", with: "-")
     }
 
-    @Test("an image sits below every wrapped line of its Markdown source")
+    private static func source(of name: String) -> String {
+        "![](attachments/image-dc67de7d-3977-4194-8a80-0056c338935e-\(slug(name)).png)"
+    }
+
+    @Test("an image is drawn below every wrapped line of its Markdown source")
     func belowWrappedSource() throws {
         let harness = try Harness(Self.note())
-        let name = Self.sections[0]
 
-        let frame = try harness.imageFrame(for: Self.source(of: name))
-
-        try #expect(frame.minY >= harness.paragraphBottom(of: Self.source(of: name)))
-        try #expect(frame.maxY <= harness.lineTop(of: "Text under \(name)."))
+        try expectImageUnderItsSource(Self.sections[0], harness)
     }
 
-    @Test("images below the visible area sit under their own source, between it and the next text")
+    @Test("images below the visible area are drawn under their source once scrolled to")
     func offscreenImages() throws {
         let harness = try Harness(Self.note())
 
         try expectEachImageUnderItsSource(harness)
+    }
+
+    @Test("an image whose source is scrolled just above the visible area is still drawn")
+    func sourceScrolledAbove() throws {
+        let harness = try Harness(Self.note())
+        let name = Self.sections[2]
+        harness.scrollToVisible(Self.source(of: name))
+        let sourceBottom = try harness.lineRect(of: Self.source(of: name), at: -1).maxY
+
+        harness.scroll(toY: sourceBottom + 20)
+
+        let frame = try #require(harness.imageFrame(for: Self.source(of: name)))
+        #expect(frame.minY >= sourceBottom)
+        #expect(frame.intersects(harness.textView.visibleRect))
     }
 
     @Test("refreshing the previews of a laid-out note keeps each under its source")
@@ -144,7 +133,10 @@ struct MarkdownTextViewInlineImageLayoutTests {
     func editAbove() throws {
         let harness = try Harness(Self.note())
         harness.textView.setSelectedRange(NSRange(location: 0, length: 0))
-        harness.textView.insertText("Intro line that is long enough to wrap in this narrow window.\n\n", replacementRange: NSRange(location: 0, length: 0))
+        harness.textView.insertText(
+            "Intro line that is long enough to wrap in this narrow window.\n\n",
+            replacementRange: NSRange(location: 0, length: 0)
+        )
         harness.settle()
 
         try expectEachImageUnderItsSource(harness)
@@ -153,10 +145,7 @@ struct MarkdownTextViewInlineImageLayoutTests {
     @Test("images stay under their source after scrolling and resizing the window")
     func afterScrollAndResize() throws {
         let harness = try Harness(Self.note())
-        let clip = harness.scrollView.contentView
-        clip.scroll(to: NSPoint(x: 0, y: max(0, harness.textView.bounds.height - clip.bounds.height)))
-        harness.scrollView.reflectScrolledClipView(clip)
-        harness.settle()
+        harness.scroll(toY: .greatestFiniteMagnitude)
         harness.window.setContentSize(NSSize(width: 300, height: 300))
         harness.scrollView.frame = harness.window.contentLayoutRect
         harness.settle()
@@ -165,16 +154,23 @@ struct MarkdownTextViewInlineImageLayoutTests {
     }
 
     private func expectEachImageUnderItsSource(_ harness: Harness) throws {
-        #expect(harness.textView.inlineImageFrames.count == Self.sections.count)
+        #expect(harness.textView.displayedInlineImageCount == Self.sections.count)
         for name in Self.sections {
-            let frame = try harness.imageFrame(for: Self.source(of: name))
-            let bottom = try harness.paragraphBottom(of: Self.source(of: name))
-            let next = try harness.lineTop(of: "Text under \(name).")
-            #expect(frame.height > 0, "\(name)")
-            #expect(frame.minX >= harness.textView.textContainerOrigin.x, "\(name)")
-            #expect(frame.maxX <= harness.textView.bounds.width, "\(name)")
-            #expect(frame.minY >= bottom, "\(name): image \(frame), source bottom \(bottom)")
-            #expect(frame.maxY <= next, "\(name): image \(frame), next text top \(next)")
+            harness.scrollToVisible(Self.source(of: name))
+            try expectImageUnderItsSource(name, harness)
         }
+    }
+
+    private func expectImageUnderItsSource(_ name: String, _ harness: Harness) throws {
+        let source = Self.source(of: name)
+        let frame = try #require(harness.imageFrame(for: source), "\(name) is not drawn")
+        let sourceBottom = try harness.lineRect(of: source, at: -1).maxY
+        harness.scrollToVisible("Text under \(name).")
+        let nextTop = try harness.lineRect(of: "Text under \(name).").minY
+        #expect(frame.height > 0, "\(name)")
+        #expect(frame.minX >= harness.textView.textContainerOrigin.x, "\(name)")
+        #expect(frame.maxX <= harness.textView.bounds.width, "\(name)")
+        #expect(frame.minY >= sourceBottom, "\(name): image \(frame), source bottom \(sourceBottom)")
+        #expect(frame.maxY <= nextTop, "\(name): image \(frame), next text top \(nextTop)")
     }
 }
