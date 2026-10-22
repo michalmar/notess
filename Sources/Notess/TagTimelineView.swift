@@ -2,11 +2,11 @@ import NotessCore
 import NotessEditor
 import SwiftUI
 
-/// Tags mode of the sidebar: Tag Groups above All Tags, the Tags of saved
-/// Daily Entries; one Tag is selected at a time.
+/// Tags mode of the sidebar: Tag Groups, the Ungrouped Tags and All Tags, the
+/// Tags of saved Daily Entries; one Tag is selected at a time.
 struct TagList: View {
     let model: AppModel
-    /// The clicked row; a Tag can have several rows (in groups and All Tags).
+    /// The clicked row; a Tag can have several rows (in groups, Ungrouped and All Tags).
     @State private var selectedRow: TagRow?
     @State private var newGroupRequest: NewGroupRequest?
     @State private var newGroupName = ""
@@ -103,7 +103,7 @@ struct TagList: View {
                                     .selectionDisabled()
                             }
                             ForEach(group.tags, id: \.self) { tag in
-                                tagRow(tag, in: group)
+                                tagRow(tag, in: .group(group.id))
                             }
                         } label: {
                             Label(group.name, systemImage: "rectangle.stack")
@@ -116,6 +116,18 @@ struct TagList: View {
                     }
                 }
             }
+            if !sidebar.groups.isEmpty {
+                Section("Nezařazené") {
+                    if sidebar.ungroupedTags.isEmpty {
+                        Text("Žádné nezařazené Tagy")
+                            .foregroundStyle(.secondary)
+                            .selectionDisabled()
+                    }
+                    ForEach(sidebar.ungroupedTags, id: \.self) { tag in
+                        tagRow(tag, in: .ungrouped)
+                    }
+                }
+            }
             Section("Všechny Tagy") {
                 if sidebar.allTags.isEmpty {
                     Text("Uložené záznamy v Journalu zatím nemají žádný Tag.")
@@ -123,7 +135,7 @@ struct TagList: View {
                         .selectionDisabled()
                 }
                 ForEach(sidebar.allTags, id: \.self) { tag in
-                    tagRow(tag, in: nil)
+                    tagRow(tag, in: .allTags)
                 }
             }
         }
@@ -133,9 +145,9 @@ struct TagList: View {
         }
     }
 
-    private func tagRow(_ tag: String, in group: TagSidebar.Group?) -> some View {
+    private func tagRow(_ tag: String, in location: TagRow.Location) -> some View {
         Label(tag, systemImage: "number")
-            .tag(TagRow(groupID: group?.id, tag: tag))
+            .tag(TagRow(location: location, tag: tag))
             .contextMenu {
                 Menu("Přidat do skupiny") {
                     ForEach(model.tagGroups.groups) { candidate in
@@ -153,9 +165,10 @@ struct TagList: View {
                     if !model.tagGroups.groups.isEmpty { Divider() }
                     Button("Nová skupina…") { requestNewGroup(for: tag) }
                 }
-                if let group {
+                if case .group(let id) = location,
+                   let group = model.tagGroups.groups.first(where: { $0.id == id }) {
                     Button("Odebrat ze skupiny „\(group.name)“") {
-                        model.removeTag(tag, fromGroup: group.id)
+                        model.removeTag(tag, fromGroup: id)
                     }
                 }
             }
@@ -163,13 +176,13 @@ struct TagList: View {
 
     /// The clicked row while it still shows the selected Tag; otherwise the
     /// Tag's All Tags row, e.g. after the selection changed elsewhere or the
-    /// Tag left the clicked group.
+    /// Tag left the clicked group or the Ungrouped Tags.
     private var selection: Binding<TagRow?> {
         Binding(
             get: {
                 guard let tag = browser.selectedTag else { return nil }
                 if let selectedRow, selectedRow.tag == tag, isShown(selectedRow) { return selectedRow }
-                return TagRow(groupID: nil, tag: tag)
+                return TagRow(location: .allTags, tag: tag)
             },
             set: { row in
                 guard let row else { return }
@@ -180,8 +193,14 @@ struct TagList: View {
     }
 
     private func isShown(_ row: TagRow) -> Bool {
-        guard let groupID = row.groupID else { return true }
-        return model.tagSidebar?.groups.contains { $0.id == groupID && $0.tags.contains(row.tag) } ?? false
+        switch row.location {
+        case .allTags:
+            return true
+        case .ungrouped:
+            return model.tagSidebar?.ungroupedTags.contains(row.tag) ?? false
+        case .group(let id):
+            return model.tagSidebar?.groups.contains { $0.id == id && $0.tags.contains(row.tag) } ?? false
+        }
     }
 
     private func requestNewGroup(for tag: String?) {
@@ -198,9 +217,15 @@ struct TagList: View {
     }
 }
 
-/// One row of the Tag list: a Tag in a group, or in All Tags (no group).
+/// One row of the Tag list: a Tag in a group, in the Ungrouped Tags or in All Tags.
 private struct TagRow: Hashable {
-    let groupID: TagGroup.ID?
+    enum Location: Hashable {
+        case group(TagGroup.ID)
+        case ungrouped
+        case allTags
+    }
+
+    let location: Location
     let tag: String
 }
 

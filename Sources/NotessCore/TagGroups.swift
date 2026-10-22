@@ -88,10 +88,11 @@ public struct TagGroups: Codable, Equatable, Sendable {
 
     /// What the Tags sidebar shows for `vocabulary`, the normalised Tags of
     /// saved Daily Entries: every group (empty ones too) with only its Tags in
-    /// the vocabulary, and All Tags with each Tag once.
+    /// the vocabulary, All Tags with each Tag once, and the Tags in no group.
     public func sidebar(vocabulary: [String]) -> TagSidebar {
         var seen = Set<String>()
         let allTags = vocabulary.filter { seen.insert($0).inserted }
+        let grouped = Set(groups.flatMap(\.tags))
         return TagSidebar(
             groups: groups.map { group in
                 TagSidebar.Group(
@@ -101,7 +102,8 @@ public struct TagGroups: Codable, Equatable, Sendable {
                     tags: group.tags.filter(seen.contains)
                 )
             },
-            allTags: allTags
+            allTags: allTags,
+            ungroupedTags: groups.isEmpty ? [] : allTags.filter { !grouped.contains($0) }
         )
     }
 
@@ -118,7 +120,8 @@ public struct TagGroups: Codable, Equatable, Sendable {
     }
 }
 
-/// The Tags sidebar's organisation: Tag Groups above the complete All Tags list.
+/// The Tags sidebar's organisation: Tag Groups, the Ungrouped Tags and the
+/// complete All Tags list.
 public struct TagSidebar: Equatable, Sendable {
     public struct Group: Equatable, Identifiable, Sendable {
         public let id: TagGroup.ID
@@ -131,4 +134,7 @@ public struct TagSidebar: Equatable, Sendable {
     public let groups: [Group]
     /// Every Tag of saved Daily Entries once, grouped or not.
     public let allTags: [String]
+    /// The Tags of All Tags, in its order, that belong to no group; empty while
+    /// no group exists, when the view hides the section.
+    public let ungroupedTags: [String]
 }

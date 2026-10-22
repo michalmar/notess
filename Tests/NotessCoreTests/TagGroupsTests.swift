@@ -47,6 +47,27 @@ struct TagGroupsTests {
         #expect(groups.groups.first { $0.id == work }?.tags == ["acme", "gone"])
     }
 
+    @Test("ungrouped Tags are the vocabulary Tags in no group, in vocabulary order")
+    func ungrouped() throws {
+        var groups = TagGroups()
+        #expect(groups.sidebar(vocabulary: ["acme", "beta"]).ungroupedTags.isEmpty)
+
+        let work = try groups.create(named: "Práce")
+        let clients = try groups.create(named: "Klienti")
+        #expect(groups.sidebar(vocabulary: ["acme", "beta", "acme"]).ungroupedTags == ["acme", "beta"])
+
+        groups.add(tag: "beta", to: work)
+        groups.add(tag: "beta", to: clients)
+        groups.add(tag: "gone", to: work)
+        #expect(groups.sidebar(vocabulary: ["acme", "beta", "zeta"]).ungroupedTags == ["acme", "zeta"])
+
+        groups.remove(tag: "beta", from: work)
+        #expect(groups.sidebar(vocabulary: ["acme", "beta"]).ungroupedTags == ["acme"])
+        groups.delete(clients)
+        #expect(groups.sidebar(vocabulary: ["acme", "beta"]).ungroupedTags == ["acme", "beta"])
+        #expect(groups.sidebar(vocabulary: ["acme", "beta"]).allTags == ["acme", "beta"])
+    }
+
     @Test("deleting a group leaves the others")
     func delete() throws {
         var groups = TagGroups()
