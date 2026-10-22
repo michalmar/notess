@@ -256,11 +256,16 @@ public final class MarkdownTextView: NSTextView {
     public var onOpenWebLink: ((URL) -> Void)? {
         didSet { refreshPointingHand() }
     }
-    /// Called with the normalised name of a clicked `#tag`; the click then
-    /// does not move the caret. Without it Tags are plain text.
+    /// Called with the normalised name of a clicked `#tag` when the button comes
+    /// up; the click then does not move the caret. Without it Tags are plain text.
     public var onTagClick: ((String) -> Void)? {
         didSet { refreshPointingHand() }
     }
+    /// A Tag click waiting for mouse-up; dragging away selects text instead.
+    private var pendingTagClick: (name: String, mouseDown: NSEvent)?
+    /// Replaces the hand-off to `NSTextView`'s selection tracking in tests,
+    /// whose host cannot run that tracking loop.
+    var tagDragSelectionOverride: ((_ mouseDown: NSEvent, _ drag: NSEvent) -> Void)?
 
     /// Fonts and colours; setting a different style restyles the whole note.
     public var markdownStyle: MarkdownEditorStyle {
@@ -444,20 +449,39 @@ public final class MarkdownTextView: NSTextView {
             onWikiLinkClick?(link)
             return
         }
-        if openTag(with: event, at: convert(event.locationInWindow, from: nil)) { return }
         if openWebLink(with: event, at: convert(event.locationInWindow, from: nil)) { return }
+        if beginTagClick(with: event, at: convert(event.locationInWindow, from: nil)) { return }
         super.mouseDown(with: event)
     }
 
-    /// Handles a plain or Command single click on a Tag; other gestures
-    /// return false so `NSTextView` can select text.
-    func openTag(with event: NSEvent, at point: NSPoint) -> Bool {
+    public override func mouseDragged(with event: NSEvent) {
+        guard let pending = pendingTagClick else { return super.mouseDragged(with: event) }
+        let start = pending.mouseDown.locationInWindow
+        let now = event.locationInWindow
+        guard hypot(now.x - start.x, now.y - start.y) >= 3 else { return }
+        pendingTagClick = nil
+        if let tagDragSelectionOverride { return tagDragSelectionOverride(pending.mouseDown, event) }
+        // Replays the gesture into NSTextView's own selection tracking loop.
+        NSApp.postEvent(event, atStart: true)
+        super.mouseDown(with: pending.mouseDown)
+    }
+
+    public override func mouseUp(with event: NSEvent) {
+        guard let pending = pendingTagClick else { return super.mouseUp(with: event) }
+        pendingTagClick = nil
+        onTagClick?(pending.name)
+    }
+
+    /// Starts a plain or Command single click on a Tag, which opens it on
+    /// mouse-up; other gestures return false so `NSTextView` can select text.
+    func beginTagClick(with event: NSEvent, at point: NSPoint) -> Bool {
+        pendingTagClick = nil
         let modifiers = event.modifierFlags.intersection([.shift, .command, .option, .control])
         guard event.clickCount == 1, modifiers.isEmpty || modifiers == .command,
-              let onTagClick, let tag = tag(atPoint: point) else {
+              onTagClick != nil, let tag = tag(atPoint: point) else {
             return false
         }
-        onTagClick(tag.normalizedName)
+        pendingTagClick = (tag.normalizedName, event)
         return true
     }
 

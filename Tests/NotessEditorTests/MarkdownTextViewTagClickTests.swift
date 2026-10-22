@@ -57,9 +57,14 @@ struct MarkdownTextViewTagClickTests {
             return range
         }
 
-        func event(at point: NSPoint, modifiers: NSEvent.ModifierFlags, clickCount: Int = 1) throws -> NSEvent {
+        func event(
+            _ type: NSEvent.EventType = .leftMouseDown,
+            at point: NSPoint,
+            modifiers: NSEvent.ModifierFlags,
+            clickCount: Int = 1
+        ) throws -> NSEvent {
             try #require(NSEvent.mouseEvent(
-                with: .leftMouseDown,
+                with: type,
                 location: textView.convert(point, to: nil),
                 modifierFlags: modifiers,
                 timestamp: 0,
@@ -71,13 +76,16 @@ struct MarkdownTextViewTagClickTests {
             ))
         }
 
-        /// A full `mouseDown`; only for clicks that activate a Tag, since an
-        /// unconsumed click starts `NSTextView`'s mouse tracking loop.
+        /// A full `mouseDown` and `mouseUp`; only for clicks that activate a
+        /// Tag, since an unconsumed click starts `NSTextView`'s tracking loop.
         func click(_ substring: String, occurrence: Int = 0, modifiers: NSEvent.ModifierFlags = []) throws {
-            textView.mouseDown(with: try event(at: center(of: substring, occurrence: occurrence), modifiers: modifiers))
+            let point = center(of: substring, occurrence: occurrence)
+            textView.mouseDown(with: try event(at: point, modifiers: modifiers))
+            textView.mouseUp(with: try event(.leftMouseUp, at: point, modifiers: modifiers))
         }
 
-        /// Whether the Tag-click gesture consumes this click.
+        /// Whether the Tag-click gesture consumes this click; a consumed click
+        /// is then released in place.
         func activates(
             _ substring: String,
             occurrence: Int = 0,
@@ -85,7 +93,10 @@ struct MarkdownTextViewTagClickTests {
             clickCount: Int = 1
         ) throws -> Bool {
             let point = center(of: substring, occurrence: occurrence)
-            return textView.openTag(with: try event(at: point, modifiers: modifiers, clickCount: clickCount), at: point)
+            let down = try event(at: point, modifiers: modifiers, clickCount: clickCount)
+            guard textView.beginTagClick(with: down, at: point) else { return false }
+            textView.mouseUp(with: try event(.leftMouseUp, at: point, modifiers: modifiers))
+            return true
         }
 
         func hand(over substring: String, occurrence: Int = 0) -> Bool {
@@ -150,6 +161,53 @@ struct MarkdownTextViewTagClickTests {
         #expect(try !harness.activates("acme", clickCount: 2))
         #expect(harness.clicked.isEmpty)
         #expect(try harness.activates("acme", modifiers: .command))
+    }
+
+    @Test("pressing on a Tag waits for mouse-up, and a jitter under 3 points still opens it")
+    func opensOnMouseUp() throws {
+        let harness = Harness("Porada #acme dnes")
+        let point = harness.center(of: "acme")
+
+        harness.textView.mouseDown(with: try harness.event(at: point, modifiers: []))
+        #expect(harness.clicked.isEmpty)
+        let jitter = NSPoint(x: point.x + 1, y: point.y)
+        harness.textView.mouseDragged(with: try harness.event(.leftMouseDragged, at: jitter, modifiers: []))
+        harness.textView.mouseUp(with: try harness.event(.leftMouseUp, at: jitter, modifiers: []))
+
+        #expect(harness.clicked == ["acme"])
+    }
+
+    @Test("dragging from a Tag hands the press to text selection instead of opening it")
+    func dragSelects() throws {
+        let harness = Harness("Porada #acme dnes")
+        let start = harness.center(of: "acme")
+        let end = harness.center(of: "dnes")
+        let down = try harness.event(at: start, modifiers: [])
+        var handedOff: [(NSEvent, NSEvent)] = []
+        harness.textView.tagDragSelectionOverride = { handedOff.append(($0, $1)) }
+
+        harness.textView.mouseDown(with: down)
+        harness.textView.mouseDragged(with: try harness.event(.leftMouseDragged, at: end, modifiers: []))
+        harness.textView.mouseDragged(with: try harness.event(.leftMouseDragged, at: end, modifiers: []))
+        harness.textView.mouseUp(with: try harness.event(.leftMouseUp, at: end, modifiers: []))
+
+        #expect(harness.clicked.isEmpty)
+        #expect(handedOff.count == 1)
+        #expect(handedOff.first?.0 === down)
+        #expect(harness.textView.string == "Porada #acme dnes")
+    }
+
+    @Test("Command+click on a Tag inside a web link's label opens the link, a plain click opens the Tag")
+    func tagInWebLinkLabel() throws {
+        let harness = Harness("Viz [#acme kickoff](https://example.com) dnes")
+        var opened: [URL] = []
+        harness.textView.onOpenWebLink = { opened.append($0) }
+
+        harness.textView.mouseDown(with: try harness.event(at: harness.center(of: "acme"), modifiers: .command))
+        try harness.click("acme")
+
+        #expect(opened == [URL(string: "https://example.com")!])
+        #expect(harness.clicked == ["acme"])
     }
 
     @Test("ordinary text next to a Tag does not activate")
