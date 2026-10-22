@@ -50,14 +50,29 @@ struct MarkdownLineState: Equatable, Sendable {
         case body
     }
 
+    /// An open list item (outside block quotes), in columns with tabs
+    /// advancing to the next multiple of four.
+    struct ListItem: Equatable, Sendable {
+        var markerColumn: Int
+        var contentColumn: Int
+
+        /// Lines indented at least this far belong inside the item: its text
+        /// column, or two columns past its marker, so that two-space nesting
+        /// also works below `1.` and wider markers.
+        var nestingColumn: Int { min(contentColumn, markerColumn + 2) }
+    }
+
     var fence: Fence?
     var isFrontMatter = false
     var table: Table = .none
     /// The previous line is a setext heading; this line is its `===`/`---` underline.
     var isSetextUnderline = false
-    var isInList = false
+    /// The open list items, outermost first.
+    var list: [ListItem] = []
     var followsBlankLine = true
     var allowsIndentedCode = true
+
+    var isInList: Bool { !list.isEmpty }
 
     static let documentStart = MarkdownLineState()
 }
@@ -73,6 +88,8 @@ struct MarkdownLineLexer {
     private(set) var tableRow: MarkdownTable.Row?
     /// The column alignments when the line is a table's delimiter row.
     private(set) var tableAlignments: [MarkdownTable.Alignment]?
+    /// The line's place in a list, outside block quotes.
+    private(set) var listLine: MarkdownListLine?
     /// Also emits `.tag` for names without a letter (`#2`, `#-`), so Tag
     /// completion can work on a prefix that is not yet a Tag. Never used for
     /// highlighting or Tag recognition.
@@ -94,7 +111,7 @@ struct MarkdownLineLexer {
         isFirstLine: Bool,
         nextLine: () -> [UInt16]?
     ) -> MarkdownLineState {
-        var next = MarkdownLineState(isInList: state.isInList, followsBlankLine: false, allowsIndentedCode: false)
+        var next = MarkdownLineState(list: state.list, followsBlankLine: false, allowsIndentedCode: false)
         let n = c.count
 
         if state.isFrontMatter {
@@ -132,9 +149,13 @@ struct MarkdownLineLexer {
             next.allowsIndentedCode = true
             return next
         }
+        // The items this line stays inside when it is not a lazy continuation.
+        var enclosing = state.list
+        while let item = enclosing.last, indent < item.nestingColumn { enclosing.removeLast() }
         if indent < 4 || state.isInList, let fence = openingFence(at: first) {
             add(.syntaxMarker, first, n)
             next.fence = fence
+            next.list = enclosing
             return next
         }
 
@@ -154,32 +175,48 @@ struct MarkdownLineLexer {
         }
 
         if indent < 4 {
-            if lexATXHeading(at: first) { return next }
+            if lexATXHeading(at: first) {
+                next.list = enclosing
+                return next
+            }
             if isThematicBreak(from: first) {
                 add(.thematicBreak, first, n)
                 add(.syntaxMarker, first, trimmedEnd())
+                next.list = enclosing
                 return next
             }
             if c[first] == Char.gt {
                 lexBlockquote(from: first)
-                next.isInList = false
+                next.list = []
                 return next
             }
         }
-        if lexListItem(at: first) {
-            next.isInList = true
+        if let marker = lexListItem(at: first) {
+            let markerEnd = column(of: marker.end)
+            var contentColumn = column(of: marker.content)
+            if marker.content == n || contentColumn - markerEnd > 4 { contentColumn = markerEnd + 1 }
+            listLine = MarkdownListLine(
+                marker: marker.number.map { .number($0) } ?? .bullet,
+                level: enclosing.count,
+                range: NSRange(location: offset, length: n),
+                markerRange: NSRange(location: offset + first, length: marker.end - first),
+                contentStart: offset + marker.content
+            )
+            next.list = enclosing + [.init(markerColumn: indent, contentColumn: contentColumn)]
             return next
         }
 
-        // Paragraph line.
-        if indent == 0 && state.followsBlankLine {
-            next.isInList = false
+        // Paragraph line. After a blank line it continues the items it is
+        // indented into; otherwise it continues the innermost item's text.
+        if state.followsBlankLine {
+            next.list = enclosing
         }
         if indent < 4, containsUnescapedPipe(from: first), let following = nextLine(),
            let columns = Self.delimiterRowColumns(following),
            columns == cellCount(from: first) {
             lexTableRow(from: first, isHeader: true)
             next.table = .delimiterNext
+            next.list = enclosing
             return next
         }
         if indent < 4, !next.isInList, let following = nextLine(), let level = Self.setextLevel(following) {
@@ -187,6 +224,15 @@ struct MarkdownLineLexer {
             lexInline(first, n)
             next.isSetextUnderline = true
             return next
+        }
+        if next.isInList {
+            listLine = MarkdownListLine(
+                marker: nil,
+                level: next.list.count - 1,
+                range: NSRange(location: offset, length: n),
+                markerRange: NSRange(location: offset + first, length: 0),
+                contentStart: offset + first
+            )
         }
         lexInline(first, n)
         return next
@@ -211,6 +257,16 @@ struct MarkdownLineLexer {
             i += 1
         }
         return (columns, i)
+    }
+
+    /// The column at which the character at `index` starts, with tabs
+    /// advancing to the next multiple of four.
+    private func column(of index: Int) -> Int {
+        var columns = 0
+        for unit in c[0..<index] {
+            columns += unit == Char.tab ? 4 - columns % 4 : 1
+        }
+        return columns
     }
 
     private func trimmedEnd() -> Int {
@@ -286,29 +342,44 @@ struct MarkdownLineLexer {
             i = markerEnd
             while i < c.count && c[i] == Char.space { i += 1 }
         }
-        if i < c.count && !lexListItem(at: i) {
+        if i < c.count && lexListItem(at: i) == nil {
             lexInline(i, c.count)
         }
     }
 
+    /// Where a list item's marker ends and its text starts, and its number
+    /// for an ordered item.
+    private struct ListMarker {
+        var end: Int
+        var content: Int
+        var number: Int?
+    }
+
     /// Recognises `- item`, `* item`, `+ item`, `1. item`, `1) item` and task
     /// items `- [ ] task` / `- [x] done`.
-    private mutating func lexListItem(at first: Int) -> Bool {
+    private mutating func lexListItem(at first: Int) -> ListMarker? {
         let n = c.count
         var markerEnd: Int
+        var number: Int?
         if c[first] == Char.dash || c[first] == Char.star || c[first] == Char.plus {
             markerEnd = first + 1
         } else {
             var i = first
-            while i < n && i - first < 9 && Char.isDigit(c[i]) { i += 1 }
-            guard i > first, i < n, c[i] == Char.dot || c[i] == Char.rparen else { return false }
+            var value = 0
+            while i < n && i - first < 9 && Char.isDigit(c[i]) {
+                value = value * 10 + Int(c[i] - 0x30)
+                i += 1
+            }
+            guard i > first, i < n, c[i] == Char.dot || c[i] == Char.rparen else { return nil }
             markerEnd = i + 1
+            number = value
         }
-        guard markerEnd == n || Char.isWhitespace(c[markerEnd]) else { return false }
+        guard markerEnd == n || Char.isWhitespace(c[markerEnd]) else { return nil }
         add(.listMarker, first, markerEnd)
 
         var content = markerEnd
         while content < n && Char.isWhitespace(c[content]) { content += 1 }
+        let marker = ListMarker(end: markerEnd, content: content, number: number)
         if content + 2 < n, c[content] == Char.lbracket, c[content + 2] == Char.rbracket,
            content + 3 == n || Char.isWhitespace(c[content + 3]) {
             let mark = c[content + 1]
@@ -319,11 +390,11 @@ struct MarkdownLineLexer {
                 while text < n && Char.isWhitespace(c[text]) { text += 1 }
                 if checked { add(.completedTask, text, n) }
                 lexInline(text, n)
-                return true
+                return marker
             }
         }
         lexInline(content, n)
-        return true
+        return marker
     }
 
     // MARK: Tables

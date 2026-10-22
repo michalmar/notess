@@ -14,13 +14,14 @@ import Foundation
 /// call and must report every edit.
 public final class MarkdownLexer {
     /// The line-aligned range that must be restyled after an edit, and all
-    /// tokens and tables inside it. A table is always complete: an edit
-    /// anywhere in a table restyles the whole table, since every row's layout
-    /// depends on the widest cell of each column.
+    /// tokens, tables and list lines inside it. A table is always complete:
+    /// an edit anywhere in a table restyles the whole table, since every row's
+    /// layout depends on the widest cell of each column.
     public struct Update: Equatable, Sendable {
         public var range: NSRange
         public var tokens: [MarkdownToken]
         public var tables: [MarkdownTable]
+        public var listLines: [MarkdownListLine] = []
     }
 
     /// UTF-16 offset of the first character of every line.
@@ -92,6 +93,20 @@ public final class MarkdownLexer {
         return nil
     }
 
+    /// What Enter does with a collapsed caret at `caret`: continue the list
+    /// or end it (see `MarkdownListLine`). Nil unless the caret is at the end
+    /// of a list item's marker line outside block quotes, or when the next
+    /// number would be too long. Uses the stored block states; changes nothing.
+    public func listNewline(at caret: Int, in text: NSString) -> MarkdownListLine.Edit? {
+        guard caret >= 0, caret <= text.length else { return nil }
+        let line = Self.upperBound(lineStarts, caret) - 1
+        guard line >= 0, line < states.count else { return nil }
+        var lexer = MarkdownLineLexer(line: lineUnits(line, in: text), offset: lineStarts[line])
+        _ = lexer.lex(state: states[line], isFirstLine: line == 0) { nextLineUnits(after: line, in: text) }
+        guard let item = lexer.listLine, caret == item.range.upperBound else { return nil }
+        return item.newline(in: text)
+    }
+
     /// The Tag completion context for a collapsed caret at `caret`, or nil
     /// when the caret does not follow `#` and at least one Tag-name character
     /// in a place where Tags are recognised. Uses the stored block states;
@@ -145,6 +160,7 @@ public final class MarkdownLexer {
     private func relex(_ text: NSString, from first: Int, through last: Int) -> Update {
         var tokens: [MarkdownToken] = []
         var tables: [MarkdownTable] = []
+        var listLines: [MarkdownListLine] = []
         var state = states[first]
         var line = first
         while line < lineStarts.count {
@@ -153,6 +169,7 @@ public final class MarkdownLexer {
             let current = line
             let next = lexer.lex(state: state, isFirstLine: line == 0) { nextLineUnits(after: current, in: text) }
             tokens.append(contentsOf: lexer.tokens)
+            if let listLine = lexer.listLine { listLines.append(listLine) }
             if let row = lexer.tableRow {
                 Self.add(row, alignments: lexer.tableAlignments, to: &tables)
             }
@@ -163,7 +180,7 @@ public final class MarkdownLexer {
         }
         let start = lineStarts[first]
         let end = line < lineStarts.count ? lineStarts[line] : text.length
-        return Update(range: NSRange(location: start, length: end - start), tokens: tokens, tables: tables)
+        return Update(range: NSRange(location: start, length: end - start), tokens: tokens, tables: tables, listLines: listLines)
     }
 
     /// A header row starts a new table; the other rows (and the delimiter

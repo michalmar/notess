@@ -51,15 +51,16 @@ extension MarkdownTextView {
     @objc public func deleteTableColumn(_ sender: Any?) { perform(.deleteColumn) }
 
     /// Enter in a table adds a row below, keeping any selected text such as a
-    /// cell selected by Tab (Option+Enter is a plain line break).
+    /// cell selected by Tab; at the end of a list item it continues or ends
+    /// the list (Option+Enter is a plain line break).
     public override func insertNewline(_ sender: Any?) {
         tagCompleter.dismiss()
-        guard let (table, index, text) = tableAtSelection(),
-              let edit = table.newline(at: index, in: text) else {
-            super.insertNewline(sender)
+        if let (table, index, text) = tableAtSelection(), let edit = table.newline(at: index, in: text) {
+            applyTableEdit(edit, actionName: edit.replacement.isEmpty ? "Opustit tabulku" : "Přidat řádek")
             return
         }
-        applyTableEdit(edit, actionName: edit.replacement.isEmpty ? "Opustit tabulku" : "Přidat řádek")
+        if continueList() { return }
+        super.insertNewline(sender)
     }
 
     /// Tab accepts a shown Tag suggestion; otherwise, in a table it selects
