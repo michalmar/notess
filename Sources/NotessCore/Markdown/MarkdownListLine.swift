@@ -27,6 +27,16 @@ public struct MarkdownListLine: Hashable, Sendable {
     /// line also after the marker and the whitespace after it (the line's end
     /// for an empty item).
     public var contentStart: Int
+    /// For each level from 0 through `level`, the most digits a numbered
+    /// marker at that level of this list has (0 where it has only bullets),
+    /// so the editor can make room for the widest one and line siblings up.
+    public var markerDigits: [Int] = []
+
+    /// The digits of this line's own marker: 0 for a bullet or no marker.
+    var digits: Int {
+        guard case .number = marker else { return 0 }
+        return markerRange.length - 1
+    }
 
     /// The whitespace before the marker or the text.
     public var indentation: NSRange {

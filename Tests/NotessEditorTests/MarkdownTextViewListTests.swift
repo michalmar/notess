@@ -223,7 +223,7 @@ struct MarkdownTextViewListTests {
     @Test("two spaces, four spaces and a tab each nest one level; less indentation returns to the parent", arguments: ["  ", "    ", "\t"])
     func nestingIndentation(indent: String) throws {
         let editor = try Editor("- a\n\(indent)- b\n\(indent)\(indent)- c\n\(indent)- d\n- e")
-        let x = ["a", "b", "c", "d", "e"].map { editor.x(ofItem: $0) }
+        let x = ["a", "b", "c", "d", "e"].map { editor.x(of: $0) }
         let step = x[1] - x[0]
         #expect(step > 10)
         #expect(abs(x[2] - x[1] - step) < 1)
@@ -231,15 +231,15 @@ struct MarkdownTextViewListTests {
         #expect(abs(x[4] - x[0]) < 1)
 
         let reference = try Editor("- a\n  - b\n    - c")
-        #expect(abs(x[0] - reference.x(ofItem: "a")) < 1)
-        #expect(abs(x[1] - reference.x(ofItem: "b")) < 1)
-        #expect(abs(x[2] - reference.x(ofItem: "c")) < 1)
+        #expect(abs(x[0] - reference.x(of: "a")) < 1)
+        #expect(abs(x[1] - reference.x(of: "b")) < 1)
+        #expect(abs(x[2] - reference.x(of: "c")) < 1)
     }
 
     @Test("ordered and unordered items nest in each other")
     func mixedNesting() throws {
         let editor = try Editor("1. a\n   - b\n     1) c\n   - d\n2. e")
-        let x = ["a", "b", "c", "d", "e"].map { editor.x(ofItem: $0) }
+        let x = ["a", "b", "c", "d", "e"].map { editor.x(of: $0) }
         let step = x[1] - x[0]
         #expect(step > 10)
         #expect(abs(x[2] - x[1] - step) < 1)
@@ -256,36 +256,91 @@ struct MarkdownTextViewListTests {
         let editor = try Editor(lf, width: 340)
         let crlf = try Editor(lf.replacingOccurrences(of: "\n", with: "\r\n"), width: 340)
         for item in ["🐎", "ď", "ó"] {
-            #expect(abs(editor.x(ofItem: item) - crlf.x(ofItem: item)) < 0.5)
+            #expect(abs(editor.x(of: item) - crlf.x(of: item)) < 0.5)
         }
         expectHangingIndent(of: "🐎", in: editor.textView)
         expectHangingIndent(of: "🐎", in: crlf.textView)
         #expect(crlf.textView.string == lf.replacingOccurrences(of: "\n", with: "\r\n"))
     }
 
-    @Test("numbers keep their source value; the text of numbers up to 999 lines up and longer ones never overlap it")
+    @Test("numbers keep their source value; every number's marker and text line up with its siblings', whatever its digits")
     func numbering() throws {
-        let editor = try Editor("1. a\n9. b\n10. c\n100. d\n999. e\n1000. f\n123456789. g\n\n2) h\n10) i")
+        let source = """
+        1. A \(Self.long)
+        9. B
+        10. C
+           - vnořená
+        100. D
+        999. E
+        1000. F
+        123456789. G
+
+           pokračování
+
+        2) H
+        10) I
+
+        Odstavec
+
+        1. J
+        100. K
+        """
+        let editor = try Editor(source, width: 400)
         let textView = editor.textView
         let rendering = try Rendering(textView)
-        let aligned = ["a", "b", "c", "d", "e", "h", "i"]
-        let x = editor.x(ofItem: "a")
+        let x = expectHangingIndent(of: "A ", in: textView)
         var rightEdges: [CGFloat] = []
         var widths: [CGFloat] = []
-        for item in aligned {
-            #expect(abs(editor.x(ofItem: item) - x) < 1, "\(item)")
+        for item in ["A", "B", "C", "D", "E", "F", "G", "H", "I"] {
+            #expect(abs(editor.x(of: item) - x) < 0.5, "\(item)")
             let ink = rendering.markerInk(of: item, in: textView)
             expectNumber(ink, before: item, in: textView)
             rightEdges.append(ink?.maxX ?? .nan)
             widths.append(ink?.width ?? .nan)
         }
         for edge in rightEdges.dropFirst() { #expect(abs(edge - rightEdges[0]) < 1) }
-        #expect(widths[1] < widths[2] && widths[2] < widths[3])
-        for item in ["f", "g"] {
-            #expect(editor.x(ofItem: item) >= x - 0.5)
-            expectNumber(rendering.markerInk(of: item, in: textView), before: item, in: textView)
+        #expect(widths[1] < widths[2] && widths[2] < widths[3] && widths[4] < widths[5] && widths[5] < widths[6])
+        #expect(abs(editor.x(of: "pokračování") - x) < 0.5)
+        #expect(editor.x(of: "vnořená") > x + 10)
+
+        // Another list makes room for its own numbers only.
+        let other = editor.x(of: "J")
+        #expect(abs(editor.x(of: "K") - other) < 0.5)
+        #expect(other < x - 10)
+        #expect(textView.string == source)
+    }
+
+    @Test("a number that gets longer moves its whole list, nested items too, in one undo step; other lists stay")
+    func reflow() throws {
+        let editor = try Editor("1. a\n   - b\n2. c\n\n   d\n999‸. e\n\nOdstavec\n\n- f\n10. g")
+        let items = ["a", "b", "c", "d", "e", "f", "g"]
+        let before = items.map { editor.x(of: $0) }
+        let rendering = try Rendering(editor.textView)
+        let digitsBefore = rendering.markerInk(of: "c", in: editor.textView)
+
+        let changes = editor.changes {
+            editor.event { editor.textView.insertText("9", replacementRange: editor.textView.selectedRange()) }
+            editor.layout()
         }
-        #expect(textView.string == "1. a\n9. b\n10. c\n100. d\n999. e\n1000. f\n123456789. g\n\n2) h\n10) i")
+        #expect(changes == 1)
+        #expect(editor.textView.string == "1. a\n   - b\n2. c\n\n   d\n9999. e\n\nOdstavec\n\n- f\n10. g")
+        let after = items.map { editor.x(of: $0) }
+        let shift = after[0] - before[0]
+        #expect(shift > 3)
+        for (index, item) in items.enumerated() {
+            #expect(abs(after[index] - before[index] - (index < 5 ? shift : 0)) < 0.5, "\(item)")
+        }
+        let digitsAfter = try Rendering(editor.textView).markerInk(of: "c", in: editor.textView)
+        #expect(abs((digitsAfter?.maxX ?? .nan) - (digitsBefore?.maxX ?? .nan) - shift) < 1)
+        try expectLooksFresh(editor)
+
+        editor.undoManager.undo()
+        editor.layout()
+        #expect(editor.textView.string == "1. a\n   - b\n2. c\n\n   d\n999. e\n\nOdstavec\n\n- f\n10. g")
+        for (index, item) in items.enumerated() {
+            #expect(abs(editor.x(of: item) - before[index]) < 0.5, "\(item)")
+        }
+        try expectLooksFresh(editor)
     }
 
     @Test("every unordered item gets the same solid round bullet in place of its marker, at every level")
@@ -319,14 +374,14 @@ struct MarkdownTextViewListTests {
     func resizeAndZoom() throws {
         let editor = try Editor(Self.nested, width: 400)
         editor.textView.setSelectedRange(NSRange(location: 5, length: 3))
-        let normal = editor.x(ofItem: "první")
+        let normal = editor.x(of: "první")
 
         let changes = editor.changes {
             editor.resize(width: 300)
             expectNestedLayout(in: editor.textView)
             editor.zoom(fontSize: 22.5)
             expectNestedLayout(in: editor.textView)
-            #expect(editor.x(ofItem: "první") - editor.textView.textContainerOrigin.x > (normal - editor.textView.textContainerOrigin.x) * 1.3)
+            #expect(editor.x(of: "první") - editor.textView.textContainerOrigin.x > (normal - editor.textView.textContainerOrigin.x) * 1.3)
             if let rendering = try? Rendering(editor.textView) {
                 expectBullet(rendering.markerInk(of: "první", in: editor.textView), fontSize: 22.5)
             }
@@ -339,7 +394,7 @@ struct MarkdownTextViewListTests {
         #expect(editor.undoManager.canUndo == false)
         #expect(editor.textView.string == Self.nested)
         #expect(editor.textView.selectedRange() == NSRange(location: 5, length: 3))
-        #expect(abs(editor.x(ofItem: "první") - normal) < 0.5)
+        #expect(abs(editor.x(of: "první") - normal) < 0.5)
     }
 
     // MARK: Editing
@@ -360,6 +415,8 @@ struct MarkdownTextViewListTests {
         try edit("- dva", with: "  - dva")
         try edit("- tři", with: "9. tři")
         try edit("9. tři", with: "10. tři")
+        try edit("10. tři", with: "1000. tři")
+        try edit("1000. tři", with: "10. tři")
         try edit("odstavec", with: "    odstavec")
         try edit("- jedna", with: "jedna")
         try edit("konec", with: "* konec")
@@ -380,6 +437,13 @@ struct MarkdownTextViewListTests {
         try expectLooksFresh(editor)
         editor.undoManager.undo()
         try expectLooksFresh(editor)
+
+        // Joining and splitting lists changes which numbers share a column.
+        editor.load("1. a\n\ntext\n\n1000. b\n2. c\n\n```\n1. d\n```")
+        try edit("text\n\n", with: "")
+        try edit("1000. b", with: "text\n\n1000. b")
+        try edit("```\n1. d", with: "1. d")
+        try edit("```", with: "")
     }
 
     private func expectLooksFresh(_ editor: Editor, sourceLocation: SourceLocation = #_sourceLocation) throws {
@@ -460,12 +524,12 @@ struct MarkdownTextViewListTests {
             let color = textView.textStorage?.attribute(.foregroundColor, at: dash, effectiveRange: nil) as? NSColor
             #expect(color != nil && color?.alphaComponent != 0, "\(line)")
         }
-        let item = editor.x(ofItem: "položka")
+        let item = editor.x(of: "položka")
         #expect(item > plainX + 5)
         #expect(abs(editor.x(of: "[ ] úkol") - item) < 1)
         #expect(abs(editor.x(of: "[x] hotový") - item) < 1)
         #expect(editor.x(of: "vnořená") > item + 10)
-        #expect(abs(editor.x(ofItem: "poslední") - item) < 1)
+        #expect(abs(editor.x(of: "poslední") - item) < 1)
 
         // Inline formatting inside an item is the same as in a paragraph.
         let paragraph = string.range(of: "Text s").location
@@ -503,7 +567,7 @@ struct MarkdownTextViewListTests {
     @Test("an inline image in a list item keeps the item's indent")
     func inlineImage() throws {
         let editor = try Editor("- a\n  1. vnořená ![](attachments/image.png)\n\nOdstavec", width: 500)
-        let before = editor.x(ofItem: "vnořená")
+        let before = editor.x(of: "vnořená")
         let below = editor.x(of: "Odstavec")
         let png = try #require(Self.png())
         editor.textView.noteURL = URL(filePath: "/Vault/Notes/Idea.md")
@@ -515,7 +579,7 @@ struct MarkdownTextViewListTests {
         }
 
         #expect(editor.textView.displayedInlineImageCount == 1)
-        #expect(abs(editor.x(ofItem: "vnořená") - before) < 0.5)
+        #expect(abs(editor.x(of: "vnořená") - before) < 0.5)
         #expect(abs(editor.x(of: "Odstavec") - below) < 0.5)
         let image = try #require(editor.textView.visibleInlineImageFrames.first?.frame)
         let item = try #require(editor.lines(of: "vnořená").last)
@@ -527,8 +591,8 @@ struct MarkdownTextViewListTests {
     @Test("folding a heading hides its list; unfolding brings it back laid out the same")
     func folding() throws {
         let editor = try Editor("# Nadpis\n- první \(Self.long)\n  - druhá\n## Další\ntext", width: 340)
-        let first = editor.x(ofItem: "první")
-        let second = editor.x(ofItem: "druhá")
+        let first = editor.x(of: "první")
+        let second = editor.x(of: "druhá")
         let height = editor.textView.fittingHeight(forWidth: 340)
 
         editor.textView.setSelectedRange(NSRange(location: 2, length: 0))
@@ -538,8 +602,8 @@ struct MarkdownTextViewListTests {
         editor.layout()
 
         #expect(abs(editor.textView.fittingHeight(forWidth: 340) - height) < 1)
-        #expect(abs(editor.x(ofItem: "první") - first) < 0.5)
-        #expect(abs(editor.x(ofItem: "druhá") - second) < 0.5)
+        #expect(abs(editor.x(of: "první") - first) < 0.5)
+        #expect(abs(editor.x(of: "druhá") - second) < 0.5)
         expectHangingIndent(of: "první", in: editor.textView)
         expectBullet(try Rendering(editor.textView).markerInk(of: "druhá", in: editor.textView))
     }
@@ -642,13 +706,9 @@ private final class Editor {
         layout()
     }
 
+    /// Where the first match of `substring` starts, such as an item's text.
     func x(of substring: String) -> CGFloat {
         Geometry.x(of: substring, in: textView)
-    }
-
-    /// Where the text of the item `text` starts (the first match of `text`).
-    func x(ofItem text: String) -> CGFloat {
-        Geometry.x(of: text, in: textView)
     }
 
     func lines(of substring: String) -> [Geometry.Line] {

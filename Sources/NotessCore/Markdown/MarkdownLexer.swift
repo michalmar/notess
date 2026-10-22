@@ -28,6 +28,15 @@ public final class MarkdownLexer {
     private(set) var lineStarts: [Int] = [0]
     /// Block state at the start of every line.
     private(set) var states: [MarkdownLineState] = [.documentStart]
+    /// Every list line's level and marker digits, nil for other lines.
+    private var listLines: [ListLineInfo?] = [nil]
+
+    private struct ListLineInfo {
+        var level: Int
+        var digits: Int
+        /// The `MarkdownListLine.markerDigits` the line was last reported with.
+        var markerDigits: [Int]
+    }
 
     public init() {}
 
@@ -44,6 +53,7 @@ public final class MarkdownLexer {
     public func relexAll(text: NSString) -> Update {
         lineStarts = [0] + Self.lineStarts(in: text, from: 0, to: text.length)
         states = Array(repeating: .documentStart, count: lineStarts.count)
+        listLines = Array(repeating: nil, count: lineStarts.count)
         return relex(text, from: 0, through: lineStarts.count - 1)
     }
 
@@ -63,6 +73,7 @@ public final class MarkdownLexer {
         let inserted = Self.lineStarts(in: text, from: location, to: editedRange.upperBound)
         lineStarts.replaceSubrange(firstRemoved..<firstShifted, with: inserted)
         states.replaceSubrange(firstRemoved..<firstShifted, with: repeatElement(.documentStart, count: inserted.count))
+        listLines.replaceSubrange(firstRemoved..<firstShifted, with: repeatElement(nil, count: inserted.count))
         if delta != 0 {
             for index in (firstRemoved + inserted.count)..<lineStarts.count {
                 lineStarts[index] += delta
@@ -83,9 +94,7 @@ public final class MarkdownLexer {
     /// not inside a `[ ]`/`[x]` box. Only the text changes; nothing is saved.
     public func taskToggle(at index: Int, in text: NSString) -> (range: NSRange, replacement: String)? {
         guard index >= 0, index < text.length else { return nil }
-        let line = Self.upperBound(lineStarts, index) - 1
-        var lexer = MarkdownLineLexer(line: lineUnits(line, in: text), offset: lineStarts[line])
-        _ = lexer.lex(state: states[line], isFirstLine: line == 0) { nextLineUnits(after: line, in: text) }
+        let lexer = lexed(Self.upperBound(lineStarts, index) - 1, in: text)
         for token in lexer.tokens {
             guard case .task(let isChecked) = token.kind, NSLocationInRange(index, token.range) else { continue }
             return (NSRange(location: token.range.location + 1, length: 1), isChecked ? " " : "x")
@@ -101,9 +110,7 @@ public final class MarkdownLexer {
         guard caret >= 0, caret <= text.length else { return nil }
         let line = Self.upperBound(lineStarts, caret) - 1
         guard line >= 0, line < states.count else { return nil }
-        var lexer = MarkdownLineLexer(line: lineUnits(line, in: text), offset: lineStarts[line])
-        _ = lexer.lex(state: states[line], isFirstLine: line == 0) { nextLineUnits(after: line, in: text) }
-        guard let item = lexer.listLine, caret == item.range.upperBound else { return nil }
+        guard let item = lexed(line, in: text).listLine, caret == item.range.upperBound else { return nil }
         return item.newline(in: text)
     }
 
@@ -117,9 +124,7 @@ public final class MarkdownLexer {
            UTF16.isLeadSurrogate(text.character(at: caret - 1)) { return nil }
         let line = Self.upperBound(lineStarts, caret) - 1
         guard line >= 0, line < states.count else { return nil }
-        var lexer = MarkdownLineLexer(line: lineUnits(line, in: text), offset: lineStarts[line], recognizesTagPrefixes: true)
-        _ = lexer.lex(state: states[line], isFirstLine: line == 0) { nextLineUnits(after: line, in: text) }
-        for token in lexer.tokens where token.kind == .tag {
+        for token in lexed(line, in: text, recognizesTagPrefixes: true).tokens where token.kind == .tag {
             guard caret > token.range.location + 1, caret <= NSMaxRange(token.range) else { continue }
             let prefix = text.substring(with: NSRange(location: token.range.location + 1, length: caret - token.range.location - 1))
             return TagCompletionContext(prefix: prefix, tokenRange: token.range, caret: caret)
@@ -157,7 +162,41 @@ public final class MarkdownLexer {
 
     // MARK: Lexing
 
+    /// `line` lexed with its stored block state; changes nothing.
+    private func lexed(_ line: Int, in text: NSString, recognizesTagPrefixes: Bool = false) -> MarkdownLineLexer {
+        var lexer = MarkdownLineLexer(line: lineUnits(line, in: text), offset: lineStarts[line], recognizesTagPrefixes: recognizesTagPrefixes)
+        _ = lexer.lex(state: states[line], isFirstLine: line == 0) { nextLineUnits(after: line, in: text) }
+        return lexer
+    }
+
+    /// Re-lexes from `first` through at least `last`, and on through whole
+    /// lists whose widest numbers changed, since every line of a list is laid
+    /// out with room for them.
     private func relex(_ text: NSString, from first: Int, through last: Int) -> Update {
+        var (update, lexed) = lex(text, from: first, through: last)
+        let lists = listExtent(around: lexed)
+        let digits = ListDigits(lines: lists, states: states, listLines: listLines)
+        let stale = lists.contains { line in
+            guard !lexed.contains(line), let info = listLines[line] else { return false }
+            return !digits.matches(info.markerDigits, line: line, level: info.level)
+        }
+        if stale {
+            (update, lexed) = lex(text, from: min(first, lists.lowerBound), through: max(lexed.upperBound, lists.upperBound) - 1)
+        }
+        var line = lexed.lowerBound
+        for index in update.listLines.indices {
+            while lineStarts[line] != update.listLines[index].range.location { line += 1 }
+            let markerDigits = digits.markerDigits(line: line, level: update.listLines[index].level)
+            update.listLines[index].markerDigits = markerDigits
+            listLines[line]?.markerDigits = markerDigits
+            line += 1
+        }
+        return update
+    }
+
+    /// Lexes from `first` until the block state converges after `last`.
+    /// Returns the update and the lines lexed.
+    private func lex(_ text: NSString, from first: Int, through last: Int) -> (Update, Range<Int>) {
         var tokens: [MarkdownToken] = []
         var tables: [MarkdownTable] = []
         var listLines: [MarkdownListLine] = []
@@ -169,6 +208,7 @@ public final class MarkdownLexer {
             let current = line
             let next = lexer.lex(state: state, isFirstLine: line == 0) { nextLineUnits(after: current, in: text) }
             tokens.append(contentsOf: lexer.tokens)
+            self.listLines[line] = lexer.listLine.map { ListLineInfo(level: $0.level, digits: $0.digits, markerDigits: []) }
             if let listLine = lexer.listLine { listLines.append(listLine) }
             if let row = lexer.tableRow {
                 Self.add(row, alignments: lexer.tableAlignments, to: &tables)
@@ -180,7 +220,57 @@ public final class MarkdownLexer {
         }
         let start = lineStarts[first]
         let end = line < lineStarts.count ? lineStarts[line] : text.length
-        return Update(range: NSRange(location: start, length: end - start), tokens: tokens, tables: tables, listLines: listLines)
+        let update = Update(range: NSRange(location: start, length: end - start), tokens: tokens, tables: tables, listLines: listLines)
+        return (update, first..<line)
+    }
+
+    /// `lines` widened to the whole lists they touch: a list runs from its
+    /// first item to the last line whose block state is still in it.
+    private func listExtent(around lines: Range<Int>) -> Range<Int> {
+        var start = lines.lowerBound
+        while start > 0 && !states[start].list.isEmpty { start -= 1 }
+        var end = lines.upperBound
+        while end < lineStarts.count && !states[end].list.isEmpty { end += 1 }
+        return start..<end
+    }
+
+    /// The most marker digits at every level of each list in some lines.
+    private struct ListDigits {
+        /// The first line of each list, ascending.
+        private var starts: [Int] = []
+        private var digits: [[Int]] = []
+
+        init(lines: Range<Int>, states: [MarkdownLineState], listLines: [ListLineInfo?]) {
+            for line in lines {
+                if starts.isEmpty || states[line].list.isEmpty {
+                    starts.append(line)
+                    digits.append([])
+                }
+                guard let info = listLines[line] else { continue }
+                let list = digits.count - 1
+                if digits[list].count <= info.level {
+                    digits[list] += repeatElement(0, count: info.level + 1 - digits[list].count)
+                }
+                digits[list][info.level] = max(digits[list][info.level], info.digits)
+            }
+        }
+
+        /// The `MarkdownListLine.markerDigits` of a list line at `level`.
+        func markerDigits(line: Int, level: Int) -> [Int] {
+            let list = self.list(of: line)
+            return (0...level).map { $0 < list.count ? list[$0] : 0 }
+        }
+
+        func matches(_ markerDigits: [Int], line: Int, level: Int) -> Bool {
+            let list = self.list(of: line)
+            return markerDigits.count == level + 1
+                && markerDigits.indices.allSatisfy { markerDigits[$0] == ($0 < list.count ? list[$0] : 0) }
+        }
+
+        private func list(of line: Int) -> [Int] {
+            let index = MarkdownLexer.upperBound(starts, line) - 1
+            return index >= 0 ? digits[index] : []
+        }
     }
 
     /// A header row starts a new table; the other rows (and the delimiter

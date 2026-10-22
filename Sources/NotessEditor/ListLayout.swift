@@ -9,11 +9,12 @@ extension NSAttributedString.Key {
 /// Lays out the lines of Markdown lists without changing their text (ADR 0002).
 ///
 /// Every item gets a hanging indent: its text, wrapped lines and continuation
-/// lines start at the same x, one `step` further right per level, and the
-/// marker ends a `gap` before it. A step fits a three-digit number, so the
-/// text of numbered siblings stays aligned from 1 to 999; a longer number
-/// pushes its own line right rather than overlapping the text. The level,
-/// not the source indentation, sets the indent, so the whitespace before the
+/// lines start at the same x, one step further right per level, and the
+/// marker ends a `gap` before it. A level's step fits the widest number at
+/// that level of the list (`MarkdownListLine.markerDigits`) in the font's
+/// widest digits, and at least three of them, so the markers and text of
+/// siblings line up; a longer number moves the whole list. The level, not
+/// the source indentation, sets the indent, so the whitespace before the
 /// marker and the text is squeezed to (almost) nothing: spaces by a negative
 /// kern, tabs by tab stops a hair apart. Only the character right before the
 /// marker or the text keeps its width, and the distance up to the text goes
@@ -25,7 +26,11 @@ struct ListLayout {
     private let font: NSFont
     private let markerColor: NSColor
     private let gap: CGFloat
-    private let step: CGFloat
+    /// Room left of the root markers for up to three characters of
+    /// indentation, the last of which keeps its width.
+    private let lead: CGFloat
+    private let digitWidth: CGFloat
+    private let delimiterWidth: CGFloat
     private let spaceWidth: CGFloat
     private let bulletDiameter: CGFloat
     private var markerWidths: [String: CGFloat] = [:]
@@ -41,17 +46,22 @@ struct ListLayout {
         gap = (style.font.pointSize * 0.4).rounded()
         spaceWidth = Self.width(of: " ", font: style.font)
         bulletDiameter = style.font.pointSize * 0.36
-        step = max(Self.width(of: "000.", font: style.font), Self.width(of: "000)", font: style.font)) + gap
+        lead = spaceWidth + 3 * Self.squeezedTab
+        digitWidth = (0...9).map { Self.width(of: String($0), font: style.font) }.max() ?? 0
+        delimiterWidth = max(Self.width(of: ".", font: style.font), Self.width(of: ")", font: style.font))
     }
 
-    /// Where the text of an item at `level` starts.
-    func contentX(level: Int) -> CGFloat {
-        CGFloat(level + 1) * step
+    /// Where the text of `line` starts.
+    func contentX(of line: MarkdownListLine) -> CGFloat {
+        (0...line.level).reduce(lead) { x, level in
+            let digits = level < line.markerDigits.count ? line.markerDigits[level] : 0
+            return x + CGFloat(max(3, digits)) * digitWidth + delimiterWidth + gap
+        }
     }
 
     mutating func layOut(_ line: MarkdownListLine, in storage: NSTextStorage) {
         let string = storage.mutableString
-        var contentX = contentX(level: line.level)
+        var contentX = contentX(of: line)
         let firstLineX: CGFloat
         var tabStops: [CGFloat] = []
 
@@ -62,7 +72,8 @@ struct ListLayout {
             case .bullet: contentX - gap - bulletDiameter / 2 - markerWidth / 2
             case .number: contentX - gap - markerWidth
             }
-            // Room for the indentation's last character, which keeps its width.
+            // Room for the indentation's last character, which keeps its
+            // width; `lead` leaves it for every root item.
             let minimum = line.indentation.length > 0 ? spaceWidth + CGFloat(line.indentation.length) * Self.squeezedTab : 0
             if markerX < minimum {
                 contentX += minimum - markerX
@@ -109,7 +120,7 @@ struct ListLayout {
         let last = range.upperBound - 1
         let body = NSRange(location: range.location, length: last - range.location)
         let start = end - spaceWidth - CGFloat(tabCount(in: body, of: storage.mutableString)) * Self.squeezedTab
-        squeeze(body, from: start, in: storage, tabStops: &tabStops)
+        collapse(body, from: start, in: storage, tabStops: &tabStops)
         if storage.mutableString.character(at: last) == Self.tab {
             tabStops.append(end)
         }
@@ -122,7 +133,7 @@ struct ListLayout {
         guard range.length > 0 else { return }
         let string = storage.mutableString
         let last = range.upperBound - 1
-        let tabs = squeeze(NSRange(location: range.location, length: last - range.location), from: start, in: storage, tabStops: &tabStops)
+        let tabs = collapse(NSRange(location: range.location, length: last - range.location), from: start, in: storage, tabStops: &tabStops)
         if string.character(at: last) == Self.tab {
             tabStops.append(end)
             return
@@ -141,7 +152,7 @@ struct ListLayout {
     /// Makes the spaces in `range` take no room and adds a tab stop for each
     /// tab, `squeezedTab` apart from just after `x`. Returns the number of tabs.
     @discardableResult
-    private func squeeze(_ range: NSRange, from x: CGFloat, in storage: NSTextStorage, tabStops: inout [CGFloat]) -> Int {
+    private func collapse(_ range: NSRange, from x: CGFloat, in storage: NSTextStorage, tabStops: inout [CGFloat]) -> Int {
         let string = storage.mutableString
         var tabs = 0
         for index in range.location..<range.upperBound {
