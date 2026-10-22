@@ -635,6 +635,14 @@ struct MarkdownTextViewTagCompletionTests {
         #expect(marked == "#a\n‸")
         #expect(rows.isEmpty)
 
+        load("- ‸")
+        type("#a")
+        await settle()
+        #expect(!rows.isEmpty)
+        command(#selector(NSResponder.insertNewline(_:)))
+        #expect(marked == "- #a\n- ‸")
+        #expect(rows.isEmpty)
+
         load("| x | #a‸ |\n| - | - |")
         type("c")
         await settle()

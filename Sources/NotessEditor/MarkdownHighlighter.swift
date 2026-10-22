@@ -14,13 +14,15 @@ extension NSAttributedString.Key {
 /// incremental `MarkdownLexer` which lines changed and restyles only those
 /// (ADR 0001: typing must stay instant even in long notes). Markup stays
 /// visible and is only dimmed, except in tables, which are drawn as a grid
-/// (see `TableLayout`).
+/// (see `TableLayout`), and list markers, which become bullets and numbers
+/// with a hanging indent (see `ListLayout`).
 @MainActor
 final class MarkdownHighlighter: NSObject, NSTextStorageDelegate, NSTextLayoutManagerDelegate {
     let lexer = MarkdownLexer()
     private(set) var headingTokens: [MarkdownToken] = []
     private(set) var style: MarkdownEditorStyle
     private var fontCache: [FontKey: NSFont] = [:]
+    private var listLayout: ListLayout
     var didStyleText: (NSRange, NSRange?, Int) -> Void = { _, _, _ in }
     /// The editor's selection, nil in a view that never reports one (read-only).
     /// A table's delimiter row it touches shows its markup.
@@ -30,12 +32,14 @@ final class MarkdownHighlighter: NSObject, NSTextStorageDelegate, NSTextLayoutMa
 
     init(style: MarkdownEditorStyle = .standard) {
         self.style = style
+        listLayout = ListLayout(style: style)
     }
 
     /// Changes the style and restyles the whole text.
     func setStyle(_ style: MarkdownEditorStyle, for storage: NSTextStorage) {
         self.style = style
         fontCache.removeAll()
+        listLayout = ListLayout(style: style)
         restyleAll(storage)
     }
 
@@ -114,16 +118,21 @@ final class MarkdownHighlighter: NSObject, NSTextStorageDelegate, NSTextLayoutMa
         }
     }
 
-    /// Table rows get a fragment that draws the table grid.
+    /// Table rows get a fragment that draws the table grid, unordered list
+    /// items one that draws their bullet.
     nonisolated func textLayoutManager(
         _ textLayoutManager: NSTextLayoutManager,
         textLayoutFragmentFor location: NSTextLocation,
         in textElement: NSTextElement
     ) -> NSTextLayoutFragment {
-        if let paragraph = textElement as? NSTextParagraph,
-           paragraph.attributedString.length > 0,
-           let decoration = paragraph.attributedString.attribute(.notessTableRow, at: 0, effectiveRange: nil) as? TableRowDecoration {
-            return TableRowLayoutFragment(textElement: textElement, range: textElement.elementRange, decoration: decoration)
+        if let paragraph = textElement as? NSTextParagraph, paragraph.attributedString.length > 0 {
+            let text = paragraph.attributedString
+            if let decoration = text.attribute(.notessTableRow, at: 0, effectiveRange: nil) as? TableRowDecoration {
+                return TableRowLayoutFragment(textElement: textElement, range: textElement.elementRange, decoration: decoration)
+            }
+            if let decoration = text.attribute(.notessListBullet, at: 0, effectiveRange: nil) as? ListBulletDecoration {
+                return ListItemLayoutFragment(textElement: textElement, range: textElement.elementRange, decoration: decoration)
+            }
         }
         return NSTextLayoutFragment(textElement: textElement, range: textElement.elementRange)
     }
@@ -146,6 +155,9 @@ final class MarkdownHighlighter: NSObject, NSTextStorageDelegate, NSTextLayoutMa
             if let shown = TableLayout.layOut(table, in: storage, style: style, showingDelimiterRowAt: selection) {
                 shownDelimiterRow = shown
             }
+        }
+        for line in update.listLines {
+            listLayout.layOut(line, in: storage)
         }
     }
 

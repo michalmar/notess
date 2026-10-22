@@ -814,13 +814,14 @@ public final class MarkdownTextView: NSTextView {
         guard let textStorage, range.length > 0, range.upperBound <= textStorage.length else { return }
         let base = textStorage.attribute(.notessBaseParagraphSpacing, at: range.location, effectiveRange: nil) as? CGFloat ?? 0
         let existing = textStorage.attribute(.paragraphStyle, at: range.location, effectiveRange: nil) as? NSParagraphStyle
-        if imagesHeight == 0, base == 0, (existing?.paragraphSpacingBefore ?? 0) == 0 {
-            textStorage.removeAttribute(.paragraphStyle, range: range)
-            return
-        }
+        // Keeps the rest of the paragraph's style, such as a list item's indent.
         let style = (existing?.mutableCopy() as? NSMutableParagraphStyle) ?? NSMutableParagraphStyle()
         style.paragraphSpacing = base + imagesHeight
-        textStorage.addAttribute(.paragraphStyle, value: style, range: range)
+        if style == NSParagraphStyle.default {
+            textStorage.removeAttribute(.paragraphStyle, range: range)
+        } else {
+            textStorage.addAttribute(.paragraphStyle, value: style, range: range)
+        }
     }
 
     private func updateParagraphSpacing(for paragraphRanges: Set<NSRange>) {
