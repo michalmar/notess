@@ -115,6 +115,74 @@ struct AppModelTagGroupTests {
         #expect(try sidebarGroups(reopened) == [GroupRow(name: "Klienti", isExpanded: true, tags: [])])
     }
 
+    @Test("Ungrouped Tags follow the memberships: any group removes a Tag, losing the last brings it back")
+    func ungroupedTagsFollowMemberships() async throws {
+        let fixture = try TagGroupFixture()
+        try fixture.write("# 2026-06-02\n\n## Porada #acme #beta #cíl\n", to: "Journal/2026/06/2026-06-02.md")
+        let model = try await fixture.makeModelShowingTags()
+        #expect(try #require(model.tagSidebar).ungroupedTags.isEmpty)
+
+        let projects = try #require(model.createTagGroup(named: "Projekty"))
+        #expect(try #require(model.tagSidebar).ungroupedTags == ["acme", "beta", "cíl"])
+
+        model.addTag("acme", toGroup: projects)
+        let clients = try #require(model.addTagToNewGroup("acme", named: "Klienti"))
+        #expect(try #require(model.tagSidebar).ungroupedTags == ["beta", "cíl"])
+
+        model.removeTag("acme", fromGroup: projects)
+        #expect(try #require(model.tagSidebar).ungroupedTags == ["beta", "cíl"])
+        model.deleteTagGroup(clients)
+        #expect(try #require(model.tagSidebar).ungroupedTags == ["acme", "beta", "cíl"])
+        #expect(try #require(model.tagSidebar).allTags == ["acme", "beta", "cíl"])
+
+        model.addTag("beta", toGroup: projects)
+        model.addTag("acme", toGroup: projects)
+        model.addTag("cíl", toGroup: projects)
+        #expect(try #require(model.tagSidebar).ungroupedTags.isEmpty)
+        #expect(try #require(model.tagSidebar).allTags == ["acme", "beta", "cíl"])
+        #expect(model.errorMessage == nil)
+    }
+
+    @Test("a vanished Tag reappears in Ungrouped Tags only if it is still in no group")
+    func ungroupedTagsAfterReturn() async throws {
+        let fixture = try TagGroupFixture()
+        let path = "Journal/2026/06/2026-06-02.md"
+        try fixture.write("# 2026-06-02\n\n## Porada #acme #beta\n", to: path)
+        let model = try await fixture.makeModelShowingTags()
+        let projects = try #require(model.createTagGroup(named: "Projekty"))
+        model.addTag("acme", toGroup: projects)
+
+        try await fixture.save("# 2026-06-02\n\n## Porada #beta\n", to: path, in: model)
+        try await waitUntil { model.tagSidebar?.allTags == ["beta"] }
+        #expect(try #require(model.tagSidebar).ungroupedTags == ["beta"])
+
+        try await fixture.save("# 2026-06-02\n\n## Porada #acme #beta\n", to: path, in: model)
+        try await waitUntil { model.tagSidebar?.allTags == ["acme", "beta"] }
+        #expect(try #require(model.tagSidebar).ungroupedTags == ["beta"])
+    }
+
+    @Test("Ungrouped Tags are per Vault and survive an index rebuild")
+    func ungroupedTagsPerVault() async throws {
+        let first = try TagGroupFixture()
+        try first.write("# 2026-06-02\n\n## Porada #acme #beta\n", to: "Journal/2026/06/2026-06-02.md")
+        let second = try TagGroupFixture(settingsURL: first.settingsURL)
+        try second.write("# 2026-06-02\n\n## Porada #acme #beta\n", to: "Journal/2026/06/2026-06-02.md")
+        let model = try await first.makeModelShowingTags()
+        _ = try #require(model.addTagToNewGroup("acme", named: "První"))
+
+        model.rebuildSearchIndex()
+        try await first.settle(model)
+        #expect(try #require(model.tagSidebar).ungroupedTags == ["beta"])
+
+        model.chooseVault(at: second.rootURL)
+        model.sidebarMode = .tags
+        try await second.settle(model)
+        #expect(model.tagGroups.groups.isEmpty)
+        #expect(try #require(model.tagSidebar).ungroupedTags.isEmpty)
+        _ = try #require(model.createTagGroup(named: "Druhá"))
+        #expect(try #require(model.tagSidebar).ungroupedTags == ["acme", "beta"])
+    }
+
     @Test("collapsing a group hides nothing else and is remembered")
     func collapseIsRemembered() async throws {
         let fixture = try TagGroupFixture()
