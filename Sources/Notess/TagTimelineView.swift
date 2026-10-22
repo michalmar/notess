@@ -243,7 +243,6 @@ struct TagTimelineView: View {
     let noteURL: (TagTimelineSection) -> URL?
     let openImagePreview: (ImagePreviewContent) -> Void
     let open: (TagTimelineSection) -> Void
-    /// Opens a Tag clicked in a Section card.
     let openTag: (String) -> Void
 
     var body: some View {

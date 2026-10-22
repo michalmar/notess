@@ -124,7 +124,7 @@ struct ReadOnlyMarkdownViewTests {
     @Test("the read-only view forwards Tag clicks with the hand cursor; code, URLs and Wiki-links stay inert")
     func forwardsTagClicks() throws {
         var opened: [String] = []
-        let markdown = "## Porada #acme\nText #Beta `#kod` https://example.com/#kotva [[Pozn#Sekce]]"
+        let markdown = "## Porada #acme\nText #Beta `#kod` https://example.com/(#kotva) [[Pozn #Sekce]]"
         let view = NSHostingView(rootView: ReadOnlyMarkdownView(markdown: markdown, onOpenTag: { opened.append($0) }))
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 600, height: 300), styleMask: [.titled], backing: .buffered, defer: true)
         window.isReleasedWhenClosed = false
