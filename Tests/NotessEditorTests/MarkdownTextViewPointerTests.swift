@@ -218,6 +218,14 @@ struct MarkdownTextViewPointerTests {
         #expect(harness.textView.string == "# Topic\nbody\n# Next\nmore")
     }
 
+    @Test("disclosure buttons of a non-interactive view are not targets")
+    func nonInteractiveButtons() throws {
+        let harness = Harness("# Topic\nbody")
+        let button = try #require(harness.buttons.first)
+        harness.textView.isSelectable = false
+        check(!harness.textView.pointingHandTarget(containing: button.frame.center))
+    }
+
     @Test("read-only views show the hand over their disclosure buttons")
     func readOnlyDisclosureButtons() throws {
         let textView = MarkdownTextViewFactory.makeReadOnlyTextView()
@@ -284,6 +292,47 @@ struct MarkdownTextViewPointerTests {
         check(!visibleBottom.isHidden)
         check(harness.textView.pointingHandTarget(containing: visibleBottom.frame.center))
         check(!harness.textView.pointingHandTarget(containing: top.frame.center))
+    }
+
+    // MARK: Real cursor
+
+    /// NSTextView re-applies the text cursor through its own tracking area, which
+    /// beats cursor rects, so the hand must be set from `cursorUpdate` and `mouseMoved`.
+    @Test("entering and moving over a link or disclosure button sets the pointing hand, and leaving restores the text cursor")
+    func cursorFollowsMouse() throws {
+        let harness = Harness("Visit https://example.com/docs today.\n# Topic\nbody")
+        let button = try #require(harness.buttons.first)
+
+        func send(_ type: NSEvent.EventType, at point: NSPoint) throws {
+            let location = harness.textView.convert(point, to: nil)
+            if type == .cursorUpdate {
+                harness.textView.cursorUpdate(with: try #require(NSEvent.enterExitEvent(
+                    with: .cursorUpdate, location: location, modifierFlags: [], timestamp: 0,
+                    windowNumber: harness.window.windowNumber, context: nil, eventNumber: 0,
+                    trackingNumber: 0, userData: nil)))
+            } else {
+                harness.textView.mouseMoved(with: try #require(NSEvent.mouseEvent(
+                    with: .mouseMoved, location: location, modifierFlags: [], timestamp: 0,
+                    windowNumber: harness.window.windowNumber, context: nil, eventNumber: 0,
+                    clickCount: 0, pressure: 0)))
+            }
+        }
+
+        NSCursor.arrow.set()
+        try send(.cursorUpdate, at: harness.center(of: "https://example.com/docs"))
+        check(NSCursor.current == .pointingHand)
+
+        try send(.mouseMoved, at: harness.center(of: "body"))
+        check(NSCursor.current == .iBeam)
+
+        try send(.mouseMoved, at: button.frame.center)
+        check(NSCursor.current == .pointingHand)
+
+        try send(.mouseMoved, at: harness.center(of: "today"))
+        check(NSCursor.current == .iBeam)
+
+        try send(.cursorUpdate, at: harness.center(of: "body"))
+        check(NSCursor.current != .pointingHand)
     }
 
     @Test("hover feedback leaves click behavior and TextKit 2 unchanged")

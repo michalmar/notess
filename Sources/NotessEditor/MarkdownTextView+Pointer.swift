@@ -3,14 +3,37 @@ import NotessCore
 
 /// The standard pointing-hand cursor over the editor's interactive targets.
 ///
-/// One cursor-rect set serves every target: links, and heading disclosure
-/// buttons over each button's existing frame. `NSTextView` still supplies the
-/// text cursor everywhere else. Cursor-only: clicks and folding are unchanged.
+/// One mechanism serves every target: links, and heading disclosure buttons
+/// over each button's existing frame. `NSTextView` owns a `.cursorUpdate`
+/// tracking area and re-applies the text cursor through it, which overrides
+/// cursor rects, so the text view answers `cursorUpdate` and `mouseMoved`
+/// itself. Cursor-only: clicks and folding are unchanged.
 extension MarkdownTextView {
-    /// Asks AppKit to rebuild the cursor rects (`resetCursorRects()`) before the
-    /// next mouse move; call after anything that can move or remove a target.
-    func invalidatePointingHandTargets() {
-        window?.invalidateCursorRects(for: self)
+    /// Sets the pointing hand when `point` (view coordinates) is a target.
+    /// Returns whether it is one; elsewhere the caller restores the text cursor.
+    @discardableResult
+    func updatePointingHand(at point: NSPoint) -> Bool {
+        guard pointingHandTarget(containing: point) else { return false }
+        NSCursor.pointingHand.set()
+        return true
+    }
+
+    /// Replaces a pointing hand left behind by a target that is gone. Not
+    /// `super.cursorUpdate`, which rejects mouse-moved events.
+    func restoreTextCursor() {
+        if NSCursor.current == .pointingHand, isSelectable { NSCursor.iBeam.set() }
+    }
+
+    /// Re-evaluates the cursor under a still mouse after anything that can move
+    /// or remove a target (layout, scrolling, folding, edits).
+    func refreshPointingHand() {
+        guard let window, window.isKeyWindow, let content = window.contentView, let frameView = content.superview else { return }
+        let windowPoint = window.mouseLocationOutsideOfEventStream
+        let point = convert(windowPoint, from: nil)
+        guard visibleRect.contains(point),
+              let hit = content.hitTest(frameView.convert(windowPoint, from: nil)),
+              hit === self || hit.isDescendant(of: self) else { return }
+        if !updatePointingHand(at: point) { restoreTextCursor() }
     }
 
     /// Whether the pointing hand shows at `point` (view coordinates).
@@ -20,7 +43,7 @@ extension MarkdownTextView {
 
     /// The visible areas, in view coordinates, that show the pointing hand.
     func pointingHandRects() -> [NSRect] {
-        headingFolding.visibleButtonFrames + linkPointingHandRects()
+        (isSelectable ? headingFolding.visibleButtonFrames : []) + linkPointingHandRects()
     }
 
     /// The activation areas of links that are interactive right now: those
@@ -31,8 +54,7 @@ extension MarkdownTextView {
         let links = interactiveLinkRanges()
         guard !links.isEmpty else { return [] }
 
-        // Without a scroll view the whole text is on screen; AppKit clips
-        // cursor rects to the visible area of enclosing views itself.
+        // Without a scroll view the whole text is on screen.
         var visible = NSRange(location: 0, length: (string as NSString).length)
         var clip: NSRect?
         if enclosingScrollView != nil {
@@ -85,8 +107,8 @@ extension MarkdownTextView {
     }
 }
 
-/// Link ranges for one version of the text, so cursor rects rebuilt on every
-/// scroll and layout do not re-parse the note.
+/// Link ranges for one version of the text, so refreshing the cursor on every
+/// mouse move, scroll and layout does not re-parse the note.
 struct LinkCache {
     var text: String?
     var web: [NSRange] = []
