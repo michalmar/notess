@@ -45,6 +45,7 @@ public struct ReadOnlyMarkdownView: NSViewRepresentable {
     private let noteURL: URL?
     private let onOpenImagePreview: ((ImagePreviewContent) -> Void)?
     private let onImageLoadFailure: ((String) -> Void)?
+    private let onOpenTag: ((String) -> Void)?
     @State private var imageLayoutTick = 0
 
     /// - Parameters:
@@ -52,6 +53,8 @@ public struct ReadOnlyMarkdownView: NSViewRepresentable {
     ///     resolve against its directory and are read from disk, never from staged bytes.
     ///   - onOpenImagePreview: Called with the clicked image for the shared preview.
     ///   - onImageLoadFailure: Called with a message when an image cannot be loaded.
+    ///   - onOpenTag: Called with the normalised name of a clicked `#tag`;
+    ///     without it Tags are plain text.
     ///   - fontName: The body font's PostScript name, or `"System"`.
     ///   - colors: Formatting colours; the defaults follow light/dark mode.
     public init(
@@ -61,8 +64,10 @@ public struct ReadOnlyMarkdownView: NSViewRepresentable {
         colors: MarkdownEditorStyle.Colors = .init(),
         noteURL: URL? = nil,
         onOpenImagePreview: ((ImagePreviewContent) -> Void)? = nil,
-        onImageLoadFailure: ((String) -> Void)? = nil
+        onImageLoadFailure: ((String) -> Void)? = nil,
+        onOpenTag: ((String) -> Void)? = nil
     ) {
+        self.onOpenTag = onOpenTag
         self.noteURL = noteURL
         self.onOpenImagePreview = onOpenImagePreview
         self.onImageLoadFailure = onImageLoadFailure
@@ -73,6 +78,7 @@ public struct ReadOnlyMarkdownView: NSViewRepresentable {
     public func makeNSView(context: Context) -> MarkdownTextView {
         let textView = MarkdownTextViewFactory.makeReadOnlyTextView(style: style)
         configureImages(in: textView)
+        textView.onTagClick = onOpenTag
         textView.string = markdown
         return textView
     }
@@ -94,6 +100,7 @@ public struct ReadOnlyMarkdownView: NSViewRepresentable {
     public func updateNSView(_ textView: MarkdownTextView, context: Context) {
         _ = imageLayoutTick // re-measure the height once images changed it
         configureImages(in: textView)
+        textView.onTagClick = onOpenTag
         if textView.markdownStyle != style {
             textView.markdownStyle = style
         }

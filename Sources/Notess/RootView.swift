@@ -25,7 +25,8 @@ struct RootView: View {
                             indexFailure: model.searchIndexFailure,
                             noteURL: model.noteURL(for:),
                             openImagePreview: model.presentImagePreview,
-                            open: model.openTimelineSection
+                            open: model.openTimelineSection,
+                            openTag: model.openTagTimeline
                         )
                     }
                 }

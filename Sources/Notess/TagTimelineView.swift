@@ -243,6 +243,8 @@ struct TagTimelineView: View {
     let noteURL: (TagTimelineSection) -> URL?
     let openImagePreview: (ImagePreviewContent) -> Void
     let open: (TagTimelineSection) -> Void
+    /// Opens a Tag clicked in a Section card.
+    let openTag: (String) -> Void
 
     var body: some View {
         content
@@ -299,7 +301,8 @@ struct TagTimelineView: View {
                                 settings: settings,
                                 noteURL: noteURL(section),
                                 openImagePreview: openImagePreview,
-                                open: open
+                                open: open,
+                                openTag: openTag
                             )
                         }
                     }
@@ -370,6 +373,7 @@ private struct SectionCard: View {
     let noteURL: URL?
     let openImagePreview: (ImagePreviewContent) -> Void
     let open: (TagTimelineSection) -> Void
+    let openTag: (String) -> Void
     @State private var imageFailures: [String] = []
 
     var body: some View {
@@ -382,7 +386,8 @@ private struct SectionCard: View {
                 onOpenImagePreview: openImagePreview,
                 onImageLoadFailure: { message in
                     if !imageFailures.contains(message) { imageFailures.append(message) }
-                }
+                },
+                onOpenTag: openTag
             )
             ForEach(imageFailures, id: \.self) { message in
                 Label(message, systemImage: "exclamationmark.triangle")
