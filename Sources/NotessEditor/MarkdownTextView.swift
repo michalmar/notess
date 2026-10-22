@@ -8,6 +8,8 @@ import UniformTypeIdentifiers
 public final class MarkdownTextView: NSTextView {
     let highlighter = MarkdownHighlighter()
     lazy var headingFolding = HeadingFolding(textView: self)
+    var linkCache = LinkCache()
+    private var scrollObserver: NSObjectProtocol?
     /// Called when disclosure changes the read-only view's fitting height.
     var onHeadingLayoutChange: (() -> Void)? {
         get { headingFolding.onLayoutChange }
@@ -17,6 +19,28 @@ public final class MarkdownTextView: NSTextView {
     public override func layout() {
         super.layout()
         headingFolding.layoutButtons()
+        invalidatePointingHandTargets()
+    }
+
+    /// See `MarkdownTextView+Pointer.swift`.
+    public override func resetCursorRects() {
+        super.resetCursorRects()
+        for rect in pointingHandRects() {
+            addCursorRect(rect, cursor: .pointingHand)
+        }
+    }
+
+    public override func viewDidMoveToSuperview() {
+        super.viewDidMoveToSuperview()
+        if let scrollObserver { NotificationCenter.default.removeObserver(scrollObserver) }
+        scrollObserver = nil
+        guard let clipView = enclosingScrollView?.contentView else { return }
+        // Cursor rects cover only what is on screen, so scrolling must rebuild them.
+        scrollObserver = NotificationCenter.default.addObserver(
+            forName: NSView.boundsDidChangeNotification, object: clipView, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.invalidatePointingHandTargets() }
+        }
     }
 
     @objc public func toggleHeadingFold(_ sender: Any?) {
@@ -212,8 +236,12 @@ public final class MarkdownTextView: NSTextView {
     var displayedInlineImageCount: Int { inlineImagePreviews.count }
 
     /// Called when the user clicks a `[[wiki-link]]`; the click then does not move the caret.
-    public var onWikiLinkClick: ((WikiLink) -> Void)?
-    public var onOpenWebLink: ((URL) -> Void)?
+    public var onWikiLinkClick: ((WikiLink) -> Void)? {
+        didSet { invalidatePointingHandTargets() }
+    }
+    public var onOpenWebLink: ((URL) -> Void)? {
+        didSet { invalidatePointingHandTargets() }
+    }
 
     /// Fonts and colours; setting a different style restyles the whole note.
     public var markdownStyle: MarkdownEditorStyle {
@@ -353,6 +381,7 @@ public final class MarkdownTextView: NSTextView {
         hasUnreportedTextEdit = false
         pendingEditedRange = nil
         super.didChangeText()
+        invalidatePointingHandTargets()
         find.textDidChange()
         if !isApplyingTagCompletion {
             tagCompleter.textDidChange(editedRange: editedRange)
