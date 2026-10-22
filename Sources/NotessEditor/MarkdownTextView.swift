@@ -256,6 +256,11 @@ public final class MarkdownTextView: NSTextView {
     public var onOpenWebLink: ((URL) -> Void)? {
         didSet { refreshPointingHand() }
     }
+    /// Called with the normalised name of a clicked `#tag`; the click then
+    /// does not move the caret. Without it Tags are plain text.
+    public var onTagClick: ((String) -> Void)? {
+        didSet { refreshPointingHand() }
+    }
 
     /// Fonts and colours; setting a different style restyles the whole note.
     public var markdownStyle: MarkdownEditorStyle {
@@ -439,8 +444,37 @@ public final class MarkdownTextView: NSTextView {
             onWikiLinkClick?(link)
             return
         }
+        if openTag(with: event, at: convert(event.locationInWindow, from: nil)) { return }
         if openWebLink(with: event, at: convert(event.locationInWindow, from: nil)) { return }
         super.mouseDown(with: event)
+    }
+
+    /// Handles a plain or Command single click on a Tag; other gestures
+    /// return false so `NSTextView` can select text.
+    func openTag(with event: NSEvent, at point: NSPoint) -> Bool {
+        let modifiers = event.modifierFlags.intersection([.shift, .command, .option, .control])
+        guard event.clickCount == 1, modifiers.isEmpty || modifiers == .command,
+              let onTagClick, let tag = tag(atPoint: point) else {
+            return false
+        }
+        onTagClick(tag.normalizedName)
+        return true
+    }
+
+    /// The visible Tag whose text lies under `point` (view coordinates), if any.
+    func tag(atPoint point: NSPoint) -> Tag? {
+        guard onTagClick != nil, textStorage != nil else { return nil }
+        let tags = cachedTags()
+        guard !tags.isEmpty else { return nil }
+        let index = characterIndexForInsertion(at: point)
+        let candidates = [index, index - 1].filter { $0 >= 0 && $0 < (string as NSString).length }
+        for candidate in candidates where !headingFolding.hides(candidate) {
+            guard let tag = tags.first(where: { NSLocationInRange(candidate, $0.range) }),
+                  boxRect(NSRange(location: candidate, length: 1)).insetBy(dx: -2, dy: -2).contains(point)
+            else { continue }
+            return tag
+        }
+        return nil
     }
 
     /// Handles the editor's Command+click web-link gesture; ordinary clicks
