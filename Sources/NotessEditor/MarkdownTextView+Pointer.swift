@@ -3,10 +3,9 @@ import NotessCore
 
 /// The standard pointing-hand cursor over the editor's interactive targets.
 ///
-/// One cursor-rect set serves every target (links and heading disclosure
-/// buttons, over each button's existing clickable frame). `NSTextView` still supplies the text cursor everywhere else, so
-/// leaving a target restores the cursor the text view would show anyway.
-/// Hovering is cursor-only: clicks, selection and folding are unchanged.
+/// One cursor-rect set serves every target: links, and heading disclosure
+/// buttons over each button's existing frame. `NSTextView` still supplies the
+/// text cursor everywhere else. Cursor-only: clicks and folding are unchanged.
 extension MarkdownTextView {
     /// Asks AppKit to rebuild the cursor rects (`resetCursorRects()`) before the
     /// next mouse move; call after anything that can move or remove a target.

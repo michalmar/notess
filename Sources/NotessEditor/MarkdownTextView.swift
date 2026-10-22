@@ -8,6 +8,8 @@ import UniformTypeIdentifiers
 public final class MarkdownTextView: NSTextView {
     let highlighter = MarkdownHighlighter()
     lazy var headingFolding = HeadingFolding(textView: self)
+    var linkCache = LinkCache()
+    private var scrollObserver: NSObjectProtocol?
     /// Called when disclosure changes the read-only view's fitting height.
     var onHeadingLayoutChange: (() -> Void)? {
         get { headingFolding.onLayoutChange }
@@ -27,9 +29,6 @@ public final class MarkdownTextView: NSTextView {
             addCursorRect(rect, cursor: .pointingHand)
         }
     }
-
-    var linkCache = LinkCache()
-    private var scrollObserver: NSObjectProtocol?
 
     public override func viewDidMoveToSuperview() {
         super.viewDidMoveToSuperview()

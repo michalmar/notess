@@ -92,6 +92,34 @@ struct MarkdownTextViewPointerTests {
         check(harness.hand(over: "https://example.com/real"))
     }
 
+    @Test("the hand stops between two adjacent targets")
+    func betweenTargets() {
+        let harness = Harness("https://a.example and [[Plan]] then https://b.example")
+
+        check(harness.hand(over: "https://a.example"))
+        check(!harness.hand(over: " and "))
+        check(harness.hand(over: "[[Plan]]"))
+        check(!harness.hand(over: " then "))
+        check(harness.hand(over: "https://b.example"))
+    }
+
+    @Test("targets re-wrap with the text when the width changes")
+    func resizing() {
+        let text = String(repeating: "word ", count: 30) + "https://example.com/docs"
+        let harness = Harness(text)
+        let wide = harness.center(of: "https://example.com/docs")
+        check(harness.textView.pointingHandTarget(containing: wide))
+
+        harness.window.setContentSize(NSSize(width: 260, height: 400))
+        harness.scrollView.frame = harness.window.contentLayoutRect
+        harness.layout()
+
+        let narrow = harness.center(of: "https://example.com/docs")
+        #expect(narrow != wide)
+        check(harness.textView.pointingHandTarget(containing: narrow))
+        check(!harness.textView.pointingHandTarget(containing: wide))
+    }
+
     @Test("read-only text views show the hand wherever links are interactive")
     func readOnly() {
         let text = "Visit https://example.com/docs and [[Plan]]."
@@ -219,6 +247,7 @@ struct MarkdownTextViewPointerTests {
         harness.buttons[0].performClick(nil)
         harness.layout()
         check(harness.textView.pointingHandTarget(containing: child.frame.center))
+        #expect(harness.textView.string == "# Parent\nintro\n## Child\nhidden\n# Next\nvisible")
     }
 
     @Test("button targets follow headings after edits and leave obsolete positions")
@@ -259,7 +288,7 @@ struct MarkdownTextViewPointerTests {
 
     @Test("hover feedback leaves click behavior and TextKit 2 unchanged")
     func clicksUnchanged() throws {
-        let harness = Harness("Visit https://example.com/docs today.")
+        let harness = Harness("Visit https://example.com/docs today. See [[Plan]].")
         var opened: [URL] = []
         harness.textView.onOpenWebLink = { opened.append($0) }
         let point = harness.center(of: "https://example.com/docs")
@@ -282,6 +311,22 @@ struct MarkdownTextViewPointerTests {
         #expect(opened.isEmpty)
         #expect(try harness.textView.openWebLink(with: event(.command), at: point))
         #expect(opened == [URL(string: "https://example.com/docs")!])
+
+        var wikiTargets: [String] = []
+        harness.textView.onWikiLinkClick = { wikiTargets.append($0.target) }
+        let wikiPoint = harness.center(of: "[[Plan]]")
+        harness.textView.mouseDown(with: try #require(NSEvent.mouseEvent(
+            with: .leftMouseDown,
+            location: harness.textView.convert(wikiPoint, to: nil),
+            modifierFlags: [],
+            timestamp: 0,
+            windowNumber: harness.window.windowNumber,
+            context: nil,
+            eventNumber: 2,
+            clickCount: 1,
+            pressure: 1
+        )))
+        #expect(wikiTargets == ["Plan"])
         #expect(harness.textView.textLayoutManager != nil)
     }
 }
