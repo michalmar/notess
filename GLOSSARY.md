@@ -31,7 +31,7 @@ A `#word` token (hash immediately followed by a word containing at least one let
 _Avoid_: Label, category, topic
 
 **Tag Timeline**:
-For one Tag, the complete tagged heading subtrees in saved Daily Entries, grouped by date newest first and in note order within a day, without repeating descendants already included by a tagged ancestor. It is read-only and includes neither unsaved edits nor Free Notes or Brain Notes.
+For one Tag, the complete tagged heading subtrees in saved Daily Entries, grouped by date newest first and in note order within a day, without repeating descendants already included by a tagged ancestor. It is read-only and includes neither unsaved edits nor Free Notes or Brain Notes. Clicking a Tag in a note opens its Tag Timeline, like selecting the Tag in the Tags sidebar.
 _Avoid_: Tag view, Tag feed, Tag page
 
 **Tag Group**:

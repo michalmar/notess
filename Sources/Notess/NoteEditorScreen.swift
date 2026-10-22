@@ -17,6 +17,8 @@ struct NoteEditorScreen: View {
     var backlinks: [Backlink] = []
     var onOpenWikiLink: (WikiLink) -> Void = { _ in }
     var onOpenWebLink: (URL) -> Void = { _ = SystemWebLinkOpener.open($0) }
+    /// Receives the normalised name of a clicked Tag.
+    var onOpenTag: ((String) -> Void)?
     var onOpenBacklink: (Backlink) -> Void = { _ in }
     var onPasteImageFailure: (Error) -> Void = { _ in }
     var onOpenImagePreview: (ImagePreviewContent) -> Void = { _ in }
@@ -41,6 +43,7 @@ struct NoteEditorScreen: View {
                 },
                 onOpenWikiLink: onOpenWikiLink,
                 onOpenWebLink: onOpenWebLink,
+                onOpenTag: onOpenTag,
                 isEditable: !document.isReadOnly,
                 isInteractionEnabled: !isImagePreviewPresented,
                 noteURL: document.fileURL,

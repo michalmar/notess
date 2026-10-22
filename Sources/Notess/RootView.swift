@@ -155,6 +155,7 @@ struct RootView: View {
                     reveal: model.reveal,
                     backlinks: model.backlinks,
                     onOpenWikiLink: { model.openWikiLink($0) },
+                    onOpenTag: { model.openTagTimeline($0) },
                     onOpenBacklink: { model.openBacklink($0) },
                     onPasteImageFailure: { error in
                         model.errorMessage = "Obrázek se nepodařilo vložit: \(error.localizedDescription)"
