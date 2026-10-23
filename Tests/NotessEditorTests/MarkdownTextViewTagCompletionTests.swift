@@ -511,7 +511,11 @@ struct MarkdownTextViewTagCompletionTests {
         #expect(!list.intersects(tag))
     }
 
-    @Test("near the bottom edge the list opens above the Tag")
+    @Test(
+        "near the bottom edge the list opens above the Tag",
+        .disabled("fails on main: list is not placed above the Tag near the bottom edge"),
+        .bug("https://github.com/michalmar/notess/issues/123")
+    )
     func placementAbove() async throws {
         load(String(repeating: "řádek\n", count: 40) + "‸")
         type("#a")

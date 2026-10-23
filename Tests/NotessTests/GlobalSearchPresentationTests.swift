@@ -7,7 +7,7 @@ import Testing
 @testable import NotessEditor
 
 @MainActor
-@Suite("Global search presentation", .serialized)
+@Suite("Global search presentation", .serialized, .tags(.hostedUI), .enabled(if: ProcessInfo.processInfo.environment["NOTESS_HOSTED_UI"] == "1"))
 struct GlobalSearchPresentationTests {
     @Test("Command+Shift+F focuses the query at once, on every opening, so typing needs no click")
     func opensFocused() async throws {

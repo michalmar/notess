@@ -5,14 +5,14 @@ import Testing
 /// Runs the real Copilot CLI (costs AI credits), so only with
 /// `NOTESS_REAL_COPILOT=1 swift test --filter RealCopilotCLI`.
 /// `NOTESS_COPILOT_MODEL` picks the model (default `claude-haiku-4.5`).
-@Suite("Real Copilot CLI", .enabled(if: ProcessInfo.processInfo.environment["NOTESS_REAL_COPILOT"] == "1"))
+@Suite("Real Copilot CLI", .timeLimit(.minutes(2)), .enabled(if: ProcessInfo.processInfo.environment["NOTESS_REAL_COPILOT"] == "1"))
 struct RealCopilotCLITests {
     private struct ModelRunner: BrainRunProcessRunner {
         let model: String
         func run(_ command: BrainRunCommand, output: @escaping @Sendable (String) -> Void) async throws -> Int32 {
             let command = BrainRunCommand(
                 executableURL: command.executableURL,
-                arguments: command.arguments + ["--model", model],
+                arguments: command.arguments + ["--model", model, "--disable-mcp-server", "workiq-mail"],
                 currentDirectoryURL: command.currentDirectoryURL
             )
             return try await SystemProcessRunner().run(command, output: output)
