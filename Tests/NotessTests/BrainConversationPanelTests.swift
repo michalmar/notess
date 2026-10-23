@@ -9,6 +9,42 @@ import Testing
 @MainActor
 @Suite("Brain Conversation panel", .serialized, .tags(.hostedUI), .enabled(if: ProcessInfo.processInfo.environment["NOTESS_HOSTED_UI"] == "1"))
 struct BrainConversationPanelTests {
+    @Test("identical or truncated first-question labels keep one selectable item per conversation", arguments: [false, true])
+    func duplicateConversationTitles(truncated: Bool) async throws {
+        let fixture = try PanelFixture()
+        let harness = try await fixture.makeHarness()
+        harness.model.isBrainConversationPresented = true
+        try await harness.waitUntil { harness.conversationPicker != nil }
+        let prefix = String(repeating: "Q", count: 81)
+        let questions = truncated
+            ? [prefix + " first", "Other question?", prefix + " second"]
+            : ["Same question?", "Other question?", "Same question?"]
+        for (index, question) in questions.enumerated() {
+            if index > 0 {
+                harness.model.createBrainConversation()
+                try await harness.waitUntil { !harness.model.isAgentOperationActive }
+            }
+            harness.model.askBrainConversation(question)
+            try await harness.waitUntil {
+                harness.connections.made.count == index + 1 && harness.connections.made.last?.isPrompting == true
+            }
+            harness.connections.last.send(.finish(.endTurn))
+            try await harness.waitUntil { !harness.model.isAgentOperationActive }
+        }
+        await harness.settle()
+        let picker = try #require(harness.conversationPicker)
+        #expect(picker.numberOfItems == 3)
+        let ids = harness.model.brainConversation.conversations.map(\.id)
+        for index in ids.indices {
+            picker.selectItem(at: index)
+            try #require(picker.sendAction(picker.action, to: picker.target))
+            await harness.settle()
+            #expect(harness.model.brainConversation.conversation.id == ids[index])
+            #expect(harness.model.brainConversation.conversation.turns.first?.question == questions[index])
+            #expect(picker.indexOfSelectedItem == index)
+        }
+    }
+
     @Test("native creation and selection focus the question field and keep unsent drafts in their own conversation")
     func conversationSelector() async throws {
         let fixture = try PanelFixture()

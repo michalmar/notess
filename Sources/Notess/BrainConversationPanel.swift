@@ -212,6 +212,7 @@ private struct BrainConversationSelector: NSViewRepresentable {
     @MainActor
     final class Coordinator: NSObject {
         let picker = NSPopUpButton()
+        let menu = NSMenu()
         let create = NSButton()
         var ids: [UUID] = []
         var onCreate: () -> Void = {}
@@ -229,6 +230,7 @@ private struct BrainConversationSelector: NSViewRepresentable {
     func makeNSView(context: Context) -> NSStackView {
         let coordinator = context.coordinator
         let picker = coordinator.picker
+        picker.menu = coordinator.menu
         picker.controlSize = .small
         picker.font = .preferredFont(forTextStyle: .caption1)
         picker.cell?.lineBreakMode = .byTruncatingTail
@@ -269,8 +271,11 @@ private struct BrainConversationSelector: NSViewRepresentable {
             return title.count > 80 ? String(title.prefix(80)) + "…" : title
         }
         if coordinator.picker.itemTitles != titles {
-            coordinator.picker.removeAllItems()
-            coordinator.picker.addItems(withTitles: titles)
+            coordinator.menu.removeAllItems()
+            // NSPopUpButton's title-based insertion removes duplicate titles.
+            for title in titles {
+                coordinator.menu.addItem(NSMenuItem(title: title, action: nil, keyEquivalent: ""))
+            }
         }
         if let index = coordinator.ids.firstIndex(of: selectedID) {
             coordinator.picker.selectItem(at: index)
