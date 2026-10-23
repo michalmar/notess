@@ -9,6 +9,53 @@ import Testing
 @MainActor
 @Suite("Brain Conversation panel", .serialized, .tags(.hostedUI), .enabled(if: ProcessInfo.processInfo.environment["NOTESS_HOSTED_UI"] == "1"))
 struct BrainConversationPanelTests {
+    @Test("clicking rendered sources keeps the panel and dirty editor text, even when the note is missing on disk", arguments: [false, true])
+    func sourceClicks(deleted: Bool) async throws {
+        let fixture = try PanelFixture()
+        let harness = try await fixture.makeHarness()
+        let editor = try #require(harness.editor)
+        let document = try #require(harness.model.document)
+        let draft = "# Plan\n\n## Current\n\nUnsaved local answer.\n"
+        editor.undoManager?.beginUndoGrouping()
+        editor.insertText(draft, replacementRange: NSRange(location: 0, length: (editor.string as NSString).length))
+        editor.undoManager?.endUndoGrouping()
+        try await harness.waitUntil { document.text == draft }
+        if deleted {
+            try FileManager.default.removeItem(at: document.fileURL)
+            document.reconcileWithDisk()
+        }
+        harness.model.isBrainConversationPresented = true
+        try await harness.waitUntil { harness.input != nil }
+        harness.model.askBrainConversation("Evidence?")
+        try await harness.waitUntil { harness.connections.made.first?.isPrompting == true }
+        harness.connections.last.send(.event(.answerChunk(
+            "Brain Note: [[_brain/Alice]]. Original note fallback: [[Plan#Current]]."
+        )))
+        harness.connections.last.send(.finish(.endTurn))
+        let brainURL = BrainConversationEvidence.noteURL(target: "_brain/Alice", section: nil)
+        let planURL = BrainConversationEvidence.noteURL(target: "Plan", section: "Current")
+        try await harness.waitUntil { harness.sourceButton(brainURL) != nil && harness.sourceButton(planURL) != nil }
+        let brainButton = try #require(harness.sourceButton(brainURL))
+        brainButton.performClick(nil)
+        try await harness.waitUntil { harness.model.document?.displayName == "Alice" }
+        #expect(harness.model.document?.isReadOnly == true)
+        #expect(document.text == draft)
+        #expect(document.hasUnsavedChanges)
+        let planButton = try #require(harness.sourceButton(planURL))
+        planButton.performClick(nil)
+        try await harness.waitUntil { harness.model.document === document && harness.editor?.string == draft }
+        #expect(harness.model.isBrainConversationPresented)
+        #expect(harness.input != nil)
+        #expect(harness.model.reveal?.range == NoteSection.find("Current", in: draft)?.headingRange)
+        #expect(document.hasUnsavedChanges)
+        #expect(harness.model.errorMessage == nil)
+        if deleted {
+            #expect(!FileManager.default.fileExists(atPath: document.fileURL.path))
+        } else {
+            #expect(try String(contentsOf: document.fileURL, encoding: .utf8) == "# Plan\n\nShip it.\n")
+        }
+    }
+
     @Test("the panel opens beside the note editor, which stays visible")
     func besideEditor() async throws {
         let fixture = try PanelFixture()
@@ -169,6 +216,11 @@ private final class PanelHarness {
             .first { $0.placeholderString == BrainConversationPanel.inputPlaceholder }
     }
 
+    func sourceButton(_ url: URL) -> NSButton? {
+        subviews(of: hostingView).compactMap { $0 as? NSButton }
+            .first { $0.identifier?.rawValue == "brain-source:\(url.absoluteString)" }
+    }
+
     /// The question field, when it holds keyboard focus.
     var focusedInput: NSTextField? {
         guard let fieldEditor = window.firstResponder as? NSTextView, fieldEditor.isFieldEditor,
@@ -249,6 +301,7 @@ private final class PanelFixture {
             .appending(path: "NotessConversationPanelTests-\(UUID().uuidString)", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: rootURL.appending(path: "_brain"), withIntermediateDirectories: true)
         try "# Plan\n\nShip it.\n".write(to: rootURL.appending(path: "Plan.md"), atomically: true, encoding: .utf8)
+        try "# Alice\n\nKeeper.\n".write(to: rootURL.appending(path: "_brain/Alice.md"), atomically: true, encoding: .utf8)
         defaults = try #require(UserDefaults(suiteName: defaultsSuiteName))
     }
 

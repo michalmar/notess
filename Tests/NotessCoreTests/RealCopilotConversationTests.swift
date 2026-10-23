@@ -65,10 +65,26 @@ struct RealCopilotConversationTests {
         await agent.close()
     }
 
+    private func snapshot(_ vault: Vault) throws -> [String: Data] {
+        let enumerator = try #require(FileManager.default.enumerator(
+            at: vault.rootURL, includingPropertiesForKeys: [.isRegularFileKey]
+        ))
+        var files: [String: Data] = [:]
+        for case let url as URL in enumerator {
+            if try url.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile == true {
+                let path = String(url.path.dropFirst(vault.rootURL.path.count + 1))
+                files[path] = try Data(contentsOf: url)
+            }
+        }
+        return files
+    }
+
     @Test("a follow-up keeps the conversation's context and the answer comes from _brain/")
     func followUp() async throws {
         let temp = try TemporaryVault()
-        try temp.write("# Atlas\n\nThe Atlas project's codeword is PELICAN-42.\n", to: "_brain/Atlas.md")
+        try temp.write("# Atlas\n\n## Status\n\nThe Atlas project's codeword is PELICAN-42. [[Notes/Plan#Decision]]\n", to: "_brain/Atlas.md")
+        try temp.write("# Plan\n\n## Decision\n\nAtlas codeword: PELICAN-42.\n", to: "Notes/Plan.md")
+        let before = try snapshot(temp.vault)
         try await withAgent(temp.vault) { agent in
             let first = Events()
             let firstStop = try await ask(
@@ -79,6 +95,10 @@ struct RealCopilotConversationTests {
             print("first:", first.answer)
             #expect(firstStop == .endTurn)
             #expect(first.answer.contains("PELICAN-42"))
+            let sources = BrainConversationEvidence.sources(in: first.answer)
+            #expect(sources.contains { source in
+                BrainConversationEvidence.noteLink(from: source.url)?.target == "_brain/Atlas"
+            }, "the answer links the supporting Brain Note, not just its title: \(first.answer)")
 
             let second = Events()
             let secondStop = try await ask(
@@ -94,6 +114,60 @@ struct RealCopilotConversationTests {
             #expect(second.answer.contains("42"))
             #expect(await agent.isOpen())
         }
+        #expect(try snapshot(temp.vault) == before, "live investigation never changes the Vault")
+    }
+
+    @Test("an original note fills a Brain Note gap with explicit disclosure and a concrete Section source")
+    func originalNoteEvidence() async throws {
+        let temp = try TemporaryVault()
+        try temp.write("# Atlas\n\n## Status\n\nAtlas is an inert test project. Its recovery token is not recorded here.\n", to: "_brain/Atlas.md")
+        try temp.write("# Launch\n\n## Recovery\n\nThe Atlas recovery token is ORCHID-73.\n", to: "Notes/Launch.md")
+        let before = try snapshot(temp.vault)
+        try await withAgent(temp.vault) { agent in
+            let events = Events()
+            let stop = try await ask(agent, BrainConversationInstructions.promptBlocks(
+                question: "What is the Atlas recovery token? Use only saved Vault notes, not web sources.",
+                isFirstInSession: true
+            ), events: events)
+            print("original evidence:", events.answer)
+            #expect(stop == .endTurn)
+            #expect(events.answer.contains("ORCHID-73"))
+            let sources = BrainConversationEvidence.sources(in: events.answer)
+            #expect(sources.contains {
+                let link = BrainConversationEvidence.noteLink(from: $0.url)
+                return link?.target == "Notes/Launch" && link?.section == "Recovery"
+            }, "the concrete original-note Section is clickable")
+            let lower = events.answer.lowercased()
+            #expect(lower.contains("original") || lower.contains("free note"),
+                    "the answer discloses original-note fallback, not just a bare link")
+        }
+        #expect(try snapshot(temp.vault) == before)
+    }
+
+    @Test("a no-evidence question acknowledges the gap rather than inventing support")
+    func insufficientEvidence() async throws {
+        let temp = try TemporaryVault()
+        try temp.write("# Atlas\n\n## Status\n\nAtlas is an inert test project.\n", to: "_brain/Atlas.md")
+        try temp.write("# Plan\n\n## Agenda\n\nDiscuss the Atlas test fixture.\n", to: "Notes/Plan.md")
+        let before = try snapshot(temp.vault)
+        try await withAgent(temp.vault) { agent in
+            let events = Events()
+            let stop = try await ask(agent, BrainConversationInstructions.promptBlocks(
+                question: "According to the saved Vault notes only, what is Zephyr's launch code? Do not use web sources.",
+                isFirstInSession: true
+            ), events: events)
+            print("no evidence:", events.answer)
+            #expect(stop == .endTurn)
+            let lower = events.answer.lowercased()
+            #expect(lower.range(
+                of: #"\b(no|not|cannot|can't|couldn't|unknown|insufficient|unavailable|absent)\b"#,
+                options: .regularExpression
+            ) != nil, "the answer acknowledges missing evidence")
+            #expect(!BrainConversationEvidence.sources(in: events.answer).contains {
+                BrainConversationEvidence.noteLink(from: $0.url)?.target.localizedCaseInsensitiveContains("Zephyr") == true
+            }, "no invented supporting Zephyr note")
+        }
+        #expect(try snapshot(temp.vault) == before)
     }
 
     @Test("Stop ends a running turn as cancelled")

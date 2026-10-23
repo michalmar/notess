@@ -101,7 +101,9 @@ private final class FakeAgent {
                     sys.stderr.write("fatal: something broke\\n")
                     sys.exit(3)
                 update("s1", {"sessionUpdate": "agent_thought_chunk", "content": {"type": "text", "text": "hidden"}})
-                update("s1", {"sessionUpdate": "tool_call", "toolCallId": "t%d" % turns, "title": "Read _brain/Alice.md", "kind": "read", "status": "pending"})
+                update("s1", {"sessionUpdate": "tool_call", "toolCallId": "t%d" % turns, "title": "Read _brain/Alice.md", "kind": "read", "status": "pending",
+                    "rawInput": {"command": "cat _brain/Alice.md", "url": "https://example.com/evidence"},
+                    "locations": [{"path": "_brain/Alice.md", "line": 1}]})
                 send({"jsonrpc": "2.0", "id": "perm%d" % turns, "method": "session/request_permission", "params": {"sessionId": "s1",
                       "toolCall": {"toolCallId": "t%d" % turns, "title": "Read _brain/Alice.md"},
                       "options": [{"optionId": "reject", "name": "Reject", "kind": "reject_once"},
@@ -110,7 +112,9 @@ private final class FakeAgent {
                 mark("permission", json.dumps(reply.get("result")) + "\\n")
                 send({"jsonrpc": "2.0", "id": 99, "method": "fs/read_text_file", "params": {"sessionId": "s1", "path": "x"}})
                 mark("fs", json.dumps(read().get("error", {}).get("code")))
-                update("s1", {"sessionUpdate": "tool_call_update", "toolCallId": "t%d" % turns, "status": "completed"})
+                update("s1", {"sessionUpdate": "tool_call_update", "toolCallId": "t%d" % turns, "status": "completed",
+                    "rawOutput": {"exitCode": 0},
+                    "content": [{"type": "content", "content": {"type": "text", "text": "Alice is the codeword keeper."}}]})
                 answer = "Echo: " + question
                 if MODE == "writeVault":
                     try:
@@ -175,6 +179,18 @@ struct CopilotACPConnectionTests {
         #expect(first.all.contains(.toolCall(id: "t1", title: "Read _brain/Alice.md", kind: "read", status: .pending)))
         #expect(first.all.contains(.toolCallUpdate(id: "t1", title: nil, status: .completed)))
         #expect(first.all.contains(.permissionAllowed(title: "Read _brain/Alice.md", option: "Allow once")))
+        var conversation = BrainConversation()
+        let begun = conversation.begin(question: "one", at: Date())
+        let turn = try #require(begun)
+        for event in first.all { conversation.apply(event, to: turn) }
+        let read = try #require(conversation.turns[0].activity.first { $0.id == "tool:t1" })
+        #expect(read.details.input?["command"] == .string("cat _brain/Alice.md"))
+        #expect(read.details.input?["url"] == .string("https://example.com/evidence"))
+        #expect(read.details.output == .object(["exitCode": .number(0)]))
+        #expect(read.details.locations == [.object(["path": .string("_brain/Alice.md"), "line": .number(1)])])
+        #expect(read.details.content?.first?["content"]?["text"] == .string("Alice is the codeword keeper."))
+        #expect(read.kind == .tool(kind: "read", status: .completed))
+        #expect(!first.answer.contains("hidden"))
         #expect(agent.marker("launches") == "x")
         #expect(agent.marker("permission")?.contains(#""optionId": "allow""#) == true)
         #expect(agent.marker("fs") == "-32601-32601")

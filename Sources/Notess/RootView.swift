@@ -38,7 +38,9 @@ struct RootView: View {
                                 hasUnsavedChanges: model.hasUnsavedChanges,
                                 onAsk: { model.askBrainConversation($0) },
                                 onStop: model.stopBrainConversationTurn,
-                                onClose: { model.isBrainConversationPresented = false }
+                                onClose: { model.isBrainConversationPresented = false },
+                                onOpenSource: { model.openBrainConversationSource($0) },
+                                sourceCategory: model.brainConversationSourceCategory
                             )
                             .frame(width: 340)
                         }

@@ -456,10 +456,20 @@ public final class CopilotACPConnection: ACPConnection, @unchecked Sendable {
         let handler: (@Sendable (ACPSessionEvent) -> Void)? = lock.withLock {
             parameters["sessionId"]?.stringValue == sessionID ? eventHandler : nil
         }
-        guard let handler, let update = parameters["update"],
-              let event = Self.event(from: update)
-        else { return }
-        handler(event)
+        guard let handler, let update = parameters["update"] else { return }
+        if let event = Self.event(from: update) { handler(event) }
+        if let event = Self.detailsEvent(from: update) { handler(event) }
+    }
+
+    static func detailsEvent(from update: JSONValue) -> ACPSessionEvent? {
+        guard ["tool_call", "tool_call_update"].contains(update["sessionUpdate"]?.stringValue ?? ""),
+              let id = update["toolCallId"]?.stringValue else { return nil }
+        let details = ACPToolCallDetails(
+            input: update["rawInput"], output: update["rawOutput"],
+            content: update["content"]?.arrayValue, locations: update["locations"]?.arrayValue,
+            kind: update["kind"]?.stringValue
+        )
+        return details == ACPToolCallDetails() ? nil : .toolDetails(id: id, details: details)
     }
 
     static func event(from update: JSONValue) -> ACPSessionEvent? {
@@ -519,6 +529,13 @@ public final class CopilotACPConnection: ACPConnection, @unchecked Sendable {
             ?? parameters["toolCall"]?["toolCallId"]?.stringValue ?? method
         let chosen = option?["name"]?.stringValue ?? option?["optionId"]?.stringValue ?? "žádná možnost povolení"
         handler?(.permissionAllowed(title: title, option: chosen))
+        if let call = parameters["toolCall"], let id = call["toolCallId"]?.stringValue {
+            let details = ACPToolCallDetails(
+                input: call["rawInput"], output: call["rawOutput"], content: call["content"]?.arrayValue,
+                locations: call["locations"]?.arrayValue, kind: call["kind"]?.stringValue
+            )
+            if details != ACPToolCallDetails() { handler?(.toolDetails(id: id, details: details)) }
+        }
     }
 
     // MARK: Cancel and termination

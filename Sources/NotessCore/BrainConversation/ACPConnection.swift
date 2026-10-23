@@ -8,12 +8,42 @@ public enum ACPToolCallStatus: String, Equatable, Sendable {
     case failed
 }
 
+/// Optional evidence supplied by ACP, kept verbatim rather than inferred from titles.
+/// Nil means the update did not supply that field; sparse updates preserve earlier data.
+public struct ACPToolCallDetails: Equatable, Sendable {
+    public var input: JSONValue?
+    public var output: JSONValue?
+    public var content: [JSONValue]?
+    public var locations: [JSONValue]?
+    public var kind: String?
+
+    public init(
+        input: JSONValue? = nil, output: JSONValue? = nil,
+        content: [JSONValue]? = nil, locations: [JSONValue]? = nil, kind: String? = nil
+    ) {
+        self.input = input
+        self.output = output
+        self.content = content
+        self.locations = locations
+        self.kind = kind
+    }
+
+    mutating func merge(_ update: Self) {
+        if let input = update.input { self.input = input }
+        if let output = update.output { self.output = output }
+        if let content = update.content { self.content = content }
+        if let locations = update.locations { self.locations = locations }
+        if let kind = update.kind { self.kind = kind }
+    }
+}
+
 /// What the Agent reports while it works on one prompt.
 public enum ACPSessionEvent: Equatable, Sendable {
     /// Visible answer text; reasoning ("thought") chunks are not reported.
     case answerChunk(String)
     case toolCall(id: String, title: String, kind: String?, status: ACPToolCallStatus)
     case toolCallUpdate(id: String, title: String?, status: ACPToolCallStatus?)
+    case toolDetails(id: String, details: ACPToolCallDetails)
     /// The Agent asked for a permission and the connection allowed it, choosing `option`.
     case permissionAllowed(title: String, option: String)
 }

@@ -92,6 +92,160 @@ private final class Fixture {
 @MainActor
 @Suite("Brain Conversation in AppModel")
 struct AppModelBrainConversationTests {
+    @Test("a source can select a never-saved Daily Entry without creating it or sending its draft")
+    func inMemoryDailyEntrySource() throws {
+        let fixture = try Fixture()
+        let model = fixture.makeModel(connections: Connections())
+        let daily = try #require(model.document)
+        #expect(!daily.existsOnDisk)
+        daily.text += "\n## Local\n\nDraft only.\n"
+        let relativePath = String(daily.fileURL.path.dropFirst(fixture.rootURL.path.count + 1))
+        let source = BrainConversationEvidence.noteURL(target: relativePath, section: "Local")
+        _ = model.openExistingNote(relativePath: "Plan.md")
+        #expect(model.brainConversationSourceCategory(source) == "Původní poznámka · Daily Entry")
+
+        model.openBrainConversationSource(source)
+
+        #expect(model.document === daily)
+        #expect(daily.text.contains("Draft only."))
+        #expect(model.reveal?.range == NoteSection.find("Local", in: daily.text)?.headingRange)
+        #expect(!FileManager.default.fileExists(atPath: daily.fileURL.path))
+        #expect(model.errorMessage == nil)
+    }
+
+    @Test("evidence renders clickable Brain, original and external sources, ignoring code examples")
+    func evidenceRendering() async throws {
+        let fixture = try Fixture()
+        let connections = Connections()
+        let model = fixture.makeModel(connections: connections)
+        try "## Rozhodnutí\n".write(to: fixture.rootURL.appending(path: "Žluťoučký ).md"), atomically: true, encoding: .utf8)
+        let answer = """
+        Brain Note: **supported** [[_brain/Alice]].
+        Original note fallback: [[Žluťoučký )#Rozhodnutí]].
+        External: [Reference](https://example.com/evidence).
+        Not a source: `[[Absent]]` or `https://example.com/code`.
+        """
+        model.askBrainConversation("Evidence?")
+        try await eventually { connections.made.first?.isPrompting == true }
+        connections.last.send(.event(.answerChunk(answer)))
+        connections.last.send(.finish(.endTurn))
+        try await eventually { !model.isAgentOperationActive }
+        let sources = BrainConversationEvidence.sources(in: model.brainConversation.conversation.turns[0].answer)
+        #expect(sources.count == 3)
+        #expect(sources.map { model.brainConversationSourceCategory($0.url) } == [
+            "Brain Note", "Původní poznámka · Free Note", "Externí zdroj",
+        ])
+        let rendered = BrainConversationAnswer.attributedText(answer)
+        let links = rendered.runs.compactMap(\.link)
+        #expect(links == sources.map(\.url))
+        model.openBrainConversationSource(sources[1].url)
+        #expect(model.document?.displayName == "Žluťoučký )")
+        #expect(model.reveal?.range == NSRange(location: 0, length: 13))
+    }
+
+    @Test("missing notes and Sections and invalid source targets give explicit feedback without writes")
+    func invalidEvidence() throws {
+        let fixture = try Fixture()
+        let model = fixture.makeModel(connections: Connections())
+        model.isBrainConversationPresented = true
+        let before = try fixture.vault.scanNotePaths().sorted().map { path in
+            (path, try Data(contentsOf: fixture.rootURL.appending(path: path)))
+        }
+        for url in [
+            BrainConversationEvidence.noteURL(target: "Absent", section: nil),
+            BrainConversationEvidence.noteURL(target: "Plan", section: "Absent"),
+            BrainConversationEvidence.noteURL(target: "../Plan", section: nil),
+            BrainConversationEvidence.noteURL(target: "", section: "Plan"),
+            try #require(URL(string: "file:///tmp/Plan.md")),
+            try #require(URL(string: "notess-source://note?target=Plan&target=Other")),
+            try #require(URL(string: "javascript:alert(1)")),
+        ] {
+            model.errorMessage = nil
+            model.openBrainConversationSource(url, openWeb: { _ in
+                Issue.record("invalid evidence must not open external applications")
+                return false
+            })
+            #expect(model.errorMessage != nil, "\(url)")
+            #expect(model.isBrainConversationPresented)
+        }
+        #expect(fixture.vault.scanNotePaths().sorted() == before.map(\.0))
+        for (path, data) in before {
+            #expect(try Data(contentsOf: fixture.rootURL.appending(path: path)) == data)
+        }
+        let external = try #require(URL(string: "https://example.com/evidence"))
+        var opened: URL?
+        model.errorMessage = nil
+        model.openBrainConversationSource(external, openWeb: { opened = $0; return true })
+        #expect(opened == external)
+        #expect(model.errorMessage == nil)
+        model.openBrainConversationSource(external, openWeb: { _ in false })
+        #expect(model.errorMessage?.contains("https://example.com/evidence") == true)
+    }
+
+    @Test("streamed tool details retain commands, URLs, files and outcomes across sparse updates without inventing missing data")
+    func inspectableActivity() async throws {
+        let fixture = try Fixture()
+        let connections = Connections()
+        let model = fixture.makeModel(connections: connections)
+        model.askBrainConversation("Investigate")
+        try await eventually { connections.made.first?.isPrompting == true }
+        let input: JSONValue = .object(["command": .string("cat _brain/Alice.md"), "url": .string("https://example.com")])
+        connections.last.send(.event(.toolCall(id: "read", title: "Read evidence", kind: "execute", status: .inProgress)))
+        connections.last.send(.event(.toolDetails(id: "read", details: .init(
+            input: input, locations: [.object(["path": .string("_brain/Alice.md"), "line": .number(2)])]
+        ))))
+        try await eventually {
+            model.brainConversation.conversation.turns[0].activity.last?.details.input == input
+        }
+        connections.last.send(.event(.toolDetails(id: "read", details: .init(output: .string("Alice keeps the codeword.")))))
+        connections.last.send(.event(.toolCallUpdate(id: "read", title: nil, status: .completed)))
+        connections.last.send(.event(.toolCall(id: "sparse", title: "Search", kind: nil, status: .failed)))
+        connections.last.send(.event(.permissionAllowed(title: "Unexpected permission", option: "Allow once")))
+        connections.last.send(.finish(.endTurn))
+        try await eventually { !model.isAgentOperationActive }
+        let activity = model.brainConversation.conversation.turns[0].activity
+        let read = try #require(activity.first { $0.id == "tool:read" })
+        #expect(read.details.input == input)
+        #expect(read.details.output == .string("Alice keeps the codeword."))
+        #expect(read.details.locations == [.object(["path": .string("_brain/Alice.md"), "line": .number(2)])])
+        #expect(read.kind == .tool(kind: "execute", status: .completed))
+        #expect(activity.first { $0.id == "tool:sparse" }?.details == .init())
+        #expect(activity.last?.kind == .permission(option: "Allow once"))
+    }
+
+    @Test("answer evidence opens a deleted dirty tab at its current Section without changing the conversation or saved inputs")
+    func evidenceNavigation() async throws {
+        let fixture = try Fixture()
+        let connections = Connections()
+        let model = fixture.makeModel(connections: connections)
+        model.isBrainConversationPresented = true
+        let document = try #require(model.openExistingNote(relativePath: "Plan.md"))
+        document.text = "# Plan\n\n## Current\n\nUNSAVED-SECRET\n"
+        try FileManager.default.removeItem(at: document.fileURL)
+        document.reconcileWithDisk()
+        _ = model.openExistingNote(relativePath: "_brain/Alice.md")
+
+        model.askBrainConversation("What supports this?")
+        try await eventually { connections.made.first?.isPrompting == true }
+        connections.last.send(.event(.answerChunk("Original note fallback: [[Plan#Current]]. External: [reference](https://example.com/evidence).")))
+        connections.last.send(.finish(.endTurn))
+        try await eventually { !model.isAgentOperationActive }
+        let turn = try #require(model.brainConversation.conversation.turns.last)
+        let source = try #require(BrainConversationEvidence.sources(in: turn.answer).first)
+
+        model.openBrainConversationSource(source.url)
+
+        #expect(model.document === document)
+        #expect(document.text.contains("UNSAVED-SECRET"))
+        #expect(document.hasUnsavedChanges)
+        #expect(model.reveal?.range == NoteSection.find("Current", in: document.text)?.headingRange)
+        #expect(model.isBrainConversationPresented)
+        #expect(model.brainConversation.conversation.turns.last == turn)
+        #expect(!connections.last.prompts.joined().joined().contains("UNSAVED-SECRET"))
+        #expect(!FileManager.default.fileExists(atPath: document.fileURL.path))
+        #expect(model.errorMessage == nil)
+    }
+
     @Test("a question streams its answer and activity, then completes when session/prompt answers")
     func askAndStream() async throws {
         let fixture = try Fixture()

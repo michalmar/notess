@@ -32,6 +32,7 @@ public struct BrainConversation: Equatable, Sendable {
         public let id: String
         public var title: String
         public var kind: Kind
+        public var details = ACPToolCallDetails()
     }
 
     public struct Turn: Identifiable, Equatable, Sendable {
@@ -73,7 +74,8 @@ public struct BrainConversation: Equatable, Sendable {
         case .toolCall(let id, let title, let kind, let status):
             let activity = Activity(id: "tool:\(id)", title: title, kind: .tool(kind: kind, status: status))
             if let existing = turns[index].activity.firstIndex(where: { $0.id == activity.id }) {
-                turns[index].activity[existing] = activity
+                turns[index].activity[existing].title = title
+                turns[index].activity[existing].kind = activity.kind
             } else {
                 turns[index].activity.append(activity)
             }
@@ -87,6 +89,17 @@ public struct BrainConversation: Equatable, Sendable {
             if let title, !title.isEmpty { turns[index].activity[existing].title = title }
             if let status, case .tool(let kind, _) = turns[index].activity[existing].kind {
                 turns[index].activity[existing].kind = .tool(kind: kind, status: status)
+            }
+        case .toolDetails(let id, let details):
+            if let existing = turns[index].activity.firstIndex(where: { $0.id == "tool:\(id)" }) {
+                turns[index].activity[existing].details.merge(details)
+                if let kind = details.kind, case .tool(_, let status) = turns[index].activity[existing].kind {
+                    turns[index].activity[existing].kind = .tool(kind: kind, status: status)
+                }
+            } else {
+                turns[index].activity.append(Activity(
+                    id: "tool:\(id)", title: id, kind: .tool(kind: details.kind, status: .inProgress), details: details
+                ))
             }
         case .permissionAllowed(let title, let option):
             turns[index].activity.append(Activity(

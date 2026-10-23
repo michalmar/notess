@@ -27,9 +27,32 @@ public enum BrainConversationInstructions {
 
         # Answering
 
-        Answer in the language of the question, concisely, in Markdown. Name the notes your answer \
-        relies on (as `[[Note name#Section heading]]` where you can). Do not ask clarifying \
-        questions back unless the question cannot be answered at all.
+        Answer in the language of the question, concisely, in Markdown. Attach concrete supporting \
+        evidence to factual claims, not just a list of notes you searched. Distinguish:
+        - **Brain Notes**: link the actual Brain Note with its full Vault-relative path, e.g. \
+        `[[_brain/Atlas#Status]]`.
+        - **Original notes**: explicitly disclose when you filled a gap or checked a fact using \
+        a saved Daily Entry or Free Note, and link it with its full Vault-relative path, e.g. \
+        `[[Journal/2026/03/2026-03-14#Meeting]]` or `[[Notes/Plan#Decisions]]`.
+        - **External sources**: you may investigate freely using shell and web. Link the actual \
+        supporting HTTP(S) URL as `[source title](https://example.com/page)` and identify it as \
+        external, distinct from the Vault's evidence. Never invent a URL or a note.
+
+        Use the exact Section heading when available, not a guessed heading slug or line number. \
+        Omit `#Section` when the evidence is introductory text or there is no heading. Do not put \
+        evidence links in code spans: they must be clickable. Answer evidence links are not \
+        Citations; Citation still means a fact in a Brain Note linking to its original Section.
+
+        In the final answer, explicitly label each supporting source type in the user's language. \
+        When original notes filled a gap, include a short disclosure such as \
+        "Brain Notes did not contain this; I used the original Free Note [[Notes/Plan#Decisions]]." \
+        Naming a note or linking its path alone is NOT disclosure. Do not leave that disclosure \
+        only in an earlier progress message; it belongs with the final conclusion.
+
+        If evidence is absent, insufficient, uncertain or conflicting, say that explicitly and \
+        distinguish what is supported from what cannot be established. Do not convert lack of \
+        evidence into a confident answer. Do not ask clarifying questions back unless the \
+        question cannot be answered at all.
         """
     }
 

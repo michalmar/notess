@@ -11,6 +11,8 @@ struct BrainConversationPanel: View {
     let onAsk: (String) -> Bool
     let onStop: () -> Void
     let onClose: () -> Void
+    let onOpenSource: (URL) -> Void
+    let sourceCategory: (URL) -> String
 
     @State private var draft = ""
     @FocusState private var isInputFocused: Bool
@@ -21,7 +23,9 @@ struct BrainConversationPanel: View {
         VStack(spacing: 0) {
             header
             Divider()
-            BrainConversationTranscript(conversation: state.conversation)
+            BrainConversationTranscript(
+                conversation: state.conversation, onOpenSource: onOpenSource, sourceCategory: sourceCategory
+            )
             Divider()
             input
         }
@@ -118,6 +122,8 @@ struct BrainConversationPanel: View {
 
 private struct BrainConversationTranscript: View {
     let conversation: BrainConversation
+    let onOpenSource: (URL) -> Void
+    let sourceCategory: (URL) -> String
 
     var body: some View {
         ScrollViewReader { proxy in
@@ -132,7 +138,7 @@ private struct BrainConversationTranscript: View {
                         .padding(.top, 40)
                     }
                     ForEach(conversation.turns) { turn in
-                        BrainConversationTurnView(turn: turn)
+                        BrainConversationTurnView(turn: turn, onOpenSource: onOpenSource, sourceCategory: sourceCategory)
                             .id(turn.id)
                     }
                     Color.clear.frame(height: 1).id("end")
@@ -147,6 +153,8 @@ private struct BrainConversationTranscript: View {
 
 private struct BrainConversationTurnView: View {
     let turn: BrainConversation.Turn
+    let onOpenSource: (URL) -> Void
+    let sourceCategory: (URL) -> String
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -169,37 +177,87 @@ private struct BrainConversationTurnView: View {
                 .foregroundStyle(.secondary)
             }
             if !turn.answer.isEmpty {
-                Text(Self.markdown(turn.answer))
+                Text(BrainConversationAnswer.attributedText(turn.answer))
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
+                    .environment(\.openURL, OpenURLAction { url in
+                        onOpenSource(url)
+                        return .handled
+                    })
+                BrainConversationSources(answer: turn.answer, onOpen: onOpenSource, category: sourceCategory)
             }
             BrainConversationTurnStatus(turn: turn)
         }
     }
 
-    private static func markdown(_ text: String) -> AttributedString {
-        (try? AttributedString(
-            markdown: text,
-            options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace, failurePolicy: .returnPartiallyParsedIfPossible)
-        )) ?? AttributedString(text)
-    }
 }
 
 private struct BrainConversationActivityRow: View {
     let activity: BrainConversation.Activity
 
     var body: some View {
-        Label {
-            Text(activity.title).lineLimit(2)
-        } icon: {
-            Image(systemName: icon).foregroundStyle(tint)
+        DisclosureGroup {
+            VStack(alignment: .leading, spacing: 6) {
+                Text(activity.title).textSelection(.enabled)
+                if let kind = activity.details.kind { Text("Nástroj: \(kind)") }
+                detail("Vstup", activity.details.input)
+                detail("Výstup", activity.details.output)
+                if let locations = activity.details.locations { detail("Soubory", .array(locations)) }
+                if let content = activity.details.content { detail("Obsah", .array(content)) }
+                if activity.details == ACPToolCallDetails() {
+                    Text("Další podrobnosti ACP neposkytlo.").foregroundStyle(.secondary)
+                }
+            }
+            .padding(.vertical, 4)
+        } label: {
+            Label {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(activity.title).lineLimit(2)
+                    Text(status).foregroundStyle(tint)
+                }
+            } icon: {
+                Image(systemName: icon).foregroundStyle(tint)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func detail(_ title: String, _ value: JSONValue?) -> some View {
+        if let value {
+            Text(title).fontWeight(.semibold)
+            Text(Self.display(value))
+                .font(.system(.caption, design: .monospaced))
+                .textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private static func display(_ value: JSONValue) -> String {
+        if case .string(let text) = value { return text }
+        do {
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+            return String(decoding: try encoder.encode(value), as: UTF8.self)
+        } catch {
+            return "Podrobnosti nelze zobrazit: \(error.localizedDescription)"
+        }
+    }
+
+    private var status: String {
+        switch activity.kind {
+        case .notice: return "Notess"
+        case .permission(let option): return "Neočekádaný požadavek na oprávnění · \(option)"
+        case .tool(_, .pending): return "Čeká"
+        case .tool(_, .inProgress): return "Probíhá"
+        case .tool(_, .completed): return "Dokončeno"
+        case .tool(_, .failed): return "Selhalo"
         }
     }
 
     private var icon: String {
         switch activity.kind {
         case .notice: return "info.circle"
-        case .permission: return "checkmark.shield"
+        case .permission: return "exclamationmark.shield"
         case .tool(_, .pending), .tool(_, .inProgress): return "circle.dotted"
         case .tool(_, .completed): return "checkmark.circle"
         case .tool(_, .failed): return "xmark.circle"
@@ -208,6 +266,7 @@ private struct BrainConversationActivityRow: View {
 
     private var tint: Color {
         if case .tool(_, .failed) = activity.kind { return .red }
+        if case .permission = activity.kind { return .orange }
         return .secondary
     }
 }
