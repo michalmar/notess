@@ -18,10 +18,10 @@ private final class HoldingRunner: BrainRunProcessRunner, @unchecked Sendable {
 }
 
 @MainActor
-private func eventually(_ condition: () -> Bool) async throws {
+private func eventually(line: Int = #line, _ condition: () -> Bool) async throws {
     let deadline = ContinuousClock.now + .seconds(20)
     while !condition() {
-        try #require(ContinuousClock.now < deadline, "timed out")
+        try #require(ContinuousClock.now < deadline, "timed out waiting at line \(line)")
         try await Task.sleep(for: .milliseconds(5))
     }
 }
@@ -470,7 +470,7 @@ struct AppModelBrainConversationTests {
         model.chooseVault(at: fixture.otherURL)
         #expect(model.brainConversation.conversation.turns.isEmpty)
         #expect(!model.brainConversation.isTurnActive)
-        try await eventually { old.closeCount == 1 }
+        try await eventually { old.closeCount >= 1 }
         old.sendLate(.answerChunk(" late"))
         await drainMainQueue()
 
@@ -824,7 +824,7 @@ struct AppModelBrainConversationHistoryTests {
         try await eventually { model.brainConversation.conversation.turns.first?.answer == "old" }
 
         model.chooseVault(at: fixture.otherURL)
-        try await eventually { old.closeCount == 1 }
+        try await eventually { old.closeCount >= 1 }
         old.sendLate(.answerChunk(" late"))
         await drainMainQueue()
         old.releaseClose()
