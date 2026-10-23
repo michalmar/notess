@@ -93,6 +93,7 @@ extension AppModel {
             await agentOperations.terminate()
             closeIdleBrainConversation()
         } while ownsAgentProcesses
+        persistBrainConversationBeforeLeaving()
     }
 
     /// A new Vault starts with no run; a run of the previous Vault is cancelled and reports

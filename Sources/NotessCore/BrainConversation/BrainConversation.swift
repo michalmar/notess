@@ -45,11 +45,56 @@ public struct BrainConversation: Equatable, Sendable {
         public internal(set) var finishedAt: Date?
     }
 
+    /// Why a restored turn is incomplete although nobody stopped it: Notess ended
+    /// (quit, crash, Vault switch) before the Agent finished it.
+    public static let interruptedReason = "Konverzace byla přerušena dřív, než Agent odpověď dokončil."
+
     public let id: UUID
     public private(set) var turns: [Turn] = []
+    /// The ACP session this conversation continues; `nil` until an Agent session exists.
+    /// It is the Agent's context, so it is persisted with the transcript.
+    public internal(set) var sessionID: String?
+    /// Whether that session already received the conversation instructions.
+    public internal(set) var sessionHasInstructions = false
 
     public init(id: UUID = UUID()) {
         self.id = id
+    }
+
+    init(id: UUID, turns: [Turn], sessionID: String?, sessionHasInstructions: Bool) {
+        self.id = id
+        self.turns = turns
+        self.sessionID = sessionID
+        self.sessionHasInstructions = sessionHasInstructions
+    }
+
+    /// Whether there is anything worth keeping on disk.
+    public var hasContent: Bool {
+        !turns.isEmpty || sessionID != nil
+    }
+
+    /// Records the Agent session that holds this conversation's context. A missing id
+    /// (the process just died) never erases the stored one; only `discardSession` does.
+    public mutating func attach(sessionID: String?, hasInstructions: Bool) {
+        guard let sessionID else { return }
+        if self.sessionID != sessionID { sessionHasInstructions = false }
+        self.sessionID = sessionID
+        sessionHasInstructions = sessionHasInstructions || hasInstructions
+    }
+
+    /// Forgets the Agent session: the next question starts with no earlier context.
+    public mutating func discardSession() {
+        sessionID = nil
+        sessionHasInstructions = false
+    }
+
+    /// Ends every turn that was still active as incomplete and interrupted, without
+    /// claiming it completed. Applied to history read back from disk, and when work
+    /// stops because the Vault is left.
+    public mutating func interruptActiveTurn(at date: Date?, reason: String = BrainConversation.interruptedReason) {
+        guard let index = turns.indices.last, turns[index].state.isActive else { return }
+        turns[index].state = .incomplete(reason: reason)
+        turns[index].finishedAt = turns[index].finishedAt ?? date
     }
 
     /// The turn still running or stopping; there is at most one.

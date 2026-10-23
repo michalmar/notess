@@ -18,10 +18,10 @@ private final class HoldingRunner: BrainRunProcessRunner, @unchecked Sendable {
 }
 
 @MainActor
-private func eventually(_ condition: () -> Bool) async throws {
+private func eventually(line: Int = #line, _ condition: () -> Bool) async throws {
     let deadline = ContinuousClock.now + .seconds(20)
     while !condition() {
-        try #require(ContinuousClock.now < deadline, "timed out")
+        try #require(ContinuousClock.now < deadline, "timed out waiting at line \(line)")
         try await Task.sleep(for: .milliseconds(5))
     }
 }
@@ -64,6 +64,8 @@ private final class Fixture {
     }
 
     var store: BrainRunStateStore { BrainRunStateStore(directoryURL: storeURL) }
+    var conversationStoreURL: URL { storeURL.appending(path: "conversations", directoryHint: .isDirectory) }
+    var conversationStore: BrainConversationStore { BrainConversationStore(directoryURL: conversationStoreURL) }
     var vault: Vault { Vault(rootURL: rootURL) }
 
     @MainActor
@@ -84,6 +86,7 @@ private final class Fixture {
             brainRunProcessRunner: runner,
             tagGroupStore: TagGroupStore(directoryURL: storeURL.appending(path: "tags", directoryHint: .isDirectory)),
             brainConversationConnection: connections.factory,
+            brainConversationStore: conversationStore,
             now: { Date(timeIntervalSince1970: 1_760_765_000) }
         )
     }
@@ -354,7 +357,7 @@ struct AppModelBrainConversationTests {
         try await eventually { !model.isAgentOperationActive }
     }
 
-    @Test("when the Agent ignores the cancel, its process group is terminated and the next question starts a new session")
+    @Test("when the Agent ignores the cancel, its process group is terminated and the next question resumes the saved session")
     func stopTerminates() async throws {
         let fixture = try Fixture()
         let connections = Connections()
@@ -373,7 +376,8 @@ struct AppModelBrainConversationTests {
         connections.honoursCancel = true
         model.askBrainConversation("Again?")
         try await eventually { connections.made.count == 2 && connections.last.isPrompting }
-        #expect(connections.last.prompts[0] == [BrainConversationInstructions.text, "Again?"])
+        #expect(connections.last.resumedSessions.count == 1)
+        #expect(connections.last.prompts[0] == ["Again?"], "the resumed session already holds the instructions")
         connections.last.send(.finish(.endTurn))
         try await eventually { !model.isAgentOperationActive }
     }
@@ -424,7 +428,7 @@ struct AppModelBrainConversationTests {
         #expect(!model.ownsAgentProcesses)
     }
 
-    @Test("a CLI exit during a turn fails it, keeps what streamed, and the next question starts a new session")
+    @Test("a CLI exit during a turn fails it, keeps what streamed, and the next question resumes the saved session")
     func exitDuringTurn() async throws {
         let fixture = try Fixture()
         let connections = Connections()
@@ -441,8 +445,10 @@ struct AppModelBrainConversationTests {
         #expect(turn.state == .failed("Copilot CLI se neočekávaně ukončil (kód 1). fatal"))
         #expect(!model.ownsAgentProcesses)
 
+        let session = try #require(model.brainConversation.conversation.sessionID)
         model.askBrainConversation("Again")
         try await eventually { connections.made.count == 2 && connections.last.isPrompting }
+        #expect(connections.last.resumedSessions == [session])
         connections.last.send(.finish(.endTurn))
         try await eventually { !model.isAgentOperationActive }
     }
@@ -464,7 +470,7 @@ struct AppModelBrainConversationTests {
         model.chooseVault(at: fixture.otherURL)
         #expect(model.brainConversation.conversation.turns.isEmpty)
         #expect(!model.brainConversation.isTurnActive)
-        try await eventually { old.closeCount == 1 }
+        try await eventually { old.closeCount >= 1 }
         old.sendLate(.answerChunk(" late"))
         await drainMainQueue()
 
@@ -641,6 +647,241 @@ struct AppModelBrainConversationTests {
         await quitting.value
         #expect(!model.ownsAgentProcesses)
         #expect(model.brainConversation.conversation.turns[0].state == .incomplete(reason: nil))
+    }
+}
+
+@MainActor
+@Suite("Brain Conversation history in AppModel")
+struct AppModelBrainConversationHistoryTests {
+    private func finishedConversation(_ fixture: Fixture, connections: Connections) async throws -> AppModel {
+        let model = fixture.makeModel(connections: connections)
+        model.askBrainConversation("Who keeps the codeword?")
+        try await eventually { connections.made.first?.isPrompting == true }
+        connections.last.send(.event(.toolCall(id: "1", title: "Read _brain/Alice.md", kind: "read", status: .completed)))
+        connections.last.send(.event(.answerChunk("Alice.")))
+        connections.last.send(.finish(.endTurn))
+        try await eventually { !model.isAgentOperationActive && model.brainConversation.conversation.turns[0].state == .completed }
+        return model
+    }
+
+    @Test("a new app run shows the saved transcript and activity of the Vault")
+    func reopenShowsHistory() async throws {
+        let fixture = try Fixture()
+        let first = try await finishedConversation(fixture, connections: Connections())
+        let saved = first.brainConversation.conversation
+
+        let reopened = fixture.makeModel(connections: Connections())
+
+        let conversation = reopened.brainConversation.conversation
+        #expect(conversation.id == saved.id)
+        #expect(conversation.turns.map(\.question) == ["Who keeps the codeword?"])
+        #expect(conversation.turns[0].answer == "Alice.")
+        #expect(conversation.turns[0].state == .completed)
+        #expect(conversation.turns[0].activity == saved.turns[0].activity)
+        #expect(conversation.sessionID == saved.sessionID)
+        #expect(reopened.brainConversation.historyFailure == nil)
+        #expect(!reopened.isAgentOperationActive)
+    }
+
+    @Test("a follow-up after a restart resumes the saved session, resends no instructions and no earlier prompt")
+    func continueAfterRestart() async throws {
+        let fixture = try Fixture()
+        let first = try await finishedConversation(fixture, connections: Connections())
+        let session = try #require(first.brainConversation.conversation.sessionID)
+
+        let connections = Connections()
+        let reopened = fixture.makeModel(connections: connections)
+        #expect(reopened.askBrainConversation("And Bob?"))
+        try await eventually { connections.made.first?.isPrompting == true }
+        #expect(connections.last.resumedSessions == [session])
+        #expect(connections.last.prompts == [["And Bob?"]])
+        connections.last.send(.event(.answerChunk("Bob too.")))
+        connections.last.send(.finish(.endTurn))
+        try await eventually { !reopened.isAgentOperationActive }
+
+        let turns = reopened.brainConversation.conversation.turns
+        #expect(turns.map(\.question) == ["Who keeps the codeword?", "And Bob?"])
+        #expect(turns.map(\.answer) == ["Alice.", "Bob too."])
+        #expect(reopened.brainConversation.conversation.sessionID == session)
+
+        let again = fixture.makeModel(connections: Connections())
+        #expect(again.brainConversation.conversation.turns.count == 2)
+    }
+
+    @Test("a turn that was streaming when Notess died comes back incomplete and interrupted, with its partial answer")
+    func crashKeepsPartialAnswer() async throws {
+        let fixture = try Fixture()
+        let connections = Connections()
+        let model = fixture.makeModel(connections: connections)
+        model.askBrainConversation("Long?")
+        try await eventually { connections.made.first?.isPrompting == true }
+        connections.last.send(.event(.answerChunk("half")))
+        try await eventually {
+            (try? fixture.conversationStore.load(for: fixture.vault))??.turns.first?.answer == "half"
+        }
+
+        let reopened = fixture.makeModel(connections: Connections())
+
+        let turn = reopened.brainConversation.conversation.turns[0]
+        #expect(turn.answer == "half")
+        #expect(turn.state == .incomplete(reason: BrainConversation.interruptedReason))
+        #expect(!reopened.brainConversation.isTurnActive)
+        connections.last.send(.finish(.cancelled))
+    }
+
+    @Test("history that cannot be read is reported, blocks asking, is not overwritten, and is set aside only on request")
+    func unreadableHistory() async throws {
+        let fixture = try Fixture()
+        _ = try await finishedConversation(fixture, connections: Connections())
+        let file = fixture.conversationStore.fileURL(for: fixture.vault)
+        try "{ broken".write(to: file, atomically: true, encoding: .utf8)
+
+        let connections = Connections()
+        let model = fixture.makeModel(connections: connections)
+
+        #expect(model.brainConversation.historyFailure != nil)
+        #expect(model.brainConversation.conversation.turns.isEmpty)
+        #expect(!model.askBrainConversation("Q?"))
+        #expect(connections.made.isEmpty)
+        #expect(try String(contentsOf: file, encoding: .utf8) == "{ broken")
+
+        model.startNewBrainConversationAfterUnreadableHistory()
+        #expect(model.brainConversation.historyFailure == nil)
+        let aside = try FileManager.default.contentsOfDirectory(atPath: fixture.conversationStoreURL.path(percentEncoded: false))
+            .filter { $0.contains("unreadable") }
+        #expect(aside.count == 1)
+        #expect(model.askBrainConversation("Q?"))
+        try await eventually { connections.made.first?.isPrompting == true }
+        connections.last.send(.finish(.endTurn))
+        try await eventually { !model.isAgentOperationActive }
+        #expect(try fixture.conversationStore.load(for: fixture.vault)?.turns.map(\.question) == ["Q?"])
+    }
+
+    @Test("a history that cannot be saved is shown as such, and the conversation still works")
+    func saveFailure() async throws {
+        let fixture = try Fixture()
+        try FileManager.default.createDirectory(at: fixture.storeURL, withIntermediateDirectories: true)
+        try "in the way".write(to: fixture.conversationStoreURL, atomically: true, encoding: .utf8)
+        let connections = Connections()
+        let model = fixture.makeModel(connections: connections)
+
+        model.askBrainConversation("Q?")
+        try await eventually { connections.made.first?.isPrompting == true }
+        #expect(model.brainConversation.persistenceFailure != nil)
+        connections.last.send(.event(.answerChunk("A")))
+        connections.last.send(.finish(.endTurn))
+        try await eventually { !model.isAgentOperationActive }
+        #expect(model.brainConversation.conversation.turns[0].answer == "A")
+        #expect(model.brainConversation.persistenceFailure != nil)
+    }
+
+    @Test("a saved session that cannot be loaded fails the turn explicitly, keeps the history, and continuing without context starts a new session")
+    func sessionLoadFailure() async throws {
+        let fixture = try Fixture()
+        _ = try await finishedConversation(fixture, connections: Connections())
+
+        let connections = Connections()
+        connections.resumeError = .sessionUnavailable("unknown session")
+        let model = fixture.makeModel(connections: connections)
+        model.askBrainConversation("And Bob?")
+        try await eventually { model.brainConversation.resumeFailure != nil && !model.isAgentOperationActive }
+
+        var turns = model.brainConversation.conversation.turns
+        #expect(turns.map(\.question) == ["Who keeps the codeword?", "And Bob?"])
+        #expect(turns[0].answer == "Alice.")
+        guard case .failed = turns[1].state else {
+            Issue.record("expected a failed turn, got \(turns[1].state)")
+            return
+        }
+        #expect(model.brainConversation.conversation.sessionID != nil)
+
+        model.continueBrainConversationWithoutContext()
+        #expect(model.brainConversation.resumeFailure == nil)
+        #expect(model.brainConversation.conversation.sessionID == nil)
+        connections.resumeError = nil
+        let before = connections.made.count
+        #expect(model.askBrainConversation("Fresh?"))
+        try await eventually { connections.made.count > before && connections.last.isPrompting }
+        #expect(connections.last.resumedSessions.isEmpty)
+        #expect(connections.last.prompts == [[BrainConversationInstructions.text, "Fresh?"]])
+        connections.last.send(.finish(.endTurn))
+        try await eventually { !model.isAgentOperationActive }
+        turns = model.brainConversation.conversation.turns
+        #expect(turns.first?.question == "Who keeps the codeword?")
+        #expect(turns.last?.state == .completed)
+    }
+
+    @Test("history and session belong to their Vault; leaving a Vault saves it and its late events touch nothing else")
+    func perVaultIsolation() async throws {
+        let fixture = try Fixture()
+        let connections = Connections()
+        connections.holdsClose = true
+        let model = fixture.makeModel(connections: connections)
+        model.askBrainConversation("Q")
+        try await eventually { connections.made.first?.isPrompting == true }
+        let old = connections.last
+        old.send(.event(.answerChunk("old")))
+        try await eventually { model.brainConversation.conversation.turns.first?.answer == "old" }
+
+        model.chooseVault(at: fixture.otherURL)
+        try await eventually { old.closeCount >= 1 }
+        old.sendLate(.answerChunk(" late"))
+        await drainMainQueue()
+        old.releaseClose()
+        try await eventually { !model.isAgentOperationActive }
+
+        let saved = try #require(try fixture.conversationStore.load(for: fixture.vault))
+        #expect(saved.turns[0].answer == "old")
+        #expect(saved.turns[0].state == .incomplete(reason: nil))
+        #expect(try fixture.conversationStore.load(for: Vault(rootURL: fixture.otherURL)) == nil)
+        #expect(model.brainConversation.conversation.turns.isEmpty)
+        #expect(model.brainConversation.conversation.sessionID == nil)
+
+        model.chooseVault(at: fixture.rootURL)
+        #expect(model.brainConversation.conversation.turns.map(\.answer) == ["old"])
+        #expect(model.brainConversation.conversation.sessionID == saved.sessionID)
+    }
+
+    @Test("instructions the session never received are sent after a restart; an exit does not erase the saved session")
+    func instructionsNotMarkedDeliveredBeforeThePrompt() async throws {
+        let fixture = try Fixture()
+        let connections = Connections()
+        let model = fixture.makeModel(connections: connections)
+        model.askBrainConversation("Q?")
+        try await eventually { connections.made.first?.isPrompting == true }
+        connections.last.send(.fail(.exited(status: 1, detail: "early")))
+        try await eventually { !model.isAgentOperationActive }
+
+        let saved = try #require(try fixture.conversationStore.load(for: fixture.vault))
+        #expect(saved.sessionID != nil)
+        #expect(!saved.sessionHasInstructions)
+
+        let next = Connections()
+        let reopened = fixture.makeModel(connections: next)
+        reopened.askBrainConversation("Again?")
+        try await eventually { next.made.first?.isPrompting == true }
+        #expect(next.last.resumedSessions == [saved.sessionID!])
+        #expect(next.last.prompts == [[BrainConversationInstructions.text, "Again?"]])
+        next.last.send(.finish(.endTurn))
+        try await eventually { !reopened.isAgentOperationActive }
+        #expect(try fixture.conversationStore.load(for: fixture.vault)?.sessionHasInstructions == true)
+    }
+
+    @Test("quitting saves the stopped turn so the next run shows it")
+    func quitSaves() async throws {
+        let fixture = try Fixture()
+        let connections = Connections()
+        let model = fixture.makeModel(connections: connections)
+        model.askBrainConversation("Q")
+        try await eventually { connections.made.first?.isPrompting == true }
+        connections.last.send(.event(.answerChunk("part")))
+        try await eventually { model.brainConversation.conversation.turns.first?.answer == "part" }
+
+        await model.terminateAgentOperations()
+
+        let saved = try #require(try fixture.conversationStore.load(for: fixture.vault))
+        #expect(saved.turns[0].answer == "part")
+        #expect(saved.turns[0].state == .incomplete(reason: nil))
     }
 }
 

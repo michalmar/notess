@@ -13,6 +13,9 @@ final class FakeConnection: ACPConnection, @unchecked Sendable {
     let vault: Vault
     private let lock = NSLock()
     private var startError: BrainConversationError?
+    private var resumeError: BrainConversationError?
+    private var attachedSession: String?
+    private var resumed: [String] = []
     private var honoursCancel = true
     private var open = false
     private var started = 0
@@ -24,13 +27,23 @@ final class FakeConnection: ACPConnection, @unchecked Sendable {
     private var holdsClose = false
     private var closeWaiters: [CheckedContinuation<Void, Never>] = []
 
-    init(vault: Vault, startError: BrainConversationError? = nil, honoursCancel: Bool = true, holdsClose: Bool = false) {
+    init(
+        vault: Vault,
+        startError: BrainConversationError? = nil,
+        resumeError: BrainConversationError? = nil,
+        honoursCancel: Bool = true,
+        holdsClose: Bool = false
+    ) {
         self.vault = vault
         self.startError = startError
+        self.resumeError = resumeError
         self.honoursCancel = honoursCancel
         self.holdsClose = holdsClose
     }
 
+    var sessionID: String? { lock.withLock { open ? attachedSession : nil } }
+    /// The session ids `start(resuming:)` was asked to load, in order.
+    var resumedSessions: [String] { lock.withLock { resumed } }
     var startCount: Int { lock.withLock { started } }
     var closeCount: Int { lock.withLock { closed } }
     var cancelCount: Int { lock.withLock { cancelled } }
@@ -55,11 +68,16 @@ final class FakeConnection: ACPConnection, @unchecked Sendable {
         waiters.forEach { $0.resume() }
     }
 
-    func start() async throws(BrainConversationError) {
+    func start(resuming sessionID: String?) async throws(BrainConversationError) {
         let error: BrainConversationError? = lock.withLock {
             started += 1
-            if startError == nil { open = true }
-            return startError
+            let error = startError ?? (sessionID == nil ? nil : resumeError)
+            if let sessionID { resumed.append(sessionID) }
+            if error == nil {
+                open = true
+                attachedSession = sessionID ?? "session-\(UUID().uuidString)"
+            }
+            return error
         }
         if let error { throw error }
     }
@@ -130,13 +148,15 @@ final class FakeConnection: ACPConnection, @unchecked Sendable {
 final class Connections {
     var made: [FakeConnection] = []
     var startError: BrainConversationError?
+    var resumeError: BrainConversationError?
     var honoursCancel = true
     var holdsClose = false
 
     var factory: BrainConversationConnectionFactory {
         { [unowned self] vault, _ in
             let connection = FakeConnection(
-                vault: vault, startError: startError, honoursCancel: honoursCancel, holdsClose: holdsClose
+                vault: vault, startError: startError, resumeError: resumeError,
+                honoursCancel: honoursCancel, holdsClose: holdsClose
             )
             made.append(connection)
             return connection

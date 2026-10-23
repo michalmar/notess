@@ -65,7 +65,7 @@ One execution of the Agent over the Vault, processing every note changed since t
 _Avoid_: Sync, job, processing
 
 **Brain Conversation**:
-A continuing, read-only exchange between the user and the Agent that answers questions, starting from Brain Notes and consulting saved original notes or other sources when needed. The Agent never writes to the Vault in a Brain Conversation: the operating system enforces this for the whole Copilot CLI process tree, while shell, web and writes outside the Vault stay unrestricted, and there are no approvals or grants. It is distinct from a Brain Run, does not count as processing changed notes and does not advance the last successful Brain Run. Answer evidence links do not redefine a Citation.
+A continuing, read-only exchange between the user and the Agent that answers questions, starting from Brain Notes and consulting saved original notes or other sources when needed. The Agent never writes to the Vault in a Brain Conversation: the operating system enforces this for the whole Copilot CLI process tree, while shell, web and writes outside the Vault stay unrestricted, and there are no approvals or grants. It is distinct from a Brain Run, does not count as processing changed notes and does not advance the last successful Brain Run. Answer evidence links do not redefine a Citation. Its history is stored outside the Vault, per Vault, and can be reopened and continued after a restart.
 _Avoid_: Brain Run, CLI job, search, chat
 
 **Agent operation**:

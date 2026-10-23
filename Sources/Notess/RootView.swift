@@ -40,7 +40,9 @@ struct RootView: View {
                                 onStop: model.stopBrainConversationTurn,
                                 onClose: { model.isBrainConversationPresented = false },
                                 onOpenSource: { model.openBrainConversationSource($0) },
-                                sourceCategory: model.brainConversationSourceCategory
+                                sourceCategory: model.brainConversationSourceCategory,
+                                onStartNew: model.startNewBrainConversationAfterUnreadableHistory,
+                                onContinueWithoutContext: model.continueBrainConversationWithoutContext
                             )
                             .frame(width: 340)
                         }

@@ -325,6 +325,10 @@ private final class PanelFixture {
                     .appending(path: "\(rootURL.lastPathComponent)-state", directoryHint: .isDirectory)
             ),
             brainConversationConnection: connections.factory,
+            brainConversationStore: BrainConversationStore(
+                directoryURL: rootURL.deletingLastPathComponent()
+                    .appending(path: "\(rootURL.lastPathComponent)-conversations", directoryHint: .isDirectory)
+            ),
             now: Date.init
         )
         for document in model.tabSession.documents { model.closeTab(documentID: document.id) }

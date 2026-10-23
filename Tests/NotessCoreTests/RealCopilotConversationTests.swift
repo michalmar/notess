@@ -43,11 +43,10 @@ struct RealCopilotConversationTests {
         return stop
     }
 
-    /// Starts the real Agent on `vault`, runs `body`, and always waits for its process group to end.
-    private func withAgent(_ vault: Vault, _ body: (CopilotACPConnection) async throws -> Void) async throws {
+    private func makeAgent(_ vault: Vault) throws -> CopilotACPConnection {
         let executable = try #require(CopilotCLILocator().detect())
         let model = ProcessInfo.processInfo.environment["NOTESS_COPILOT_MODEL"] ?? "claude-haiku-4.5"
-        let agent = CopilotACPConnection(
+        return CopilotACPConnection(
             vault: vault,
             configuration: .init(
                 executableURL: executable,
@@ -55,8 +54,15 @@ struct RealCopilotConversationTests {
                 additionalArguments: ["--disable-mcp-server", "workiq-mail"]
             )
         )
+    }
+
+    /// Starts the real Agent on `vault`, runs `body`, and always waits for its process group to end.
+    private func withAgent(
+        _ vault: Vault, resuming sessionID: String? = nil, _ body: (CopilotACPConnection) async throws -> Void
+    ) async throws {
+        let agent = try makeAgent(vault)
         do {
-            try await agent.start()
+            try await agent.start(resuming: sessionID)
             try await body(agent)
         } catch {
             await agent.close()
@@ -168,6 +174,64 @@ struct RealCopilotConversationTests {
             }, "no invented supporting Zephyr note")
         }
         #expect(try snapshot(temp.vault) == before)
+    }
+
+    @Test("after the CLI process is gone, session/load restores the context and replays nothing into the live turn")
+    func resumeAfterProcessRestart() async throws {
+        let temp = try TemporaryVault()
+        try temp.write("# Atlas\n\nThe Atlas project's codeword is PELICAN-42.\n", to: "_brain/Atlas.md")
+        var sessionID: String?
+        try await withAgent(temp.vault) { agent in
+            let events = Events()
+            let stop = try await ask(
+                agent,
+                BrainConversationInstructions.promptBlocks(
+                    question: "What is the Atlas project's codeword?",
+                    isFirstInSession: true
+                ),
+                events: events
+            )
+            #expect(stop == .endTurn)
+            #expect(events.answer.contains("PELICAN-42"))
+            sessionID = agent.sessionID
+        }
+        let saved = try #require(sessionID)
+
+        try await withAgent(temp.vault, resuming: saved) { agent in
+            #expect(agent.sessionID == saved)
+            let events = Events()
+            let stop = try await ask(
+                agent,
+                BrainConversationInstructions.promptBlocks(
+                    question: "Which number is part of that codeword? Reply with only the number and do not read any files.",
+                    isFirstInSession: false
+                ),
+                events: events
+            )
+            print("resumed:", events.answer)
+            #expect(stop == .endTurn)
+            #expect(events.answer.contains("42"))
+            #expect(!events.answer.contains("Atlas"), "the replayed history is not part of the new answer")
+        }
+    }
+
+    @Test("an unknown session id cannot be loaded")
+    func unknownSession() async throws {
+        let temp = try TemporaryVault()
+        try temp.write("# Note\n", to: "Note.md")
+        let agent = try makeAgent(temp.vault)
+        do {
+            try await agent.start(resuming: "00000000-0000-4000-8000-000000000000")
+            Issue.record("expected the load to fail")
+        } catch {
+            print("unknown session:", error)
+            guard case .sessionUnavailable = error else {
+                Issue.record("unexpected error \(error)")
+                await agent.close()
+                return
+            }
+        }
+        await agent.close()
     }
 
     @Test("Stop ends a running turn as cancelled")

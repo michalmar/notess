@@ -13,6 +13,8 @@ struct BrainConversationPanel: View {
     let onClose: () -> Void
     let onOpenSource: (URL) -> Void
     let sourceCategory: (URL) -> String
+    var onStartNew: () -> Void = {}
+    var onContinueWithoutContext: () -> Void = {}
 
     @State private var draft = ""
     @FocusState private var isInputFocused: Bool
@@ -23,6 +25,7 @@ struct BrainConversationPanel: View {
         VStack(spacing: 0) {
             header
             Divider()
+            historyBanners
             BrainConversationTranscript(
                 conversation: state.conversation, onOpenSource: onOpenSource, sourceCategory: sourceCategory
             )
@@ -47,6 +50,39 @@ struct BrainConversationPanel: View {
             .help("Zavřít panel konverzace")
             .accessibilityLabel("Zavřít konverzaci")
         }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+    }
+
+    @ViewBuilder
+    private var historyBanners: some View {
+        if let failure = state.historyFailure {
+            banner(failure, symbol: "exclamationmark.triangle", actionTitle: "Začít novou konverzaci", action: onStartNew)
+            Divider()
+        }
+        if let failure = state.persistenceFailure {
+            banner(failure, symbol: "externaldrive.badge.exclamationmark")
+            Divider()
+        }
+        if let failure = state.resumeFailure {
+            banner(failure, symbol: "arrow.triangle.2.circlepath", actionTitle: "Pokračovat bez kontextu", action: onContinueWithoutContext)
+            Divider()
+        }
+    }
+
+    private func banner(_ text: String, symbol: String, actionTitle: String? = nil, action: @escaping () -> Void = {}) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Label(text, systemImage: symbol)
+                .font(.caption)
+                .foregroundStyle(.orange)
+                .fixedSize(horizontal: false, vertical: true)
+            if let actionTitle {
+                Button(actionTitle, action: action)
+                    .controlSize(.small)
+                    .disabled(state.isTurnActive)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
     }
