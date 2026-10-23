@@ -14,20 +14,34 @@ struct RootView: View {
                     SidebarView(model: model)
                         .navigationSplitViewColumnWidth(min: 200, ideal: 240, max: 400)
                 } detail: {
-                    switch model.sidebarMode {
-                    case .journal:
-                        journalDetail
-                    case .tags:
-                        TagTimelineView(
-                            browser: model.tagTimeline,
-                            settings: model.settings,
-                            isIndexing: model.isIndexing,
-                            indexFailure: model.searchIndexFailure,
-                            noteURL: model.noteURL(for:),
-                            openImagePreview: model.presentImagePreview,
-                            open: model.openTimelineSection,
-                            openTag: model.openTagTimeline
-                        )
+                    HStack(spacing: 0) {
+                        switch model.sidebarMode {
+                        case .journal:
+                            journalDetail
+                        case .tags:
+                            TagTimelineView(
+                                browser: model.tagTimeline,
+                                settings: model.settings,
+                                isIndexing: model.isIndexing,
+                                indexFailure: model.searchIndexFailure,
+                                noteURL: model.noteURL(for:),
+                                openImagePreview: model.presentImagePreview,
+                                open: model.openTimelineSection,
+                                openTag: model.openTagTimeline
+                            )
+                        }
+                        if model.isBrainConversationPresented {
+                            Divider()
+                            BrainConversationPanel(
+                                state: model.brainConversation,
+                                isBrainRunActive: model.isBrainRunActive,
+                                hasUnsavedChanges: model.hasUnsavedChanges,
+                                onAsk: { model.askBrainConversation($0) },
+                                onStop: model.stopBrainConversationTurn,
+                                onClose: { model.isBrainConversationPresented = false }
+                            )
+                            .frame(width: 340)
+                        }
                     }
                 }
                 .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in

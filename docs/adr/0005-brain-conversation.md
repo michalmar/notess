@@ -1,10 +1,10 @@
 ---
-status: proposed
+status: accepted
 ---
 
 # Brain Conversation is a read-only Agent conversation with OS-enforced write protection
 
-Fulltext search cannot investigate a question across several Brain Notes or support follow-up questions. We add a Brain Conversation backed by Copilot CLI, separate from the non-interactive Brain Run. The design is approved; its implementation proceeds in slices, so this record describes the intended behaviour rather than what already ships.
+Fulltext search cannot investigate a question across several Brain Notes or support follow-up questions. We add a Brain Conversation backed by Copilot CLI, separate from the non-interactive Brain Run. The design is approved and implemented in slices: the panel, follow-ups, Stop and the OS write protection ship first; evidence links, persistent history and several conversations follow, so those parts still describe intended behaviour.
 
 ## Conversation and evidence
 
@@ -16,7 +16,7 @@ A Brain Conversation does not advance the last-successful-Brain-Run baseline or 
 
 ## The Agent never writes to the Vault
 
-The Agent cannot change any file in the Vault through any tool. The operating system enforces this, not the prompt and not CLI permissions: Copilot CLI is spawned under a macOS Seatbelt profile (`sandbox-exec`) that denies file writes inside the Vault's real path. If that protection cannot be applied, the Brain Conversation refuses to start.
+The Agent cannot change any file in the Vault through any tool. The operating system enforces this, not the prompt and not CLI permissions: Copilot CLI is spawned under a macOS Seatbelt profile (`sandbox-exec`) that denies file writes inside the Vault's real path. If that protection cannot be applied, the Brain Conversation refuses to start. Before every launch Notess verifies that the profile blocks a probe write into the Vault. Because the kernel checks the resolved path, symlinks into the Vault and new hard links to Vault files are blocked as well; an existing hard link outside the Vault to a Vault file would be a writable alias, so its presence also refuses the start. The profile also denies sending Apple Events, so the Agent cannot ask another app to write for it.
 
 Shell, web and writes outside the Vault are deliberately unrestricted, and there are no approvals or grants. An earlier design with per-action approvals and targeted grants was dropped after the feasibility investigation found that CLI grants are tool-kind-wide rather than target-specific, that CLI writes lose concurrent edits, and that shell cannot be bounded by CLI permissions, while an OS write sandbox blocks Vault writes from every tool, including shell.
 
