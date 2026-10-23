@@ -8,6 +8,7 @@ import Testing
 @Suite(
     "Real Copilot Brain Conversation",
     .serialized,
+    .timeLimit(.minutes(2)),
     .enabled(if: ProcessInfo.processInfo.environment["NOTESS_REAL_COPILOT"] == "1")
 )
 struct RealCopilotConversationTests {
@@ -26,7 +27,7 @@ struct RealCopilotConversationTests {
     /// Copilot CLI occasionally never answers `session/prompt` after its last chunk; a
     /// deadline turns that into a failure instead of a hung test run.
     private func ask(
-        _ agent: CopilotACPConnection, _ blocks: [String], events: Events, within limit: Duration = .seconds(240)
+        _ agent: CopilotACPConnection, _ blocks: [String], events: Events, within limit: Duration = .seconds(50)
     ) async throws -> ACPStopReason {
         let started = ContinuousClock.now
         let turn = Task { try await agent.prompt(blocks, events: events.append) }
@@ -107,7 +108,7 @@ struct RealCopilotConversationTests {
                     events: events.append
                 )
             }
-            let deadline = ContinuousClock.now + .seconds(120)
+            let deadline = ContinuousClock.now + .seconds(60)
             while events.count == 0, ContinuousClock.now < deadline {
                 try await Task.sleep(for: .milliseconds(100))
             }
@@ -121,8 +122,7 @@ struct RealCopilotConversationTests {
     }
 
     @Test(
-        "the OS refuses the Agent's shell writes into the Vault, directly, through symlink and hardlink aliases and by moving a folder above it",
-        .timeLimit(.minutes(10))
+        "the OS refuses the Agent's shell writes into the Vault, directly, through symlink and hardlink aliases and by moving a folder above it"
     )
     func writesBlocked() async throws {
         let base = FileManager.default.temporaryDirectory
