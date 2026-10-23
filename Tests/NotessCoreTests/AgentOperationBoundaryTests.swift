@@ -177,6 +177,24 @@ struct AgentOperationBoundaryTests {
         await boundary.terminate()
         #expect(!boundary.isOccupied)
     }
+
+    @Test("a cleanup is never refused, starts stale and keeps the Vault occupied until it finishes")
+    func cleanUp() async throws {
+        let turn = Gate()
+        let operation = try #require(boundary.begin(.brainRun, in: vault) { _ in await turn.wait() })
+        let closing = Gate()
+        let cleanup = boundary.cleanUp(.conversationTurn, in: vault) { await closing.wait() }
+
+        #expect(cleanup.isStale)
+        #expect(boundary.current === operation)
+        turn.open()
+        try await waitUntil { boundary.current == nil }
+        #expect(boundary.isOccupied)
+        #expect(boundary.begin(.brainRun, in: otherVault) { _ in } == nil)
+
+        closing.open()
+        try await waitUntil { !boundary.isOccupied }
+    }
 }
 
 @MainActor

@@ -68,6 +68,27 @@ public final class AgentOperationBoundary {
         return operation
     }
 
+    /// Cleans up something an operation left behind, such as the Agent process an idle
+    /// conversation keeps between turns, when its Vault is left. Never refused: it owns
+    /// the boundary alongside anything else until `work` returns, starts stale and never
+    /// becomes `current`. `work` must finish even when cancelled (on quit).
+    @discardableResult
+    public func cleanUp(
+        _ kind: AgentOperationKind,
+        in vault: Vault,
+        work: @escaping @MainActor () async -> Void
+    ) -> Operation {
+        let operation = Operation(kind: kind, vault: vault)
+        operation.isStale = true
+        let key = ObjectIdentifier(operation)
+        owners[key] = operation
+        operation.task = Task { [weak self] in
+            await work()
+            self?.release(key)
+        }
+        return operation
+    }
+
     /// Asks the operation to stop. It keeps the Vault until its work returns; repeating this is harmless.
     public func cancel(_ operation: Operation) {
         guard owners[ObjectIdentifier(operation)] != nil else { return }

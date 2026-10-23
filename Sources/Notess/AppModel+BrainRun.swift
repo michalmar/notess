@@ -58,7 +58,7 @@ extension AppModel {
             }.value
             guard let self, !operation.isStale else { return }
             guard case .found(let executable) = resolution else {
-                self.finishBrainRun(operation, failure: Self.message(for: resolution), alert: true)
+                self.finishBrainRun(operation, failure: Self.cliMessage(for: resolution), alert: true)
                 return
             }
             if Task.isCancelled {
@@ -86,9 +86,13 @@ extension AppModel {
         agentOperations.cancel(operation)
     }
 
-    /// On quit: waits until every owned Copilot CLI process group is gone.
+    /// On quit: waits until every owned Copilot CLI process group is gone, including
+    /// the Agent a Brain Conversation keeps between turns.
     func terminateAgentOperations() async {
-        await agentOperations.terminate()
+        repeat {
+            await agentOperations.terminate()
+            closeIdleBrainConversation()
+        } while ownsAgentProcesses
     }
 
     /// A new Vault starts with no run; a run of the previous Vault is cancelled and reports
@@ -220,17 +224,6 @@ extension AppModel {
         DispatchQueue.main.async { MainActor.assumeIsolated { log.append("\n\(logLine)\n") } }
         // New and removed Brain Notes show in the sidebar even if FSEvents is late.
         reconcileWithDisk()
-    }
-
-    private static func message(for resolution: CopilotCLIResolution) -> String {
-        switch resolution {
-        case .found:
-            return ""
-        case .configuredPathUnavailable(let path):
-            return "Copilot CLI na cestě z Nastavení (\(path)) nebyl nalezen nebo není spustitelný. Opravte cestu v Nastavení (⌘,)."
-        case .notFound:
-            return "Copilot CLI nebyl nalezen. Nainstalujte GitHub Copilot CLI, nebo zadejte cestu k němu v Nastavení (⌘,)."
-        }
     }
 
     private static func message(for failure: BrainRunFailure) -> String {

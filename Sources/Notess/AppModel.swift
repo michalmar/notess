@@ -71,11 +71,14 @@ final class AppModel {
     var lastSuccessfulBrainRun: Date?
     let brainRunLog = BrainRunLog()
     var isBrainRunLogPresented = false
+    /// The open Vault's Brain Conversation, shown in the right-hand panel.
+    let brainConversation = BrainConversationState()
+    var isBrainConversationPresented = false
 
     @ObservationIgnored private let vaultLocationStore: VaultLocationStore
     @ObservationIgnored private let tabRestorationStore: TabRestorationStore
     @ObservationIgnored let moveToTrash: (URL) throws -> Void
-    @ObservationIgnored private let now: () -> Date
+    @ObservationIgnored let now: () -> Date
     @ObservationIgnored private var watcher: VaultWatcher?
     @ObservationIgnored private var vaultReconciler: VaultReconciler?
     @ObservationIgnored private var backlinkGeneration = UUID()
@@ -96,6 +99,11 @@ final class AppModel {
     @ObservationIgnored var agentCleanupID = UUID()
     @ObservationIgnored var isCheckingBrainRunBoundary = false
     @ObservationIgnored var needsBrainRunBoundaryRecheck = false
+    @ObservationIgnored let makeBrainConversationConnection: BrainConversationConnectionFactory
+    /// The Agent session the conversation keeps between turns, so follow-ups retain context.
+    @ObservationIgnored var brainConversationConnection: (any ACPConnection)?
+    /// The running conversation turn's ownership of the Vault.
+    @ObservationIgnored var brainConversationOperation: AgentOperationBoundary.Operation?
 
     init(
         vaultLocationStore: VaultLocationStore = VaultLocationStore(),
@@ -104,6 +112,7 @@ final class AppModel {
         brainRunStateStore: BrainRunStateStore = BrainRunStateStore(),
         brainRunProcessRunner: any BrainRunProcessRunner = SystemProcessRunner(),
         tagGroupStore: TagGroupStore = TagGroupStore(),
+        brainConversationConnection: @escaping BrainConversationConnectionFactory = CopilotACPConnection.factory,
         moveToTrash: @escaping (URL) throws -> Void = FileTrash.moveToTrash,
         now: @escaping () -> Date = Date.init
     ) {
@@ -114,6 +123,7 @@ final class AppModel {
         self.brainRunStateStore = brainRunStateStore
         self.brainRunProcessRunner = brainRunProcessRunner
         self.tagGroupStore = tagGroupStore
+        self.makeBrainConversationConnection = brainConversationConnection
         self.now = now
         if let saved = vaultLocationStore.savedVault() {
             open(saved)
@@ -301,6 +311,7 @@ final class AppModel {
     }
 
     private func open(_ vault: Vault) {
+        resetBrainConversation()
         resetBrainRun(for: vault)
         self.vault = vault
         tabSession = TabSession()

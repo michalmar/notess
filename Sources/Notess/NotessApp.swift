@@ -86,7 +86,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func terminateAfterAgentOperations(_ application: NSApplication) -> NSApplication.TerminateReply {
-        guard model.isAgentOperationActive else { return .terminateNow }
+        guard model.ownsAgentProcesses else { return .terminateNow }
         guard !isWaitingForAgentOperationTermination else { return .terminateLater }
         isWaitingForAgentOperationTermination = true
         Task { [weak self, weak application] in

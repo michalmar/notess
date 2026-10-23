@@ -1,7 +1,7 @@
 import NotessCore
 import SwiftUI
 
-/// Toolbar: Brain Run status (opens the log), and "Zpracovat" / "Zrušit".
+/// Toolbar: Brain Run status (opens the log), "Zpracovat" / "Zrušit", and the Brain Conversation toggle.
 struct BrainRunToolbarItems: View {
     @Bindable var model: AppModel
 
@@ -32,8 +32,19 @@ struct BrainRunToolbarItems: View {
                 Label("Zpracovat", systemImage: "brain")
                     .labelStyle(.titleAndIcon)
             }
-            .help("Agent zpracuje poznámky změněné od posledního úspěšného Brain Runu do _brain/")
+            .disabled(model.brainConversation.isTurnActive)
+            .help(model.brainConversation.isTurnActive
+                ? "Agent odpovídá v konverzaci; Brain Run lze spustit, až skončí"
+                : "Agent zpracuje poznámky změněné od posledního úspěšného Brain Runu do _brain/")
         }
+
+        Button {
+            model.isBrainConversationPresented.toggle()
+        } label: {
+            Label("Konverzace", systemImage: "bubble.left.and.text.bubble.right")
+        }
+        .keyboardShortcut("b", modifiers: [.command, .shift])
+        .help(model.isBrainConversationPresented ? "Skrýt konverzaci (⇧⌘B)" : "Zeptat se na poznámky (⇧⌘B)")
     }
 
     private var statusHelp: String {
