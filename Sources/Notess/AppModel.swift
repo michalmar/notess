@@ -100,6 +100,10 @@ final class AppModel {
     @ObservationIgnored var isCheckingBrainRunBoundary = false
     @ObservationIgnored var needsBrainRunBoundaryRecheck = false
     @ObservationIgnored let makeBrainConversationConnection: BrainConversationConnectionFactory
+    /// Where Brain Conversation history lives, outside the Vault and apart from the Brain Run record.
+    @ObservationIgnored let brainConversationStore: BrainConversationStore
+    /// The pending save of a streaming turn, so a crash keeps most of the partial answer.
+    @ObservationIgnored var brainConversationCheckpoint: Task<Void, Never>?
     /// The Agent session the conversation keeps between turns, so follow-ups retain context.
     @ObservationIgnored var brainConversationConnection: (any ACPConnection)?
     /// The running conversation turn's ownership of the Vault.
@@ -113,6 +117,7 @@ final class AppModel {
         brainRunProcessRunner: any BrainRunProcessRunner = SystemProcessRunner(),
         tagGroupStore: TagGroupStore = TagGroupStore(),
         brainConversationConnection: @escaping BrainConversationConnectionFactory = CopilotACPConnection.factory,
+        brainConversationStore: BrainConversationStore = BrainConversationStore(),
         moveToTrash: @escaping (URL) throws -> Void = FileTrash.moveToTrash,
         now: @escaping () -> Date = Date.init
     ) {
@@ -124,6 +129,7 @@ final class AppModel {
         self.brainRunProcessRunner = brainRunProcessRunner
         self.tagGroupStore = tagGroupStore
         self.makeBrainConversationConnection = brainConversationConnection
+        self.brainConversationStore = brainConversationStore
         self.now = now
         if let saved = vaultLocationStore.savedVault() {
             open(saved)
@@ -314,6 +320,7 @@ final class AppModel {
         resetBrainConversation()
         resetBrainRun(for: vault)
         self.vault = vault
+        restoreBrainConversation(for: vault)
         tabSession = TabSession()
         startBacklinks(for: vault)
         selectedFolder = ""

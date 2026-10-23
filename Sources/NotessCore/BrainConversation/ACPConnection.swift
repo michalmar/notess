@@ -75,6 +75,9 @@ public enum BrainConversationError: Error, Equatable, Sendable {
     /// The Vault write sandbox is unavailable or ineffective; nothing was started.
     case sandbox(VaultWriteSandboxError)
     case launch(String)
+    /// The saved Agent session could not be loaded (it no longer exists, or the Agent
+    /// cannot load sessions). The conversation never silently continues without it.
+    case sessionUnavailable(String)
     case authentication(String)
     /// The Agent broke the ACP protocol or did not answer in time.
     case protocolViolation(String)
@@ -90,9 +93,16 @@ public enum BrainConversationError: Error, Equatable, Sendable {
 ///
 /// One connection holds one live Agent session, so follow-up prompts keep context.
 public protocol ACPConnection: AnyObject, Sendable {
-    /// Verifies the Vault write protection, then launches the Agent and opens a session.
-    /// Never launches anything unprotected.
-    func start() async throws(BrainConversationError)
+    /// The ACP session this connection holds; `nil` before `start` and after it ended.
+    var sessionID: String? { get }
+
+    /// Verifies the Vault write protection, then launches the Agent and opens a session:
+    /// a new one, or `sessionID` through `session/load` to continue a saved conversation.
+    /// Either way the sandbox and launch checks run first; nothing is launched unprotected.
+    /// What `session/load` replays is the Agent's own record of earlier turns and is never
+    /// reported as events: the persisted transcript stays authoritative, so nothing is
+    /// duplicated and no earlier prompt is resubmitted.
+    func start(resuming sessionID: String?) async throws(BrainConversationError)
 
     /// Sends one prompt and reports its events until `session/prompt` answers; a final
     /// streamed chunk alone does not end the turn. Cancelling the calling task sends
@@ -108,4 +118,11 @@ public protocol ACPConnection: AnyObject, Sendable {
 
     /// Terminates the owned process group and returns once it is gone. Repeating it is harmless.
     func close() async
+}
+
+extension ACPConnection {
+    /// Starts a new session.
+    public func start() async throws(BrainConversationError) {
+        try await start(resuming: nil)
+    }
 }

@@ -67,7 +67,7 @@ public final class CopilotACPConnection: ACPConnection, @unchecked Sendable {
     // Guarded by `lock`.
     private var processID: pid_t?
     private var inputDescriptor: Int32 = -1
-    private var sessionID: String?
+    private var attachedSession: String?
     private var nextRequestID = 1
     private var pending: [Int: CheckedContinuation<Reply, Never>] = [:]
     private var eventHandler: (@Sendable (ACPSessionEvent) -> Void)?
@@ -94,7 +94,11 @@ public final class CopilotACPConnection: ACPConnection, @unchecked Sendable {
 
     // MARK: ACPConnection
 
-    public func start() async throws(BrainConversationError) {
+    public var sessionID: String? {
+        lock.withLock { attachedSession }
+    }
+
+    public func start(resuming savedSession: String?) async throws(BrainConversationError) {
         let vault = self.vault
         let sandboxURL = configuration.sandboxExecutableURL
         let verified = await Self.offCooperativePool { () -> Result<VaultWriteSandbox, VaultWriteSandboxError> in
@@ -129,6 +133,29 @@ public final class CopilotACPConnection: ACPConnection, @unchecked Sendable {
         guard info["protocolVersion"]?.intValue != nil else {
             throw .protocolViolation("Odpověď na initialize neobsahuje verzi protokolu.")
         }
+        if savedSession != nil, info["agentCapabilities"]?["loadSession"] != .bool(true) {
+            throw .sessionUnavailable("Tato verze Copilot CLI nepodporuje načtení uložené relace (session/load).")
+        }
+
+        if let savedSession {
+            // Replayed history arrives before the answer and is dropped: no session is
+            // attached yet, so `deliver` has nowhere to report it.
+            let loaded = await withTaskCancellationHandler {
+                await request("session/load", .object([
+                    "sessionId": .string(savedSession),
+                    "cwd": .string(sandbox.vaultRealPath),
+                    "mcpServers": .array([]),
+                ]), timeout: timeout)
+            } onCancel: {
+                self.terminateGroup()
+            }
+            if case .failure(let error) = loaded {
+                if case .agent(let detail) = error { throw .sessionUnavailable(detail) }
+                throw error
+            }
+            lock.withLock { attachedSession = savedSession }
+            return
+        }
 
         let session = await withTaskCancellationHandler {
             await request("session/new", .object([
@@ -142,7 +169,7 @@ public final class CopilotACPConnection: ACPConnection, @unchecked Sendable {
         guard let id = created["sessionId"]?.stringValue else {
             throw .protocolViolation("Odpověď na session/new neobsahuje sessionId.")
         }
-        lock.withLock { sessionID = id }
+        lock.withLock { attachedSession = id }
     }
 
     public func prompt(
@@ -150,7 +177,7 @@ public final class CopilotACPConnection: ACPConnection, @unchecked Sendable {
         events: @escaping @Sendable (ACPSessionEvent) -> Void
     ) async throws(BrainConversationError) -> ACPStopReason {
         let started: (session: String, token: Int)? = lock.withLock {
-            guard let sessionID, !isClosed, exitStatus == nil, activePrompt == nil else { return nil }
+            guard let sessionID = attachedSession, !isClosed, exitStatus == nil, activePrompt == nil else { return nil }
             promptCounter += 1
             activePrompt = promptCounter
             eventHandler = events
@@ -190,7 +217,7 @@ public final class CopilotACPConnection: ACPConnection, @unchecked Sendable {
     }
 
     public func isOpen() async -> Bool {
-        lock.withLock { sessionID != nil && !isClosed && exitStatus == nil }
+        lock.withLock { attachedSession != nil && !isClosed && exitStatus == nil }
     }
 
     /// Runs to the end even when the calling task is cancelled (Stop, Vault change, quit).
@@ -201,7 +228,7 @@ public final class CopilotACPConnection: ACPConnection, @unchecked Sendable {
     private func terminateAndWait() async {
         let processID: pid_t? = lock.withLock {
             isClosed = true
-            sessionID = nil
+            attachedSession = nil
             return groupGone ? nil : self.processID
         }
         closeInput()
@@ -304,7 +331,7 @@ public final class CopilotACPConnection: ACPConnection, @unchecked Sendable {
         let (requests, waiters, detail): ([CheckedContinuation<Reply, Never>], [CheckedContinuation<Void, Never>], String) =
             lock.withLock {
                 exitStatus = status
-                sessionID = nil
+                attachedSession = nil
                 defer {
                     pending = [:]
                     exitWaiters = []
@@ -454,7 +481,7 @@ public final class CopilotACPConnection: ACPConnection, @unchecked Sendable {
 
     private func deliver(_ parameters: JSONValue) {
         let handler: (@Sendable (ACPSessionEvent) -> Void)? = lock.withLock {
-            parameters["sessionId"]?.stringValue == sessionID ? eventHandler : nil
+            parameters["sessionId"]?.stringValue == attachedSession ? eventHandler : nil
         }
         guard let handler, let update = parameters["update"] else { return }
         if let event = Self.event(from: update) { handler(event) }
@@ -523,7 +550,7 @@ public final class CopilotACPConnection: ACPConnection, @unchecked Sendable {
         send(.object(["jsonrpc": .string("2.0"), "id": id, "result": .object(["outcome": outcome])]))
 
         let handler = lock.withLock {
-            parameters["sessionId"]?.stringValue == sessionID ? eventHandler : nil
+            parameters["sessionId"]?.stringValue == attachedSession ? eventHandler : nil
         }
         let title = parameters["toolCall"]?["title"]?.stringValue
             ?? parameters["toolCall"]?["toolCallId"]?.stringValue ?? method

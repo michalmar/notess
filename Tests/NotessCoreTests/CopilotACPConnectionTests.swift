@@ -6,7 +6,7 @@ import Testing
 /// It records what it saw in a marker folder outside the Vault.
 private final class FakeAgent {
     enum Mode: String {
-        case normal, writeVault, holdHonoringCancel, holdIgnoringCancel, exitDuringPrompt, authRequired, silent
+        case normal, writeVault, holdHonoringCancel, holdIgnoringCancel, exitDuringPrompt, authRequired, silent, loadsSession, loadFails
     }
 
     let base: URL
@@ -87,7 +87,17 @@ private final class FakeAgent {
                 if MODE == "authRequired":
                     send({"jsonrpc": "2.0", "id": rid, "error": {"code": -32000, "message": "Authentication required"}})
                     continue
-                send({"jsonrpc": "2.0", "id": rid, "result": {"protocolVersion": 1, "agentCapabilities": {}}})
+                send({"jsonrpc": "2.0", "id": rid, "result": {"protocolVersion": 1, "agentCapabilities": {"loadSession": True} if MODE in ("loadsSession", "loadFails") else {}}})
+            elif method == "session/load":
+                mark("load", message["params"]["sessionId"] + " " + message["params"]["cwd"] + " " + json.dumps(message["params"]["mcpServers"]) + "\\n")
+                if MODE == "loadFails":
+                    send({"jsonrpc": "2.0", "id": rid, "error": {"code": -32603, "message": "Session not found"}})
+                    continue
+                sid = message["params"]["sessionId"]
+                update(sid, {"sessionUpdate": "user_message_chunk", "content": {"type": "text", "text": "old question"}})
+                update(sid, {"sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": "old answer"}})
+                update(sid, {"sessionUpdate": "tool_call", "toolCallId": "old", "title": "Old tool", "kind": "read", "status": "completed"})
+                send({"jsonrpc": "2.0", "id": rid, "result": {}})
             elif method == "session/new":
                 mark("cwd", message["params"]["cwd"])
                 send({"jsonrpc": "2.0", "id": rid, "result": {"sessionId": "s1"}})
@@ -205,6 +215,75 @@ struct CopilotACPConnectionTests {
 
         await connection.close()
         #expect(!(await connection.isOpen()))
+    }
+
+    @Test("a saved session is loaded in the sandbox; the replay is dropped and the next prompt works")
+    func resumesSavedSession() async throws {
+        let agent = try FakeAgent(.loadsSession)
+        let connection = agent.connection()
+        try await connection.start(resuming: "s1")
+
+        #expect(connection.sessionID == "s1")
+        let realVault = try #require(try? VaultWriteSandbox(vault: agent.vault).vaultRealPath)
+        #expect(agent.marker("load") == "s1 \(realVault) []\n")
+        #expect(agent.marker("arguments")?.contains("--acp") == true)
+
+        let log = EventLog()
+        let stop = try await connection.prompt(["follow-up"], events: log.append)
+        #expect(stop == .endTurn)
+        #expect(log.answer == "Echo: follow-up")
+        #expect(!log.all.contains(.toolCall(id: "old", title: "Old tool", kind: "read", status: .completed)))
+        #expect(agent.marker("prompts") == #"["follow-up"]"# + "\n")
+        await connection.close()
+    }
+
+    @Test("a session that cannot be loaded is reported as unavailable")
+    func loadFailure() async throws {
+        let agent = try FakeAgent(.loadFails)
+        let connection = agent.connection()
+        do {
+            try await connection.start(resuming: "gone")
+            Issue.record("expected a failure")
+        } catch {
+            guard case .sessionUnavailable = error else {
+                Issue.record("unexpected error \(error)")
+                return
+            }
+        }
+        #expect(!(await connection.isOpen()))
+    }
+
+    @Test("an Agent without session/load cannot resume, and no session is created behind the user's back")
+    func loadUnsupported() async throws {
+        let agent = try FakeAgent(.normal)
+        let connection = agent.connection()
+        do {
+            try await connection.start(resuming: "s1")
+            Issue.record("expected a failure")
+        } catch {
+            guard case .sessionUnavailable = error else {
+                Issue.record("unexpected error \(error)")
+                return
+            }
+        }
+        #expect(agent.marker("cwd") == nil)
+        #expect(!(await connection.isOpen()))
+    }
+
+    @Test("resuming still fails closed when the sandbox is unavailable")
+    func resumeFailsClosed() async throws {
+        let agent = try FakeAgent(.loadsSession)
+        let connection = agent.connection(sandbox: URL(filePath: "/nonexistent/sandbox-exec"))
+        do {
+            try await connection.start(resuming: "s1")
+            Issue.record("expected a failure")
+        } catch {
+            guard case .sandbox = error else {
+                Issue.record("unexpected error \(error)")
+                return
+            }
+        }
+        #expect(agent.marker("launches") == nil)
     }
 
     @Test("the Agent's process tree cannot write into the Vault")
