@@ -86,11 +86,14 @@ final class AppModel {
     @ObservationIgnored let brainRunStateStore: BrainRunStateStore
     @ObservationIgnored let tagGroupStore: TagGroupStore
     @ObservationIgnored var brainRun: BrainRun?
-    @ObservationIgnored var brainRunTask: Task<Void, Never>?
-    @ObservationIgnored var brainRunCleanupTask: Task<Void, Never>?
-    @ObservationIgnored var brainRunCleanupID = UUID()
-    /// Identifies the current Brain Run, so a run of a previous Vault reports nothing.
-    @ObservationIgnored var brainRunID = UUID()
+    @ObservationIgnored let brainRunProcessRunner: any BrainRunProcessRunner
+    /// Which Agent operation owns the Vault; a Brain Run now, a conversation turn later.
+    @ObservationIgnored let agentOperations = AgentOperationBoundary()
+    /// The Brain Run's ownership of the Vault; a run of a previous Vault is stale and reports nothing.
+    @ObservationIgnored var brainRunOperation: AgentOperationBoundary.Operation?
+    /// Clears the "cancelling" state once a previous Vault's operation has cleaned up.
+    @ObservationIgnored var agentCleanupWatcher: Task<Void, Never>?
+    @ObservationIgnored var agentCleanupID = UUID()
     @ObservationIgnored var isCheckingBrainRunBoundary = false
     @ObservationIgnored var needsBrainRunBoundaryRecheck = false
 
@@ -99,6 +102,7 @@ final class AppModel {
         tabRestorationStore: TabRestorationStore = TabRestorationStore(),
         settings: AppSettings = AppSettings(),
         brainRunStateStore: BrainRunStateStore = BrainRunStateStore(),
+        brainRunProcessRunner: any BrainRunProcessRunner = SystemProcessRunner(),
         tagGroupStore: TagGroupStore = TagGroupStore(),
         moveToTrash: @escaping (URL) throws -> Void = FileTrash.moveToTrash,
         now: @escaping () -> Date = Date.init
@@ -108,6 +112,7 @@ final class AppModel {
         self.moveToTrash = moveToTrash
         self.settings = settings
         self.brainRunStateStore = brainRunStateStore
+        self.brainRunProcessRunner = brainRunProcessRunner
         self.tagGroupStore = tagGroupStore
         self.now = now
         if let saved = vaultLocationStore.savedVault() {

@@ -31,7 +31,7 @@ struct NotessApp: App {
 final class AppDelegate: NSObject, NSApplicationDelegate {
     let model = AppModel()
     private var closeTabEventMonitor: Any?
-    private var isWaitingForBrainRunTermination = false
+    private var isWaitingForAgentOperationTermination = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Needed when launched as a bare executable (`swift run`), harmless in the .app bundle.
@@ -61,7 +61,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        guard model.hasUnsavedChanges else { return terminateAfterBrainRun(sender) }
+        guard model.hasUnsavedChanges else { return terminateAfterAgentOperations(sender) }
         switch saveDecision(
             message: "Uložit všechny změny?",
             informativeText: "Některé otevřené poznámky obsahují neuložené změny.",
@@ -69,11 +69,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             discardTitle: "Zahodit"
         ) {
         case .save:
-            if model.saveAll() { return terminateAfterBrainRun(sender) }
+            if model.saveAll() { return terminateAfterAgentOperations(sender) }
             showSaveError()
             return .terminateCancel
         case .discard:
-            return terminateAfterBrainRun(sender)
+            return terminateAfterAgentOperations(sender)
         case .cancel:
             return .terminateCancel
         }
@@ -85,13 +85,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    private func terminateAfterBrainRun(_ application: NSApplication) -> NSApplication.TerminateReply {
-        guard model.isBrainRunActive else { return .terminateNow }
-        guard !isWaitingForBrainRunTermination else { return .terminateLater }
-        isWaitingForBrainRunTermination = true
+    private func terminateAfterAgentOperations(_ application: NSApplication) -> NSApplication.TerminateReply {
+        guard model.isAgentOperationActive else { return .terminateNow }
+        guard !isWaitingForAgentOperationTermination else { return .terminateLater }
+        isWaitingForAgentOperationTermination = true
         Task { [weak self, weak application] in
             guard let self else { return }
-            await self.model.terminateBrainRun()
+            await self.model.terminateAgentOperations()
             application?.reply(toApplicationShouldTerminate: true)
         }
         return .terminateLater
