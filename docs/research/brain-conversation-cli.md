@@ -84,3 +84,19 @@ The viable architecture removes the CLI's general tools. Every side effect goes 
 - **Still untested:**
   - handling of uncertain outcomes
   - real investigation quality: an answer from Brain Notes, fallback disclosure, and a no-evidence answer
+
+## Simplified option: read-only Vault, unrestricted shell and web
+
+Proposed scope reduction:
+- The Agent never writes.
+- Shell and web are allowed without approval.
+
+The CLI cannot enforce "never writes" while shell is available. The OS can. In one fixture run, the `copilot --acp` process was wrapped in macOS `sandbox-exec`, with the profile `(allow default)(deny file-write* (subpath "<vault realpath>"))` (`scripts/brain-conversation-probe/sandbox-wrap.sh`). The run used `--allow-all-tools`. A shell `echo >> 'Daily Entries/d.md'` failed with `Operation not permitted` and the note was unchanged. `cat` of the same file still worked.
+
+Because the kernel applies the rule to the whole process tree, it covers shell, aliases, subagents and MCP servers. This is separate from the app's App Sandbox, which ADR 0004 keeps off.
+
+This option removes approvals, grants, drift and alias handling, and the need for host write tools. What remains and what is given up:
+- **Transmission and side-effect approvals are given up.** #108 stories 17, 18 and 20–26 no longer apply: note content can leave through web or shell without asking.
+- **Reads outside the Vault go unapproved.** They are only limited by `--add-dir`/trust prompts, which stop working once all tools are allowed.
+- **`sandbox-exec` is deprecated.** It still works, but if it becomes unavailable, Notess must refuse to start a conversation rather than run without the write boundary.
+- **Shell side effects outside the Vault remain possible.** This includes writes elsewhere and calls to other services.
