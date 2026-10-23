@@ -294,12 +294,18 @@ extension AppModel {
 
         let blocks = BrainConversationInstructions.promptBlocks(question: question, isFirstInSession: !hasInstructions)
         let sessionID = active.sessionID
-        report(true) { $0.attach(sessionID: sessionID, hasInstructions: true) }
+        // The instructions count as delivered only once the Agent has reacted to the prompt.
+        report(true) { $0.attach(sessionID: sessionID, hasInstructions: hasInstructions) }
         let result: Result<ACPStopReason, BrainConversationError>
         do {
             result = .success(try await active.prompt(blocks) { event in
                 DispatchQueue.main.async {
-                    MainActor.assumeIsolated { report(false) { $0.apply(event, to: turnID) } }
+                    MainActor.assumeIsolated {
+                        report(false) {
+                            $0.attach(sessionID: sessionID, hasInstructions: true)
+                            $0.apply(event, to: turnID)
+                        }
+                    }
                 }
             })
         } catch {
@@ -316,19 +322,20 @@ extension AppModel {
         }
         switch result {
         case .success(let stopReason):
-            report(true) { $0.finish(turnID, stopReason: stopReason, at: now()) }
+            report(true) {
+                $0.attach(sessionID: sessionID, hasInstructions: true)
+                $0.finish(turnID, stopReason: stopReason, at: now())
+            }
         case .failure(let error):
             report(true) { $0.fail(turnID, message: Self.message(for: error), at: now()) }
         }
     }
 
-    /// Whether `error` came from loading the saved session rather than from the checks
-    /// before it (sandbox, launch, sign-in), which say nothing about the session.
+    /// Whether the CLI itself said the saved session cannot be loaded. A crash, timeout
+    /// or failed check says nothing about the session, so those are only retried.
     private static func isSessionLoadFailure(_ error: BrainConversationError) -> Bool {
-        switch error {
-        case .sandbox, .launch, .authentication: false
-        case .sessionUnavailable, .protocolViolation, .agent, .exited: true
-        }
+        if case .sessionUnavailable = error { return true }
+        return false
     }
 
     static func message(for error: BrainConversationError) -> String {

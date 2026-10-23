@@ -842,6 +842,31 @@ struct AppModelBrainConversationHistoryTests {
         #expect(model.brainConversation.conversation.sessionID == saved.sessionID)
     }
 
+    @Test("instructions the session never received are sent after a restart; an exit does not erase the saved session")
+    func instructionsNotMarkedDeliveredBeforeThePrompt() async throws {
+        let fixture = try Fixture()
+        let connections = Connections()
+        let model = fixture.makeModel(connections: connections)
+        model.askBrainConversation("Q?")
+        try await eventually { connections.made.first?.isPrompting == true }
+        connections.last.send(.fail(.exited(status: 1, detail: "early")))
+        try await eventually { !model.isAgentOperationActive }
+
+        let saved = try #require(try fixture.conversationStore.load(for: fixture.vault))
+        #expect(saved.sessionID != nil)
+        #expect(!saved.sessionHasInstructions)
+
+        let next = Connections()
+        let reopened = fixture.makeModel(connections: next)
+        reopened.askBrainConversation("Again?")
+        try await eventually { next.made.first?.isPrompting == true }
+        #expect(next.last.resumedSessions == [saved.sessionID!])
+        #expect(next.last.prompts == [[BrainConversationInstructions.text, "Again?"]])
+        next.last.send(.finish(.endTurn))
+        try await eventually { !reopened.isAgentOperationActive }
+        #expect(try fixture.conversationStore.load(for: fixture.vault)?.sessionHasInstructions == true)
+    }
+
     @Test("quitting saves the stopped turn so the next run shows it")
     func quitSaves() async throws {
         let fixture = try Fixture()

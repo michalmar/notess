@@ -73,15 +73,19 @@ public struct BrainConversation: Equatable, Sendable {
         !turns.isEmpty || sessionID != nil
     }
 
-    /// Records the Agent session that holds this conversation's context.
+    /// Records the Agent session that holds this conversation's context. A missing id
+    /// (the process just died) never erases the stored one; only `discardSession` does.
     public mutating func attach(sessionID: String?, hasInstructions: Bool) {
+        guard let sessionID else { return }
+        if self.sessionID != sessionID { sessionHasInstructions = false }
         self.sessionID = sessionID
-        sessionHasInstructions = hasInstructions
+        sessionHasInstructions = sessionHasInstructions || hasInstructions
     }
 
     /// Forgets the Agent session: the next question starts with no earlier context.
     public mutating func discardSession() {
-        attach(sessionID: nil, hasInstructions: false)
+        sessionID = nil
+        sessionHasInstructions = false
     }
 
     /// Ends every turn that was still active as incomplete and interrupted, without
