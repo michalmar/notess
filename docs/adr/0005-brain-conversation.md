@@ -4,13 +4,15 @@ status: accepted
 
 # Brain Conversation is a read-only Agent conversation with OS-enforced write protection
 
-Fulltext search cannot investigate a question across several Brain Notes or support follow-up questions. We add a Brain Conversation backed by Copilot CLI, separate from the non-interactive Brain Run. The design is approved and implemented in slices: the panel, follow-ups, Stop and the OS write protection ship first; evidence links, persistent history and several conversations follow, so those parts still describe intended behaviour.
+Fulltext search cannot investigate a question across several Brain Notes or support follow-up questions. We add a Brain Conversation backed by Copilot CLI, separate from the non-interactive Brain Run. The design is approved and implemented in slices: the panel, follow-ups, Stop, OS write protection and inspectable evidence links ship first; persistent history and several conversations follow, so those parts still describe intended behaviour.
 
 ## Conversation and evidence
 
 The conversation appears in a right-hand panel beside the note editor. Follow-up questions retain context, and clickable note links open in the editor without replacing the panel. Answers distinguish evidence from Brain Notes, original notes and external sources, and acknowledge insufficient evidence instead of presenting it as established.
 
 The Agent starts with Brain Notes. If they lack sufficient evidence it consults saved Daily Entries and Free Notes without asking again and discloses that in its answer. Unsaved editor changes are never inputs. Tool activity (commands, fetched URLs, files read) is shown as an activity record, not as the model's hidden reasoning.
+
+Evidence uses existing wiki-link semantics (`[[Vault-relative note#Exact heading]]`) and HTTP(S) Markdown links. The panel resolves note categories from the Vault, provides clickable sources and routes note links through existing editor navigation: open tabs are selected before any disk read, including dirty or missing-on-disk notes, and Section lookup uses their current text. No source click reloads, saves or overwrites a draft, hides the conversation, or creates a missing note; invalid or missing targets report errors. Inspecting a draft does not send it to the Agent. Tool details retain only fields ACP supplies (raw input/output, content and locations), preserving earlier fields across sparse updates. Unexpected permission requests remain allowed and visible, not an approval workflow.
 
 A Brain Conversation does not advance the last-successful-Brain-Run baseline or mark changed notes as processed. Answer links do not change a Citation, which still connects a fact in a Brain Note to its original Section.
 
