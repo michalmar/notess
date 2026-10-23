@@ -100,3 +100,13 @@ This option removes approvals, grants, drift and alias handling, and the need fo
 - **Reads outside the Vault go unapproved.** They are only limited by `--add-dir`/trust prompts, which stop working once all tools are allowed.
 - **`sandbox-exec` is deprecated.** It still works, but if it becomes unavailable, Notess must refuse to start a conversation rather than run without the write boundary.
 - **Shell side effects outside the Vault remain possible.** This includes writes elsewhere and calls to other services.
+
+### `sandbox-exec` deprecation
+
+- **No replacement exists.** Apple's suggestion, App Sandbox, applies to a signed app as a whole and cannot restrict one process's access to particular paths. Apple has published no replacement for sandboxing arbitrary processes ([apple/containerization#737](https://github.com/apple/containerization/issues/737), still open).
+- **The industry relies on the same mechanism.** Copilot CLI's own `--sandbox` (MXC) uses the Seatbelt backend (`sandbox-exec`) on macOS (`copilot help sandbox`). Codex CLI and Claude Code use Seatbelt too. If Apple removes it, all of these break together.
+- **`copilot --sandbox` alone is not enough.** It sandboxes shell commands only. Built-in file edits follow its policy only on a best-effort basis. It would be sufficient only together with `--excluded-tools create edit`. The outer `sandbox-exec` wrap remains stronger, because it applies to the whole process tree.
+- **Fallbacks if Seatbelt goes away:**
+  - Call the private `sandbox_init` API directly. This is equally unsupported.
+  - Run the agent in a Linux VM or container (Apple Containerization or Virtualization.framework) with the Vault mounted read-only. This is robust but heavy.
+- **Decision:** use `sandbox-exec`. Check at startup that it is available and refuse to start a conversation if it is missing.
