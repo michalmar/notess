@@ -106,6 +106,7 @@ final class AppModel {
     @ObservationIgnored var brainConversationCheckpoint: Task<Void, Never>?
     /// The Agent session the conversation keeps between turns, so follow-ups retain context.
     @ObservationIgnored var brainConversationConnection: (any ACPConnection)?
+    @ObservationIgnored var brainConversationConnectionID: UUID?
     /// The running conversation turn's ownership of the Vault.
     @ObservationIgnored var brainConversationOperation: AgentOperationBoundary.Operation?
 

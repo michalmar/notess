@@ -68,6 +68,10 @@ final class FakeConnection: ACPConnection, @unchecked Sendable {
         waiters.forEach { $0.resume() }
     }
 
+    func holdClose() {
+        lock.withLock { holdsClose = true }
+    }
+
     func start(resuming sessionID: String?) async throws(BrainConversationError) {
         let error: BrainConversationError? = lock.withLock {
             started += 1

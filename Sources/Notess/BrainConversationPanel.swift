@@ -1,3 +1,4 @@
+import AppKit
 import NotessCore
 import SwiftUI
 
@@ -15,8 +16,10 @@ struct BrainConversationPanel: View {
     let sourceCategory: (URL) -> String
     var onStartNew: () -> Void = {}
     var onContinueWithoutContext: () -> Void = {}
+    var onCreate: () -> Void = {}
+    var onSelect: (UUID) -> Void = { _ in }
 
-    @State private var draft = ""
+    @State private var drafts: [UUID: String] = [:]
     @FocusState private var isInputFocused: Bool
 
     static let inputPlaceholder = "Zeptejte se na své poznámky…"
@@ -25,16 +28,43 @@ struct BrainConversationPanel: View {
         VStack(spacing: 0) {
             header
             Divider()
+            conversationSelector
+            Divider()
             historyBanners
+            if let active = state.activeConversation, active.id != state.conversation.id,
+               let turn = active.activeTurn {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Agent pracuje v jiné konverzaci.")
+                        .font(.caption)
+                    BrainConversationTurnStatus(turn: turn)
+                    Button("Zpět k probíhající konverzaci") { onSelect(active.id) }
+                        .controlSize(.small)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(12)
+                Divider()
+            }
             BrainConversationTranscript(
                 conversation: state.conversation, onOpenSource: onOpenSource, sourceCategory: sourceCategory
             )
+            .id(state.conversation.id)
             Divider()
             input
         }
         .frame(maxHeight: .infinity)
         .background(.background)
         .onAppear { isInputFocused = true }
+        .onChange(of: state.conversation.id) { isInputFocused = true }
+    }
+
+    private var conversationSelector: some View {
+        BrainConversationSelector(
+            conversations: state.conversations, selectedID: state.conversation.id,
+            isEnabled: state.historyFailure == nil, onCreate: onCreate, onSelect: onSelect
+        )
+        .frame(height: 24)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
     }
 
     private var header: some View {
@@ -100,7 +130,10 @@ struct BrainConversationPanel: View {
                     .foregroundStyle(.secondary)
             }
             HStack(alignment: .bottom, spacing: 8) {
-                TextField(Self.inputPlaceholder, text: $draft, axis: .vertical)
+                TextField(Self.inputPlaceholder, text: Binding(
+                    get: { draft },
+                    set: { drafts[state.conversation.id] = $0 }
+                ), axis: .vertical)
                     .textFieldStyle(.roundedBorder)
                     .lineLimit(1...6)
                     .focused($isInputFocused)
@@ -124,6 +157,11 @@ struct BrainConversationPanel: View {
                     .help(isBrainRunActive ? "Běží Brain Run; zeptat se můžete, až doběhne" : "Odeslat dotaz (↩)")
                     .accessibilityLabel("Odeslat")
                 }
+                if state.isConnectionClosing {
+                    Text("Agent dokončuje předchozí práci; odeslání bude dostupné po jejím ukončení.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             }
             Text("Agent čte uložené soubory Vaultu a do Vaultu nemůže zapisovat. Mimo Vault (síť, jiné soubory) omezen není.")
                 .font(.caption2)
@@ -139,20 +177,112 @@ struct BrainConversationPanel: View {
         case stop(isEnabled: Bool)
     }
 
-    static func control(for conversation: BrainConversation, isBrainRunActive: Bool, draft: String) -> Control {
+    static func control(
+        for conversation: BrainConversation, isBrainRunActive: Bool, draft: String, isConnectionClosing: Bool = false
+    ) -> Control {
         if let active = conversation.activeTurn {
             return .stop(isEnabled: active.state == .running)
         }
-        return .send(isEnabled: !isBrainRunActive && !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        return .send(isEnabled: !isBrainRunActive && !isConnectionClosing && !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
     }
 
+    private var draft: String { drafts[state.conversation.id] ?? "" }
+
     private var control: Control {
-        Self.control(for: state.conversation, isBrainRunActive: isBrainRunActive, draft: draft)
+        Self.control(
+            for: state.activeConversation ?? state.conversation, isBrainRunActive: isBrainRunActive,
+            draft: draft, isConnectionClosing: state.isConnectionClosing
+        )
     }
 
     private func send() {
         guard control == .send(isEnabled: true), onAsk(draft) else { return }
-        draft = ""
+        drafts[state.conversation.id] = ""
+    }
+}
+
+/// Native controls keep long titles within the panel and support keyboard selection.
+private struct BrainConversationSelector: NSViewRepresentable {
+    let conversations: [BrainConversation]
+    let selectedID: UUID
+    let isEnabled: Bool
+    let onCreate: () -> Void
+    let onSelect: (UUID) -> Void
+
+    @MainActor
+    final class Coordinator: NSObject {
+        let picker = NSPopUpButton()
+        let menu = NSMenu()
+        let create = NSButton()
+        var ids: [UUID] = []
+        var onCreate: () -> Void = {}
+        var onSelect: (UUID) -> Void = { _ in }
+
+        @objc func newConversation() { onCreate() }
+        @objc func selectConversation() {
+            guard ids.indices.contains(picker.indexOfSelectedItem) else { return }
+            onSelect(ids[picker.indexOfSelectedItem])
+        }
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
+    func makeNSView(context: Context) -> NSStackView {
+        let coordinator = context.coordinator
+        let picker = coordinator.picker
+        picker.menu = coordinator.menu
+        picker.controlSize = .small
+        picker.font = .preferredFont(forTextStyle: .caption1)
+        picker.cell?.lineBreakMode = .byTruncatingTail
+        picker.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        picker.identifier = NSUserInterfaceItemIdentifier("brain-conversation-picker")
+        picker.setAccessibilityLabel("Uložené konverzace")
+        picker.target = coordinator
+        picker.action = #selector(Coordinator.selectConversation)
+
+        let create = coordinator.create
+        create.image = NSImage(systemSymbolName: "square.and.pencil", accessibilityDescription: nil)
+        create.imagePosition = .imageOnly
+        create.bezelStyle = .rounded
+        create.controlSize = .small
+        create.keyEquivalent = "n"
+        create.keyEquivalentModifierMask = [.command, .option]
+        create.toolTip = "Nová konverzace bez dřívějšího kontextu (⌥⌘N)"
+        create.identifier = NSUserInterfaceItemIdentifier("brain-conversation-new")
+        create.setAccessibilityLabel("Nová konverzace")
+        create.setContentHuggingPriority(.required, for: .horizontal)
+        create.target = coordinator
+        create.action = #selector(Coordinator.newConversation)
+
+        let stack = NSStackView(views: [picker, create])
+        stack.orientation = .horizontal
+        stack.spacing = 8
+        return stack
+    }
+
+    func updateNSView(_ stack: NSStackView, context: Context) {
+        let coordinator = context.coordinator
+        coordinator.ids = conversations.map(\.id)
+        coordinator.onCreate = onCreate
+        coordinator.onSelect = onSelect
+        let titles = conversations.enumerated().map { index, conversation in
+            guard let question = conversation.turns.first?.question else { return "Nová konverzace \(index + 1)" }
+            let title = question.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+            return title.count > 80 ? String(title.prefix(80)) + "…" : title
+        }
+        if coordinator.picker.itemTitles != titles {
+            coordinator.menu.removeAllItems()
+            // NSPopUpButton's title-based insertion removes duplicate titles.
+            for title in titles {
+                coordinator.menu.addItem(NSMenuItem(title: title, action: nil, keyEquivalent: ""))
+            }
+        }
+        if let index = coordinator.ids.firstIndex(of: selectedID) {
+            coordinator.picker.selectItem(at: index)
+            coordinator.picker.toolTip = conversations[index].turns.first?.question ?? titles[index]
+        }
+        coordinator.picker.isEnabled = isEnabled
+        coordinator.create.isEnabled = isEnabled
     }
 }
 
