@@ -48,7 +48,6 @@ public final class CopilotACPConnection: ACPConnection, @unchecked Sendable {
             "--allow-all",
             "--no-ask-user",
             "--disable-builtin-mcps",
-            "--disable-mcp-server", "workiq-mail",
             "--no-custom-instructions",
             "--disable-client-telemetry",
             "--no-auto-update",
