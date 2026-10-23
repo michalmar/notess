@@ -664,6 +664,343 @@ struct AppModelBrainConversationHistoryTests {
         return model
     }
 
+    @Test("new conversations have fresh context and all histories and the selection survive a restart")
+    func multipleConversations() async throws {
+        let fixture = try Fixture()
+        let connections = Connections()
+        let model = try await finishedConversation(fixture, connections: connections)
+        let first = model.brainConversation.conversation
+
+        #expect(model.createBrainConversation())
+        let secondID = model.brainConversation.conversation.id
+        #expect(secondID != first.id)
+        #expect(model.brainConversation.conversation.turns.isEmpty)
+        #expect(model.brainConversation.conversation.sessionID == nil)
+        #expect(!model.brainConversation.conversation.sessionHasInstructions)
+        #expect(model.brainConversation.conversations.count == 2)
+        try await eventually { !model.isAgentOperationActive }
+        #expect(model.askBrainConversation("Unrelated?"))
+        try await eventually { connections.made.count == 2 && connections.last.isPrompting }
+        #expect(connections.last.resumedSessions.isEmpty)
+        #expect(connections.last.prompts == [[BrainConversationInstructions.text, "Unrelated?"]])
+        connections.last.send(.event(.answerChunk("Separate answer.")))
+        connections.last.send(.finish(.endTurn))
+        try await eventually { !model.isAgentOperationActive }
+        let secondSession = try #require(model.brainConversation.conversation.sessionID)
+        #expect(secondSession != first.sessionID)
+
+        #expect(model.selectBrainConversation(first.id))
+        #expect(model.brainConversation.conversation == first)
+        try await eventually { !model.isAgentOperationActive }
+
+        let resumed = Connections()
+        let reopened = fixture.makeModel(connections: resumed)
+        #expect(reopened.brainConversation.conversation == first)
+        #expect(reopened.brainConversation.conversations.count == 2)
+        #expect(reopened.askBrainConversation("Follow up?"))
+        try await eventually { resumed.made.first?.isPrompting == true }
+        #expect(resumed.last.resumedSessions == [first.sessionID!])
+        #expect(resumed.last.prompts == [["Follow up?"]])
+        resumed.last.send(.event(.answerChunk("Still Alice.")))
+        resumed.last.send(.finish(.endTurn))
+        try await eventually { !reopened.isAgentOperationActive }
+
+        #expect(reopened.selectBrainConversation(secondID))
+        #expect(reopened.brainConversation.conversation.turns.map(\.question) == ["Unrelated?"])
+        #expect(reopened.brainConversation.conversation.turns.map(\.answer) == ["Separate answer."])
+        #expect(reopened.brainConversation.conversation.sessionID == secondSession)
+        try await eventually { !reopened.isAgentOperationActive }
+        #expect(reopened.askBrainConversation("Continue unrelated?"))
+        try await eventually { resumed.made.count == 2 && resumed.last.isPrompting }
+        #expect(resumed.last.resumedSessions == [secondSession])
+        #expect(resumed.last.prompts == [["Continue unrelated?"]])
+        resumed.last.send(.finish(.endTurn))
+        try await eventually { !reopened.isAgentOperationActive }
+
+        let again = fixture.makeModel(connections: Connections())
+        #expect(again.brainConversation.conversation.id == secondID)
+        #expect(again.brainConversation.conversations.map { $0.turns.count } == [2, 2])
+    }
+
+    @Test("switching during work routes output and Stop to the owning conversation and excludes work through cleanup")
+    func switchDuringTurn() async throws {
+        let fixture = try Fixture()
+        let connections = Connections()
+        let runner = HoldingRunner()
+        let model = fixture.makeModel(connections: connections, runner: runner)
+        let firstID = model.brainConversation.conversation.id
+        model.askBrainConversation("First?")
+        try await eventually { connections.made.first?.isPrompting == true }
+        connections.last.send(.finish(.endTurn))
+        try await eventually { !model.isAgentOperationActive }
+        model.createBrainConversation()
+        let secondID = model.brainConversation.conversation.id
+        try await eventually { !model.isAgentOperationActive }
+        connections.holdsClose = true
+        model.askBrainConversation("Running?")
+        try await eventually { connections.made.count == 2 && connections.last.isPrompting }
+        let active = connections.last
+
+        #expect(model.selectBrainConversation(firstID))
+        #expect(model.brainConversation.conversation.id == firstID)
+        #expect(model.brainConversation.isTurnActive)
+        active.send(.event(.answerChunk("Owned answer.")))
+        active.send(.event(.toolCall(id: "b", title: "Read for second", kind: "read", status: .completed)))
+        try await eventually {
+            model.brainConversation.conversations.first { $0.id == secondID }?.turns.last?.answer == "Owned answer."
+        }
+        #expect(model.brainConversation.conversation.turns.map(\.question) == ["First?"])
+        #expect(model.createBrainConversation())
+        let thirdID = model.brainConversation.conversation.id
+        #expect(model.brainConversation.conversation.turns.isEmpty)
+        #expect(model.brainConversation.conversation.sessionID == nil)
+        #expect(!model.askBrainConversation("Concurrent?"))
+        model.startBrainRun()
+        #expect(runner.launchCount == 0)
+        #expect(connections.made.count == 2)
+
+        model.stopBrainConversationTurn()
+        try await eventually { active.closeCount >= 1 }
+        #expect(model.isAgentOperationActive)
+        #expect(!model.askBrainConversation("During cleanup?"))
+        model.startBrainRun()
+        #expect(runner.launchCount == 0)
+        active.releaseClose()
+        try await eventually { !model.isAgentOperationActive }
+        active.sendLate(.answerChunk(" Late."))
+        await drainMainQueue()
+        #expect(model.brainConversation.conversation.id == thirdID)
+        #expect(model.brainConversation.conversation.turns.isEmpty)
+        let stopped = try #require(model.brainConversation.conversations.first { $0.id == secondID }?.turns.last)
+        #expect(stopped.answer == "Owned answer.")
+        #expect(stopped.state == .incomplete(reason: nil))
+        #expect(stopped.activity.contains { $0.title == "Read for second" })
+        #expect(try fixture.store.lastSuccessfulRun(for: fixture.vault) == nil)
+
+        let reopened = fixture.makeModel(connections: Connections())
+        #expect(reopened.brainConversation.conversation.id == thirdID)
+        #expect(reopened.brainConversation.conversations.count == 3)
+        #expect(reopened.selectBrainConversation(secondID))
+        #expect(reopened.brainConversation.conversation.turns.last == stopped)
+    }
+
+    @Test("selection before a turn starts cannot retarget its session, and returning during streaming keeps its context")
+    func switchBeforeLaunch() async throws {
+        let fixture = try Fixture()
+        let connections = Connections()
+        let model = try await finishedConversation(fixture, connections: connections)
+        let first = model.brainConversation.conversation
+        #expect(model.createBrainConversation())
+        let secondID = model.brainConversation.conversation.id
+        try await eventually { !model.isAgentOperationActive }
+
+        #expect(model.askBrainConversation("Brand new?"))
+        #expect(model.selectBrainConversation(first.id))
+        try await eventually { connections.made.count == 2 && connections.last.isPrompting }
+        #expect(connections.last.resumedSessions.isEmpty)
+        #expect(connections.last.prompts == [[BrainConversationInstructions.text, "Brand new?"]])
+        connections.last.send(.event(.answerChunk("Second only.")))
+        try await eventually {
+            model.brainConversation.conversations.first { $0.id == secondID }?.turns.last?.answer == "Second only."
+        }
+        #expect(model.brainConversation.conversation == first)
+        #expect(model.selectBrainConversation(secondID))
+        connections.last.send(.finish(.endTurn))
+        try await eventually { !model.isAgentOperationActive }
+        let secondSession = model.brainConversation.conversation.sessionID
+        #expect(model.brainConversation.conversation.turns.map(\.answer) == ["Second only."])
+        #expect(secondSession != first.sessionID)
+
+        #expect(model.askBrainConversation("Same context?"))
+        try await eventually { connections.last.prompts.count == 2 }
+        #expect(connections.last.prompts.last == ["Same context?"])
+        #expect(model.brainConversation.conversation.sessionID == secondSession)
+        connections.last.send(.finish(.endTurn))
+        try await eventually { !model.isAgentOperationActive }
+    }
+
+    @Test("idle session cleanup and Brain Run exclude all conversations while saved history and note editing remain available")
+    func selectionAndBrainRun() async throws {
+        let fixture = try Fixture()
+        let connections = Connections()
+        let runner = HoldingRunner()
+        let model = fixture.makeModel(connections: connections, runner: runner)
+        model.askBrainConversation("First?")
+        try await eventually { connections.made.first?.isPrompting == true }
+        connections.last.send(.finish(.endTurn))
+        try await eventually { !model.isAgentOperationActive }
+        let firstID = model.brainConversation.conversation.id
+        let idle = connections.last
+        idle.holdClose()
+        #expect(model.createBrainConversation())
+        try await eventually { idle.closeCount >= 1 }
+        #expect(model.brainConversation.isConnectionClosing)
+        #expect(!model.askBrainConversation("Too soon?"))
+        model.startBrainRun()
+        #expect(runner.launchCount == 0)
+        #expect(model.selectBrainConversation(firstID))
+        #expect(model.brainConversation.conversation.turns.first?.question == "First?")
+        let note = try #require(model.openExistingNote(relativePath: "Plan.md"))
+        note.text += "Local draft."
+        #expect(note.hasUnsavedChanges)
+        idle.releaseClose()
+        try await eventually { !model.isAgentOperationActive && !model.brainConversation.isConnectionClosing }
+
+        model.startBrainRun()
+        try await eventually { runner.launchCount == 1 }
+        #expect(model.createBrainConversation())
+        #expect(!model.askBrainConversation("During Brain Run?"))
+        #expect(model.brainConversation.refusal?.contains("Brain Run") == true)
+        #expect(model.selectBrainConversation(firstID))
+        #expect(!model.askBrainConversation("Still running?"))
+        #expect(model.brainConversation.conversation.turns.count == 1)
+        #expect(note.text.hasSuffix("Local draft."))
+        #expect(try String(contentsOf: note.fileURL, encoding: .utf8) == "# Plan\n")
+        model.cancelBrainRun()
+        try await eventually { !model.isAgentOperationActive }
+        #expect(try fixture.store.lastSuccessfulRun(for: fixture.vault) == nil)
+    }
+
+    @Test("multiple conversations stay in their Vault even when the streaming conversation is not selected on leaving")
+    func multipleVaultIsolation() async throws {
+        let fixture = try Fixture()
+        let connections = Connections()
+        let model = try await finishedConversation(fixture, connections: connections)
+        let first = model.brainConversation.conversation
+        model.createBrainConversation()
+        let secondID = model.brainConversation.conversation.id
+        try await eventually { !model.isAgentOperationActive }
+        connections.holdsClose = true
+        model.askBrainConversation("Private second?")
+        try await eventually { connections.made.count == 2 && connections.last.isPrompting }
+        let active = connections.last
+        active.send(.event(.answerChunk("Second Vault-specific answer.")))
+        try await eventually { model.brainConversation.conversation.turns.last?.answer == "Second Vault-specific answer." }
+        model.selectBrainConversation(first.id)
+        model.chooseVault(at: fixture.otherURL)
+        try await eventually { active.closeCount >= 1 }
+        active.sendLate(.answerChunk("Never cross Vaults."))
+        await drainMainQueue()
+        #expect(model.brainConversation.conversations.count == 1)
+        #expect(model.brainConversation.conversation.turns.isEmpty)
+        #expect(model.brainConversation.conversation.sessionID == nil)
+        #expect(model.brainConversation.resumeFailure == nil)
+        active.releaseClose()
+        try await eventually { !model.isAgentOperationActive }
+
+        connections.holdsClose = false
+        model.askBrainConversation("Other Vault?")
+        try await eventually { connections.made.count == 3 && connections.last.isPrompting }
+        #expect(connections.last.resumedSessions.isEmpty)
+        #expect(connections.last.vault == Vault(rootURL: fixture.otherURL))
+        connections.last.send(.event(.answerChunk("Other only.")))
+        connections.last.send(.finish(.endTurn))
+        try await eventually { !model.isAgentOperationActive }
+        let other = model.brainConversation.conversation
+
+        model.chooseVault(at: fixture.rootURL)
+        try await eventually { !model.isAgentOperationActive }
+        #expect(model.brainConversation.conversation == first)
+        #expect(model.brainConversation.conversations.count == 2)
+        #expect(model.selectBrainConversation(secondID))
+        #expect(model.brainConversation.conversation.turns.map(\.answer) == ["Second Vault-specific answer."])
+        #expect(model.brainConversation.conversation.turns.last?.state == .incomplete(reason: nil))
+        model.chooseVault(at: fixture.otherURL)
+        #expect(model.brainConversation.conversations == [other])
+    }
+
+    @Test("legacy v1 single-conversation history stays selectable and continues its own session without replaying prompts")
+    func legacyHistory() async throws {
+        let fixture = try Fixture()
+        let id = UUID()
+        try FileManager.default.createDirectory(at: fixture.conversationStoreURL, withIntermediateDirectories: true)
+        try """
+        {
+          "version": 1, "vaultPath": "\(fixture.vault.rootURL.path(percentEncoded: false))",
+          "currentConversationID": "\(id.uuidString)",
+          "conversations": [{
+            "id": "\(id.uuidString)", "updatedAt": "2025-10-18T05:00:00Z",
+            "acpSessionID": "legacy-session", "sessionHasInstructions": true,
+            "turns": [{
+              "id": "\(UUID().uuidString)", "question": "Legacy question?", "answer": "Legacy answer.",
+              "state": {"kind": "completed"}, "startedAt": "2025-10-18T05:00:00Z",
+              "activity": [{"id": "old", "title": "Legacy read", "kind": "tool", "status": "completed"}]
+            }]
+          }]
+        }
+        """.write(to: fixture.conversationStore.fileURL(for: fixture.vault), atomically: true, encoding: .utf8)
+        let model = fixture.makeModel(connections: Connections())
+        #expect(model.brainConversation.conversation.id == id)
+        #expect(model.createBrainConversation())
+        let connections = Connections()
+        let reopened = fixture.makeModel(connections: connections)
+        #expect(reopened.brainConversation.conversations.count == 2)
+        #expect(reopened.selectBrainConversation(id))
+        #expect(reopened.brainConversation.conversation.turns.map(\.answer) == ["Legacy answer."])
+        #expect(reopened.brainConversation.conversation.turns[0].activity.first?.title == "Legacy read")
+        #expect(reopened.askBrainConversation("Legacy follow-up?"))
+        try await eventually { connections.made.first?.isPrompting == true }
+        #expect(connections.last.resumedSessions == ["legacy-session"])
+        #expect(connections.last.prompts == [["Legacy follow-up?"]])
+        connections.last.send(.finish(.endTurn))
+        try await eventually { !reopened.isAgentOperationActive }
+        #expect(reopened.brainConversation.conversation.turns.count == 2)
+    }
+
+    @Test("resume failures and explicit context recovery belong only to the selected conversation")
+    func scopedResumeFailure() async throws {
+        let fixture = try Fixture()
+        let original = try await finishedConversation(fixture, connections: Connections())
+        let first = original.brainConversation.conversation
+        let connections = Connections()
+        connections.resumeError = .sessionUnavailable("missing first session")
+        let model = fixture.makeModel(connections: connections)
+        model.askBrainConversation("Follow up?")
+        try await eventually { !model.isAgentOperationActive }
+        #expect(model.brainConversation.resumeFailure != nil)
+        model.createBrainConversation()
+        let secondID = model.brainConversation.conversation.id
+        #expect(model.brainConversation.resumeFailure == nil)
+        model.askBrainConversation("Unrelated?")
+        try await eventually { connections.made.count == 2 && connections.last.isPrompting }
+        connections.last.send(.finish(.endTurn))
+        try await eventually { !model.isAgentOperationActive }
+        let second = model.brainConversation.conversation
+        model.selectBrainConversation(first.id)
+        #expect(model.brainConversation.resumeFailure != nil)
+        model.continueBrainConversationWithoutContext()
+        #expect(model.brainConversation.conversation.sessionID == nil)
+        #expect(model.brainConversation.conversation.turns.first == first.turns.first)
+        #expect(model.selectBrainConversation(secondID))
+        #expect(model.brainConversation.conversation == second)
+        #expect(!model.brainConversation.contextWasDiscarded)
+        #expect(model.brainConversation.resumeFailure == nil)
+        try await eventually { !model.isAgentOperationActive }
+    }
+
+    @Test("late events from an ended turn cannot restore a discarded session when returning to its conversation")
+    func lateEventsDoNotRestoreContext() async throws {
+        let fixture = try Fixture()
+        let connections = Connections()
+        let model = try await finishedConversation(fixture, connections: connections)
+        let firstID = model.brainConversation.conversation.id
+        let ended = connections.last
+        model.createBrainConversation()
+        try await eventually { !model.isAgentOperationActive }
+        model.selectBrainConversation(firstID)
+        connections.resumeError = .sessionUnavailable("missing session")
+        model.askBrainConversation("Failed resume?")
+        try await eventually { !model.isAgentOperationActive }
+        model.continueBrainConversationWithoutContext()
+        #expect(model.brainConversation.conversation.sessionID == nil)
+        let transcript = model.brainConversation.conversation.turns
+        ended.sendLate(.answerChunk("Late old session."))
+        await drainMainQueue()
+        #expect(model.brainConversation.conversation.sessionID == nil)
+        #expect(!model.brainConversation.conversation.sessionHasInstructions)
+        #expect(model.brainConversation.conversation.turns == transcript)
+    }
+
     @Test("a new app run shows the saved transcript and activity of the Vault")
     func reopenShowsHistory() async throws {
         let fixture = try Fixture()

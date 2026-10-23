@@ -9,6 +9,69 @@ import Testing
 @MainActor
 @Suite("Brain Conversation panel", .serialized, .tags(.hostedUI), .enabled(if: ProcessInfo.processInfo.environment["NOTESS_HOSTED_UI"] == "1"))
 struct BrainConversationPanelTests {
+    @Test("native creation and selection focus the question field and keep unsent drafts in their own conversation")
+    func conversationSelector() async throws {
+        let fixture = try PanelFixture()
+        let harness = try await fixture.makeHarness()
+        let editor = try #require(harness.editor)
+        let original = editor.string
+        harness.model.isBrainConversationPresented = true
+        try await harness.waitUntil { harness.focusedInput != nil && harness.conversationPicker != nil }
+        let firstID = harness.model.brainConversation.conversation.id
+        harness.type("First draft")
+        await harness.settle()
+        let create = try #require(harness.newConversationButton)
+        create.performClick(nil)
+        try await harness.waitUntil {
+            harness.model.brainConversation.conversation.id != firstID && harness.focusedInput?.stringValue == ""
+        }
+        let secondID = harness.model.brainConversation.conversation.id
+        #expect(harness.model.brainConversation.conversation.sessionID == nil)
+        harness.type("Separate draft")
+        await harness.settle()
+        let picker = try #require(harness.conversationPicker)
+        #expect(picker.numberOfItems == 2)
+        picker.selectItem(at: 0)
+        try #require(picker.sendAction(picker.action, to: picker.target))
+        try await harness.waitUntil {
+            harness.model.brainConversation.conversation.id == firstID && harness.focusedInput?.stringValue == "First draft"
+        }
+        picker.selectItem(at: 1)
+        try #require(picker.sendAction(picker.action, to: picker.target))
+        try await harness.waitUntil {
+            harness.model.brainConversation.conversation.id == secondID && harness.focusedInput?.stringValue == "Separate draft"
+        }
+        #expect(harness.connections.made.isEmpty)
+        #expect(editor.string == original)
+        #expect(harness.model.isBrainConversationPresented)
+    }
+
+    @Test("selection stays available during work while Stop remains bound to the running conversation")
+    func selectorDuringWork() async throws {
+        let fixture = try PanelFixture()
+        let harness = try await fixture.makeHarness()
+        harness.model.isBrainConversationPresented = true
+        try await harness.waitUntil { harness.focusedInput != nil }
+        let firstID = harness.model.brainConversation.conversation.id
+        harness.model.askBrainConversation("Running?")
+        try await harness.waitUntil { harness.connections.made.first?.isPrompting == true }
+        harness.connections.last.send(.event(.answerChunk("Partial")))
+        try await harness.waitUntil { harness.model.brainConversation.conversation.turns.first?.answer == "Partial" }
+        let create = try #require(harness.newConversationButton)
+        #expect(create.isEnabled)
+        create.performClick(nil)
+        try await harness.waitUntil { harness.model.brainConversation.conversation.id != firstID }
+        #expect(harness.conversationPicker?.isEnabled == true)
+        #expect(harness.control(draft: "Q") == .stop(isEnabled: true))
+        #expect(harness.model.brainConversation.conversation.turns.isEmpty)
+        harness.model.stopBrainConversationTurn()
+        try await harness.waitUntil { !harness.model.isAgentOperationActive }
+        #expect(harness.control(draft: "Q") == .send(isEnabled: true))
+        let first = try #require(harness.model.brainConversation.conversations.first { $0.id == firstID })
+        #expect(first.turns.first?.state == .incomplete(reason: nil))
+        #expect(first.turns.first?.answer == "Partial")
+    }
+
     @Test("clicking rendered sources keeps the panel and dirty editor text, even when the note is missing on disk", arguments: [false, true])
     func sourceClicks(deleted: Bool) async throws {
         let fixture = try PanelFixture()
@@ -221,6 +284,16 @@ private final class PanelHarness {
             .first { $0.identifier?.rawValue == "brain-source:\(url.absoluteString)" }
     }
 
+    var newConversationButton: NSButton? {
+        subviews(of: hostingView).compactMap { $0 as? NSButton }
+            .first { $0.identifier?.rawValue == "brain-conversation-new" }
+    }
+
+    var conversationPicker: NSPopUpButton? {
+        subviews(of: hostingView).compactMap { $0 as? NSPopUpButton }
+            .first { $0.identifier?.rawValue == "brain-conversation-picker" }
+    }
+
     /// The question field, when it holds keyboard focus.
     var focusedInput: NSTextField? {
         guard let fieldEditor = window.firstResponder as? NSTextView, fieldEditor.isFieldEditor,
@@ -232,7 +305,9 @@ private final class PanelHarness {
 
     func control(draft: String) -> BrainConversationPanel.Control {
         BrainConversationPanel.control(
-            for: model.brainConversation.conversation, isBrainRunActive: model.isBrainRunActive, draft: draft
+            for: model.brainConversation.activeConversation ?? model.brainConversation.conversation,
+            isBrainRunActive: model.isBrainRunActive, draft: draft,
+            isConnectionClosing: model.brainConversation.isConnectionClosing
         )
     }
 

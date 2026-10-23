@@ -11,17 +11,34 @@ extension CopilotACPConnection {
     }
 }
 
-/// The open Vault's Brain Conversation. Kept apart from `AppModel` so a streaming
+/// The open Vault's Brain Conversations. Kept apart from `AppModel` so a streaming
 /// answer re-renders only the panel, never the editor.
 @MainActor
 @Observable
 final class BrainConversationState {
-    var conversation = BrainConversation() {
+    var conversations = [BrainConversation()] {
         didSet {
-            let active = conversation.activeTurn != nil
+            let active = conversations.contains { $0.activeTurn != nil }
             if active != isTurnActive { isTurnActive = active }
         }
     }
+    var selectedIndex = 0
+    var conversation: BrainConversation {
+        get { conversations[selectedIndex] }
+        set { conversations[selectedIndex] = newValue }
+    }
+    var activeConversation: BrainConversation? { conversations.first { $0.activeTurn != nil } }
+
+    func updateConversation(_ id: UUID, _ change: (inout BrainConversation) -> Void) {
+        guard let index = conversations.firstIndex(where: { $0.id == id }) else { return }
+        change(&conversations[index])
+    }
+
+    /// Explicitly created empty conversations and their selection also survive restart.
+    var hasSavedHistory = false
+    /// Closing an idle Agent still owns the shared operation boundary.
+    var connectionCleanups = 0
+    var isConnectionClosing: Bool { connectionCleanups > 0 }
 
     /// Whether a turn is running or stopping; changes only when a turn starts or ends.
     private(set) var isTurnActive = false
@@ -34,12 +51,53 @@ final class BrainConversationState {
     var persistenceFailure: String?
     /// Why the saved Agent session could not be loaded. The history stays; the Agent has
     /// no context for it until the user continues without it on purpose.
-    var resumeFailure: String?
+    var resumeFailures: [UUID: String] = [:]
+    var resumeFailure: String? {
+        get { resumeFailures[conversation.id] }
+        set { resumeFailures[conversation.id] = newValue }
+    }
     /// The user chose to continue without the earlier Agent context; the next turn says so.
-    var contextWasDiscarded = false
+    var discardedContexts: Set<UUID> = []
+    var contextWasDiscarded: Bool {
+        get { discardedContexts.contains(conversation.id) }
+        set {
+            if newValue { discardedContexts.insert(conversation.id) }
+            else { discardedContexts.remove(conversation.id) }
+        }
+    }
 }
 
 extension AppModel {
+    /// Starts an unrelated conversation without inheriting an Agent session or transcript.
+    @discardableResult
+    func createBrainConversation() -> Bool {
+        let state = brainConversation
+        guard vault != nil, state.historyFailure == nil else { return false }
+        if !state.isTurnActive { closeKeptBrainConversationConnection() }
+        let conversation = BrainConversation()
+        state.conversations.append(conversation)
+        state.selectedIndex = state.conversations.count - 1
+        state.hasSavedHistory = true
+        state.refusal = nil
+        persistBrainConversation()
+        return true
+    }
+
+    /// Selects saved history without starting an Agent operation.
+    @discardableResult
+    func selectBrainConversation(_ id: UUID) -> Bool {
+        let state = brainConversation
+        guard state.historyFailure == nil,
+              let index = state.conversations.firstIndex(where: { $0.id == id })
+        else { return false }
+        guard index != state.selectedIndex else { return true }
+        if !state.isTurnActive { closeKeptBrainConversationConnection() }
+        state.selectedIndex = index
+        state.refusal = nil
+        persistBrainConversation()
+        return true
+    }
+
     /// "Zeptat se": sends a question about the saved Vault, or a follow-up in the same
     /// conversation. Returns `false` when it was not sent; `brainConversation.refusal`
     /// then says why.
@@ -74,10 +132,12 @@ extension AppModel {
 
     /// "Zastavit": asks the Agent to stop the turn; it is marked incomplete once it ends.
     func stopBrainConversationTurn() {
-        guard let turn = brainConversation.conversation.activeTurn, turn.state == .running,
+        let state = brainConversation
+        guard let conversation = state.activeConversation,
+              let turn = conversation.activeTurn, turn.state == .running,
               let operation = brainConversationOperation
         else { return }
-        brainConversation.conversation.markStopping(turn.id)
+        state.updateConversation(conversation.id) { $0.markStopping(turn.id) }
         agentOperations.cancel(operation)
     }
 
@@ -89,20 +149,26 @@ extension AppModel {
         closeKeptBrainConversationConnection()
         brainConversationOperation = nil
         let state = brainConversation
-        state.conversation = BrainConversation()
+        state.selectedIndex = 0
+        state.conversations = [BrainConversation()]
+        state.hasSavedHistory = false
         state.refusal = nil
         state.historyFailure = nil
         state.persistenceFailure = nil
-        state.resumeFailure = nil
-        state.contextWasDiscarded = false
+        state.resumeFailures = [:]
+        state.discardedContexts = []
     }
 
     /// Shows the Vault's saved conversation. A turn that was running when Notess ended
     /// comes back incomplete; history that cannot be read is reported and left as it is.
     func restoreBrainConversation(for vault: Vault) {
         do {
-            if let conversation = try brainConversationStore.load(for: vault) {
-                brainConversation.conversation = conversation
+            if let history = try brainConversationStore.loadHistory(for: vault), !history.conversations.isEmpty {
+                brainConversation.conversations = history.conversations
+                brainConversation.selectedIndex = history.conversations.firstIndex {
+                    $0.id == history.currentConversationID
+                } ?? 0
+                brainConversation.hasSavedHistory = true
             }
         } catch {
             brainConversation.historyFailure = error.localizedDescription
@@ -144,9 +210,14 @@ extension AppModel {
         brainConversationCheckpoint?.cancel()
         brainConversationCheckpoint = nil
         let state = brainConversation
-        guard let vault, state.historyFailure == nil, state.conversation.hasContent else { return }
+        guard let vault, state.historyFailure == nil,
+              state.hasSavedHistory || state.conversations.contains(where: \.hasContent)
+        else { return }
         do {
-            try brainConversationStore.save(state.conversation, at: now(), for: vault)
+            try brainConversationStore.save(
+                state.conversations, currentConversationID: state.conversation.id, at: now(), for: vault
+            )
+            state.hasSavedHistory = true
             state.persistenceFailure = nil
         } catch {
             state.persistenceFailure = error.localizedDescription
@@ -168,14 +239,18 @@ extension AppModel {
     /// incomplete, and the history of the Vault being left is written before anything else.
     func persistBrainConversationBeforeLeaving() {
         let state = brainConversation
-        if let turn = state.conversation.activeTurn {
-            state.conversation.stop(turn.id, at: now())
+        if let conversation = state.activeConversation, let turn = conversation.activeTurn {
+            state.updateConversation(conversation.id) { $0.stop(turn.id, at: now()) }
         }
         brainConversationCheckpoint?.cancel()
         brainConversationCheckpoint = nil
-        guard let vault, state.historyFailure == nil, state.conversation.hasContent else { return }
+        guard let vault, state.historyFailure == nil,
+              state.hasSavedHistory || state.conversations.contains(where: \.hasContent)
+        else { return }
         do {
-            try brainConversationStore.save(state.conversation, at: now(), for: vault)
+            try brainConversationStore.save(
+                state.conversations, currentConversationID: state.conversation.id, at: now(), for: vault
+            )
         } catch {
             errorMessage = "Historii konverzace se nepodařilo uložit: \(error.localizedDescription)"
         }
@@ -193,15 +268,22 @@ extension AppModel {
     private func closeKeptBrainConversationConnection() {
         guard let connection = brainConversationConnection, let vault else { return }
         brainConversationConnection = nil
+        brainConversationConnectionID = nil
+        let state = brainConversation
+        state.connectionCleanups += 1
         agentOperations.cleanUp(.conversationTurn, in: vault) {
             await connection.close()
+            state.connectionCleanups -= 1
         }
     }
 
     /// Closes `connection` and forgets it if it is still the kept Agent.
     private func closeBrainConversationConnection(_ connection: any ACPConnection) async {
         await connection.close()
-        if brainConversationConnection === connection { brainConversationConnection = nil }
+        if brainConversationConnection === connection {
+            brainConversationConnection = nil
+            brainConversationConnectionID = nil
+        }
     }
 
     /// Whether quitting must wait for an Agent process: an operation or an idle conversation.
@@ -217,13 +299,16 @@ extension AppModel {
         configuredPath: String?
     ) async {
         let state = brainConversation
+        guard let conversation = state.conversations.first(where: { $0.id == conversationID }) else { return }
         let now = self.now
         /// Changes the conversation only while this turn still reports to the user, then
         /// saves it: at once when the turn ended or `immediately`, else as a checkpoint.
         let report: @MainActor (_ immediately: Bool, _ change: (inout BrainConversation) -> Void) -> Void = { [weak self] immediately, change in
-            guard !operation.isStale, state.conversation.id == conversationID else { return }
-            change(&state.conversation)
-            if immediately || state.conversation.activeTurn == nil {
+            guard !operation.isStale,
+                  state.conversations.first(where: { $0.id == conversationID })?.activeTurn?.id == turnID
+            else { return }
+            state.updateConversation(conversationID, change)
+            if immediately || !state.isTurnActive {
                 self?.persistBrainConversation()
             } else {
                 self?.scheduleBrainConversationCheckpoint()
@@ -245,15 +330,16 @@ extension AppModel {
             return
         }
 
-        var connection = operation.isStale ? nil : brainConversationConnection
+        var connection = !operation.isStale && brainConversationConnectionID == conversationID
+            ? brainConversationConnection : nil
         if let existing = connection, !(await existing.isOpen()) {
             await closeBrainConversationConnection(existing)
             connection = nil
         }
         // A new Agent process continues the saved session when there is one; the sandbox
         // check and launch checks run again, exactly as for a new session.
-        let resumedSession = connection == nil ? state.conversation.sessionID : nil
-        let hasInstructions = connection != nil || resumedSession != nil && state.conversation.sessionHasInstructions
+        let resumedSession = connection == nil ? conversation.sessionID : nil
+        let hasInstructions = connection != nil || resumedSession != nil && conversation.sessionHasInstructions
         let active: any ACPConnection
         if let connection {
             active = connection
@@ -261,6 +347,7 @@ extension AppModel {
             guard !operation.isStale else { return }
             active = makeBrainConversationConnection(operation.vault, executable)
             brainConversationConnection = active
+            brainConversationConnectionID = conversationID
             report(false) {
                 $0.note(
                     resumedSession == nil
@@ -277,17 +364,17 @@ extension AppModel {
                     report(true) { $0.stop(turnID, at: now()) }
                 } else {
                     if resumedSession != nil, !operation.isStale, Self.isSessionLoadFailure(error) {
-                        state.resumeFailure = Self.message(for: error)
+                        state.resumeFailures[conversationID] = Self.message(for: error)
                     }
                     report(true) { $0.fail(turnID, message: Self.message(for: error), at: now()) }
                 }
                 return
             }
-            if !operation.isStale { state.resumeFailure = nil }
+            if !operation.isStale { state.resumeFailures[conversationID] = nil }
             if resumedSession != nil {
                 report(false) { $0.note("Pokračuji v uložené relaci Agenta.", in: turnID) }
-            } else if state.contextWasDiscarded, !operation.isStale {
-                state.contextWasDiscarded = false
+            } else if state.discardedContexts.contains(conversationID), !operation.isStale {
+                state.discardedContexts.remove(conversationID)
                 report(false) { $0.note("Nová relace Agenta bez kontextu dřívějších zpráv.", in: turnID) }
             }
         }
@@ -317,7 +404,7 @@ extension AppModel {
         }
 
         let stillOpen = await active.isOpen()
-        if operation.isStale || !stillOpen || result.isFailure {
+        if operation.isStale || state.conversation.id != conversationID || !stillOpen || result.isFailure {
             await closeBrainConversationConnection(active)
         }
         switch result {

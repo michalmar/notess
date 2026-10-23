@@ -34,9 +34,7 @@ public enum BrainConversationStoreError: Error, Equatable, Sendable, LocalizedEr
 /// `~/Library/Application Support/Notess/BrainConversations/<hash of the Vault path>.json`,
 /// independently of the Brain Run success record (`BrainRunStateStore`).
 ///
-/// The file is versioned and holds a list of conversations with the id of the current
-/// one, so several conversations per Vault need no new format; today exactly one is
-/// read and written. Unknown fields are ignored on read.
+/// The v1 file holds all conversations and the selected id. Unknown fields are ignored.
 public struct BrainConversationStore: Sendable {
     public static let currentVersion = 1
 
@@ -52,29 +50,50 @@ public struct BrainConversationStore: Sendable {
         return support.appending(path: "Notess/BrainConversations", directoryHint: .isDirectory)
     }
 
-    /// The Vault's conversation as stored, or `nil` when none was saved. Turns that were
-    /// still running when it was saved come back incomplete and interrupted.
-    public func load(for vault: Vault) throws(BrainConversationStoreError) -> BrainConversation? {
+    public struct History: Sendable {
+        public let conversations: [BrainConversation]
+        public let currentConversationID: UUID?
+    }
+
+    /// All of the Vault's saved conversations, with interrupted turns marked incomplete.
+    public func loadHistory(for vault: Vault) throws(BrainConversationStoreError) -> History? {
         guard let file = try readFile(for: vault) else { return nil }
-        let records = file.conversations
-        let record = records.first { $0.id == file.currentConversationID } ?? records.first
-        guard let record else { return nil }
-        var conversation = record.conversation()
-        conversation.interruptActiveTurn(at: record.updatedAt)
-        return conversation
+        let conversations = file.conversations.map { record in
+            var conversation = record.conversation()
+            conversation.interruptActiveTurn(at: record.updatedAt)
+            return conversation
+        }
+        let selected = conversations.first { $0.id == file.currentConversationID } ?? conversations.first
+        return History(conversations: conversations, currentConversationID: selected?.id)
+    }
+
+    /// The selected conversation, or `nil` when none was saved.
+    public func load(for vault: Vault) throws(BrainConversationStoreError) -> BrainConversation? {
+        guard let history = try loadHistory(for: vault) else { return nil }
+        return history.conversations.first { $0.id == history.currentConversationID }
     }
 
     /// Saves `conversation` as the Vault's current one, keeping any other conversations
     /// already in the file. Refuses to overwrite a file it cannot read.
     public func save(_ conversation: BrainConversation, at date: Date, for vault: Vault) throws(BrainConversationStoreError) {
+        try save([conversation], currentConversationID: conversation.id, at: date, for: vault)
+    }
+
+    /// Saves the loaded histories and selection together, retaining any other records.
+    /// Refuses to overwrite unreadable history, just like saving one conversation.
+    public func save(
+        _ conversations: [BrainConversation], currentConversationID: UUID, at date: Date, for vault: Vault
+    ) throws(BrainConversationStoreError) {
         var file = try readFile(for: vault) ?? StoredFile(vaultPath: Self.path(of: vault))
-        let record = StoredConversation(conversation, updatedAt: date)
-        if let index = file.conversations.firstIndex(where: { $0.id == record.id }) {
-            file.conversations[index] = record
-        } else {
-            file.conversations.append(record)
+        for conversation in conversations {
+            let record = StoredConversation(conversation, updatedAt: date)
+            if let index = file.conversations.firstIndex(where: { $0.id == record.id }) {
+                file.conversations[index] = record
+            } else {
+                file.conversations.append(record)
+            }
         }
-        file.currentConversationID = record.id
+        file.currentConversationID = currentConversationID
         file.version = Self.currentVersion
 
         let url = fileURL(for: vault)

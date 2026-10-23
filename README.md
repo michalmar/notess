@@ -89,6 +89,12 @@ scripts/          App bundle and preview DMG packaging, native app icon generato
 
 Dependencies point inwards: `Notess` → `NotessEditor` → `NotessCore`. `NotessCore` must not import AppKit or SwiftUI so it stays fast to test; Markdown parsing (formatting, Tags, wiki-links) lives there so search and backlinks can reuse it, while `NotessEditor` only turns tokens into fonts and colours.
 
+## Saved Brain Conversations
+
+The panel's **Uložené konverzace** selector shows conversations saved for the open Vault, labelled by their first question (empty ones are numbered). **Nová konverzace** beside it (**Option+Cmd+N**, while the panel is open) starts an unrelated exchange: no earlier transcript, prompt or ACP session is inherited. Each conversation keeps its own history, activity and Agent session; selecting it shows its history, and the next question continues that session. The selection and all conversations, even deliberately created empty ones, survive restart in the existing v1 history outside the Vault. Existing single-conversation history stays accessible without migration or reset. Only the open Vault's conversations are shown.
+
+You can create or select conversations while a turn is running to view other history. The turn continues in its original conversation; the panel offers **Zpět k probíhající konverzaci**, and **Zastavit** still stops that turn and marks its output incomplete. No second question or Brain Run starts until the Agent and any cleanup finish. Switching between idle conversations also waits for the previous Agent to close before another operation can start; continuation then loads the selected conversation's own session. Notes remain editable. Draft questions stay separate while the panel is open, are never carried into a new conversation, and are not saved or sent on selection. Creation and selection focus the question field. Deletion, cross-device sync and conversion into notes are not provided.
+
 ## Brain Conversation evidence
 
 Answers are instructed to attach concrete support, distinguishing **Brain Notes**, **original notes** (saved Daily Entries and Free Notes) and **external sources**. If original notes fill a gap, the final answer must disclose that fallback; insufficient or conflicting evidence must be acknowledged, not turned into an established conclusion. These are Agent instructions, not proof that a generated claim is true. Answer evidence links do not change the glossary's **Citation**, which still connects a fact in a Brain Note to its original Section.
