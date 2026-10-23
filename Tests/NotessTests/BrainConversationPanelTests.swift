@@ -7,7 +7,7 @@ import Testing
 @testable import NotessEditor
 
 @MainActor
-@Suite("Brain Conversation panel", .serialized)
+@Suite("Brain Conversation panel", .serialized, .tags(.hostedUI), .enabled(if: ProcessInfo.processInfo.environment["NOTESS_HOSTED_UI"] == "1"))
 struct BrainConversationPanelTests {
     @Test("the panel opens beside the note editor, which stays visible")
     func besideEditor() async throws {
