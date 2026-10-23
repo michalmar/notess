@@ -37,79 +37,79 @@ extension AppModel {
         brainRunPhase == .running || brainRunPhase == .cancelling
     }
 
+    /// Whether any Agent operation owns the Vault, including one cleaning up after a cancel or a Vault change.
+    var isAgentOperationActive: Bool {
+        agentOperations.isOccupied
+    }
+
     /// "Zpracovat": lets the Agent process the notes changed since the last
     /// successful Brain Run, in the background.
     func startBrainRun() {
-        guard let vault, !isBrainRunActive else { return }
-        let id = UUID()
-        brainRunID = id
+        guard let vault, !isBrainRunActive, !agentOperations.isOccupied else { return }
         brainRunPhase = .running
         brainRunLog.reset("Brain Run \(Date().formatted(date: .abbreviated, time: .standard))\n")
         let configuredPath = settings.copilotCLIPath
         let store = brainRunStateStore
+        let runner = brainRunProcessRunner
         let log = brainRunLog
-        brainRunTask = Task { [weak self] in
+        brainRunOperation = agentOperations.begin(.brainRun, in: vault) { [weak self] operation in
             let resolution = await Task.detached {
                 CopilotCLILocator().resolve(configuredPath: configuredPath)
             }.value
-            guard let self, self.brainRunID == id else { return }
+            guard let self, !operation.isStale else { return }
             guard case .found(let executable) = resolution else {
-                self.finishBrainRun(id: id, failure: Self.message(for: resolution), alert: true)
+                self.finishBrainRun(operation, failure: Self.message(for: resolution), alert: true)
                 return
             }
             if Task.isCancelled {
-                self.finishBrainRun(id: id, outcome: .cancelled)
+                self.finishBrainRun(operation, outcome: .cancelled)
                 return
             }
-            let run = BrainRun(vault: vault, executableURL: executable, store: store)
+            let run = BrainRun(vault: vault, executableURL: executable, store: store, runner: runner)
             self.brainRun = run
             log.append("Copilot CLI: \(executable.path(percentEncoded: false))\n")
             // Not isolated to the main actor: the run reads the Vault and waits for the CLI elsewhere.
             let outcome = await run.run(log: { chunk in
-                DispatchQueue.main.async { MainActor.assumeIsolated { log.append(chunk) } }
+                DispatchQueue.main.async {
+                    MainActor.assumeIsolated { if !operation.isStale { log.append(chunk) } }
+                }
             })
-            self.finishBrainRun(id: id, outcome: outcome)
+            self.finishBrainRun(operation, outcome: outcome)
         }
     }
 
     /// "Zrušit": terminates Copilot CLI; the run does not count as successful.
     func cancelBrainRun() {
-        guard brainRunPhase == .running, let task = brainRunTask else { return }
+        guard brainRunPhase == .running, let operation = brainRunOperation else { return }
         brainRunPhase = .cancelling
         brainRunLog.append("\nRuším…\n")
-        task.cancel()
+        agentOperations.cancel(operation)
     }
 
-    /// On quit: waits until the owned Copilot CLI process group is gone.
-    func terminateBrainRun() async {
-        let task = brainRunTask
-        let cleanupTask = brainRunCleanupTask
-        task?.cancel()
-        if let task { _ = await task.result }
-        if let cleanupTask { await cleanupTask.value }
+    /// On quit: waits until every owned Copilot CLI process group is gone.
+    func terminateAgentOperations() async {
+        await agentOperations.terminate()
     }
 
-    /// A new Vault starts with no run; a run of the previous Vault is cancelled and reports nothing.
+    /// A new Vault starts with no run; a run of the previous Vault is cancelled and reports
+    /// nothing, but keeps owning the Vault until its process group is gone.
     func resetBrainRun(for vault: Vault) {
-        let task = brainRunTask
-        task?.cancel()
-        brainRunTask = nil
+        let wasBrainRunOwner = brainRunOperation != nil || brainRunPhase == .cancelling
+        agentOperations.abandonCurrent()
+        brainRunOperation = nil
         brainRun = nil
-        brainRunID = UUID()
-        if let task {
-            let cleanupID = UUID()
-            brainRunCleanupID = cleanupID
+        agentCleanupWatcher?.cancel()
+        let cleanupID = UUID()
+        agentCleanupID = cleanupID
+        if agentOperations.isOccupied, wasBrainRunOwner {
             brainRunPhase = .cancelling
-            brainRunCleanupTask = Task { [weak self] in
-                _ = await task.result
-                guard let self, self.brainRunCleanupID == cleanupID else { return }
-                self.brainRunCleanupTask = nil
+            agentCleanupWatcher = Task { [weak self, agentOperations] in
+                await agentOperations.waitUntilIdle()
+                guard let self, self.agentCleanupID == cleanupID else { return }
                 if self.brainRunPhase == .cancelling {
                     self.brainRunPhase = .idle
                 }
             }
-        } else if brainRunCleanupTask != nil {
-            brainRunPhase = .cancelling
         } else {
             brainRunPhase = .idle
         }
@@ -142,7 +142,7 @@ extension AppModel {
     /// Outside changes during a run: if a file outside `_brain/` changed without
     /// the user saving it, stop the Agent at once; the run then fails with the list.
     func checkBrainRunBoundary(after change: VaultChange) {
-        guard let brainRun, brainRunPhase == .running,
+        guard let brainRun, let operation = brainRunOperation, brainRunPhase == .running,
               change.requiresFullRescan
                 || change.relativePaths.contains(where: { !VaultFileSnapshot.isInBrainFolder($0) })
         else { return }
@@ -152,14 +152,13 @@ extension AppModel {
         }
         isCheckingBrainRunBoundary = true
         needsBrainRunBoundaryRecheck = false
-        let id = brainRunID
         Task { [weak self] in
             let checked = await Task.detached {
                 Result { () throws(VaultSnapshotError) in try brainRun.changesOutsideBrain() }
             }.value
             guard let self else { return }
             self.isCheckingBrainRunBoundary = false
-            guard self.brainRunID == id, self.brainRunPhase == .running else { return }
+            guard !operation.isStale, self.brainRunPhase == .running else { return }
             switch checked {
             case .failure(let error):
                 self.stopBrainRun(unreadable: error)
@@ -182,41 +181,37 @@ extension AppModel {
         cancelBrainRun()
     }
 
-    private func finishBrainRun(id: UUID, outcome: BrainRunOutcome) {
+    private func finishBrainRun(_ operation: AgentOperationBoundary.Operation, outcome: BrainRunOutcome) {
+        guard !operation.isStale else { return }
         switch outcome {
         case .succeeded(let processed):
-            guard brainRunID == id else { return }
             lastSuccessfulBrainRun = Date()
             endBrainRun(.succeeded(processed: processed), logLine: "Hotovo: zpracováno poznámek: \(processed).")
         case .nothingToProcess:
-            endBrainRun(id: id, .nothingToProcess, logLine: "Hotovo: od posledního zpracování se nic nezměnilo.")
+            endBrainRun(.nothingToProcess, logLine: "Hotovo: od posledního zpracování se nic nezměnilo.")
         case .cancelled:
-            endBrainRun(id: id, .cancelled, logLine: "Zrušeno. Běh se nepočítá jako úspěšný.")
+            endBrainRun(.cancelled, logLine: "Zrušeno. Běh se nepočítá jako úspěšný.")
         case .failed(let failure):
             let alert: Bool
             switch failure {
             case .changedOutsideBrain, .launch, .brainFolderUnavailable, .vaultUnreadable: alert = true
             default: alert = false
             }
-            finishBrainRun(id: id, failure: Self.message(for: failure), alert: alert)
+            finishBrainRun(operation, failure: Self.message(for: failure), alert: alert)
         }
     }
 
-    private func finishBrainRun(id: UUID, failure message: String, alert: Bool) {
-        endBrainRun(id: id, .failed(message), logLine: "Chyba: \(message)")
-        if alert, brainRunID == id {
+    private func finishBrainRun(_ operation: AgentOperationBoundary.Operation, failure message: String, alert: Bool) {
+        guard !operation.isStale else { return }
+        endBrainRun(.failed(message), logLine: "Chyba: \(message)")
+        if alert {
             errorMessage = message
         }
     }
 
-    private func endBrainRun(id: UUID, _ phase: BrainRunPhase, logLine: String) {
-        guard brainRunID == id else { return }
-        endBrainRun(phase, logLine: logLine)
-    }
-
     private func endBrainRun(_ phase: BrainRunPhase, logLine: String) {
         brainRun = nil
-        brainRunTask = nil
+        brainRunOperation = nil
         isCheckingBrainRunBoundary = false
         needsBrainRunBoundaryRecheck = false
         brainRunPhase = phase

@@ -64,6 +64,14 @@ _Avoid_: Object, item, subject
 One execution of the Agent over the Vault, processing every note changed since the last successful Brain Run.
 _Avoid_: Sync, job, processing
 
+**Brain Conversation**:
+A continuing, read-only exchange between the user and the Agent that answers questions, starting from Brain Notes and consulting saved original notes or other sources when needed. The Agent never writes to the Vault in a Brain Conversation: the operating system enforces this for the whole Copilot CLI process tree, while shell, web and writes outside the Vault stay unrestricted, and there are no approvals or grants. It is distinct from a Brain Run, does not count as processing changed notes and does not advance the last successful Brain Run. Answer evidence links do not redefine a Citation.
+_Avoid_: Brain Run, CLI job, search, chat
+
+**Agent operation**:
+One Brain Run or one turn of a Brain Conversation. At most one Agent operation is active per Vault; it keeps that Vault until it and the Copilot CLI processes it owns have stopped.
+_Avoid_: Job, task, session
+
 **Agent**:
-The LLM process that reads the user's notes and creates or updates Brain Notes.
+The LLM process that reads the user's notes. In a Brain Run it creates or updates Brain Notes; in a Brain Conversation it only investigates and answers.
 _Avoid_: Bot, assistant, AI
