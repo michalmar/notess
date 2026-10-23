@@ -511,26 +511,28 @@ struct MarkdownTextViewTagCompletionTests {
         #expect(!list.intersects(tag))
     }
 
-    @Test(
-        "near the bottom edge the list opens above the Tag",
-        .disabled("fails on main: list is not placed above the Tag near the bottom edge"),
-        .bug("https://github.com/michalmar/notess/issues/123")
-    )
+    @Test("near the bottom edge the list opens above the Tag")
     func placementAbove() async throws {
         load(String(repeating: "řádek\n", count: 40) + "‸")
         type("#a")
         await settle()
-        // Scrolling to the caret repositions the list; under load that can
-        // take more than a few main-queue turns.
-        let deadline = ContinuousClock.now + .seconds(2)
-        while let (list, tag, _) = try? placement(of: "#a"), abs(list.minY - (tag.maxY + 2)) >= 1,
-              ContinuousClock.now < deadline {
+        // The list is only final once the editor has scrolled the caret into
+        // view and the list followed it. That takes a variable number of
+        // main-queue turns, so wait for the state instead of a fixed count.
+        func isAbove() -> Bool {
+            guard let (list, tag, visible) = try? placement(of: "#a") else { return false }
+            return visible.contains(tag) && abs(list.minY - (tag.maxY + 2)) < 1
+        }
+        let deadline = ContinuousClock.now + .seconds(10)
+        while !isAbove(), ContinuousClock.now < deadline {
             await settle()
         }
         let (list, tag, visible) = try placement(of: "#a")
         #expect(visible.contains(tag))
         #expect(abs(list.minY - (tag.maxY + 2)) < 1)
+        #expect(abs(list.minX - tag.minX) < 1)
         #expect(visible.contains(list))
+        #expect(!list.intersects(tag))
     }
 
     @Test("in a short editor the list shrinks to whole rows beside the Tag, keeping the highlight in view")
