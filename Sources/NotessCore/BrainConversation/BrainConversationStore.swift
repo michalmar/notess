@@ -271,10 +271,12 @@ private struct StoredActivity: Codable {
     var toolKind: String?
     var status: String?
     var option: String?
+    var details: StoredToolDetails?
 
     init(_ activity: BrainConversation.Activity) {
         id = activity.id
         title = activity.title
+        details = StoredToolDetails(activity.details)
         switch activity.kind {
         case .tool(let kind, let status): (self.kind, toolKind, self.status) = ("tool", kind, status.rawValue)
         case .permission(let option): (kind, self.option) = ("permission", option)
@@ -292,6 +294,32 @@ private struct StoredActivity: Codable {
         default:
             kind = .notice
         }
-        return BrainConversation.Activity(id: id, title: title, kind: kind)
+        return BrainConversation.Activity(
+            id: id, title: title, kind: kind, details: details?.details() ?? ACPToolCallDetails()
+        )
+    }
+}
+
+/// What the Agent reported about a tool call. Every field is optional, so history from
+/// before details existed, or with only some of them, loads with empty defaults.
+private struct StoredToolDetails: Codable {
+    var input: JSONValue?
+    var output: JSONValue?
+    var content: [JSONValue]?
+    var locations: [JSONValue]?
+    var kind: String?
+
+    /// `nil` when there is nothing to keep, so activity without details stays compact.
+    init?(_ details: ACPToolCallDetails) {
+        guard details != ACPToolCallDetails() else { return nil }
+        input = details.input
+        output = details.output
+        content = details.content
+        locations = details.locations
+        kind = details.kind
+    }
+
+    func details() -> ACPToolCallDetails {
+        ACPToolCallDetails(input: input, output: output, content: content, locations: locations, kind: kind)
     }
 }

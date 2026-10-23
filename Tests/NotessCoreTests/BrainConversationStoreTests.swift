@@ -63,6 +63,69 @@ struct BrainConversationStoreTests {
         #expect(loaded.turns[0].activity == conversation.turns[0].activity)
     }
 
+    @Test("tool call details and the answer's evidence links round-trip")
+    func detailsRoundTrip() throws {
+        let fixture = try Fixture()
+        defer { fixture.cleanUp() }
+        var conversation = BrainConversation()
+        let turn = conversation.begin(question: "Who?", at: fixture.date)!
+        let details = ACPToolCallDetails(
+            input: .object(["path": .string("_brain/Alice.md"), "lines": .number(3)]),
+            output: .string("Alice keeps the codeword"),
+            content: [.object(["type": .string("text"), "text": .string("Alice")])],
+            locations: [.object(["path": .string("_brain/Alice.md"), "line": .number(1)])],
+            kind: "read"
+        )
+        conversation.apply(.toolCall(id: "t1", title: "Read Alice.md", kind: "read", status: .inProgress), to: turn)
+        conversation.apply(.toolDetails(id: "t1", details: details), to: turn)
+        conversation.apply(.toolCall(id: "t2", title: "Search", kind: "search", status: .completed), to: turn)
+        conversation.apply(.answerChunk("See [[Alice]] and [the site](https://example.com)."), to: turn)
+        conversation.finish(turn, stopReason: .endTurn, at: fixture.date)
+        try fixture.store.save(conversation, at: fixture.date, for: fixture.vault)
+
+        let loaded = try #require(try fixture.store.load(for: fixture.vault))
+        let activity = loaded.turns[0].activity
+        #expect(activity == conversation.turns[0].activity)
+        #expect(activity.first { $0.id == "tool:t1" || $0.title == "Read Alice.md" }?.details == details)
+        #expect(activity.first { $0.title == "Search" }?.details == ACPToolCallDetails())
+        #expect(
+            BrainConversationEvidence.sources(in: loaded.turns[0].answer)
+                == BrainConversationEvidence.sources(in: conversation.turns[0].answer)
+        )
+        #expect(!BrainConversationEvidence.sources(in: loaded.turns[0].answer).isEmpty)
+    }
+
+    @Test("partial or absent tool details decode with empty defaults")
+    func partialDetails() throws {
+        let fixture = try Fixture()
+        defer { fixture.cleanUp() }
+        let id = UUID()
+        try fixture.writeRaw("""
+        {
+          "version": 1,
+          "vaultPath": "\(fixture.vault.rootURL.path(percentEncoded: false))",
+          "currentConversationID": "\(id.uuidString)",
+          "conversations": [{
+            "id": "\(id.uuidString)", "updatedAt": "2025-10-18T05:00:00Z",
+            "turns": [{
+              "id": "\(UUID().uuidString)", "question": "Q", "state": {"kind": "completed"},
+              "startedAt": "2025-10-18T05:00:00Z",
+              "activity": [
+                {"id": "old", "title": "Old", "kind": "tool", "status": "completed"},
+                {"id": "empty", "title": "Empty", "kind": "tool", "details": {}},
+                {"id": "some", "title": "Some", "kind": "tool", "details": {"output": "x", "unknown": 1}}
+              ]
+            }]
+          }]
+        }
+        """)
+
+        let activity = try #require(try fixture.store.load(for: fixture.vault)).turns[0].activity
+        #expect(activity[0].details == ACPToolCallDetails())
+        #expect(activity[1].details == ACPToolCallDetails())
+        #expect(activity[2].details == ACPToolCallDetails(output: .string("x")))
+    }
+
     @Test("a Vault without history has no conversation")
     func noHistory() throws {
         let fixture = try Fixture()
