@@ -121,29 +121,35 @@ struct RealCopilotConversationTests {
     }
 
     @Test(
-        "the OS refuses the Agent's shell writes into the Vault, directly and through symlink and hardlink aliases",
+        "the OS refuses the Agent's shell writes into the Vault, directly, through symlink and hardlink aliases and by moving a folder above it",
         .timeLimit(.minutes(10))
     )
     func writesBlocked() async throws {
-        let temp = try TemporaryVault()
-        try temp.write("ORIGINAL\n", to: "Note.md")
-        let outside = FileManager.default.temporaryDirectory
-            .appending(path: "NotessRealOutside-\(UUID().uuidString)", directoryHint: .isDirectory)
+        let base = FileManager.default.temporaryDirectory
+            .appending(path: "NotessReal-\(UUID().uuidString)", directoryHint: .isDirectory)
+        let parent = base.appending(path: "parent", directoryHint: .isDirectory)
+        let root = parent.appending(path: "Vault", directoryHint: .isDirectory)
+        let outside = base.appending(path: "outside", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         try FileManager.default.createDirectory(at: outside, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: outside) }
+        defer { try? FileManager.default.removeItem(at: base) }
+        let note = root.appending(path: "Note.md")
+        try "ORIGINAL\n".write(to: note, atomically: false, encoding: .utf8)
         let alias = outside.appending(path: "alias")
-        try FileManager.default.createSymbolicLink(at: alias, withDestinationURL: temp.vault.rootURL)
+        try FileManager.default.createSymbolicLink(at: alias, withDestinationURL: root)
         let control = outside.appending(path: "control.txt")
+        let moved = base.appending(path: "moved")
 
-        try await withAgent(temp.vault) { agent in
+        try await withAgent(Vault(rootURL: root)) { agent in
             // A plain prompt without the read-only instructions: the OS must enforce, not the model.
             let script = [
                 "printf OUTSIDE > '\(control.path)'",
-                "printf DIRECT > '\(temp.vault.rootURL.path)/direct.txt'",
-                "printf CHANGED > '\(temp.vault.rootURL.path)/Note.md'",
+                "printf DIRECT > '\(root.path)/direct.txt'",
+                "printf CHANGED > '\(note.path)'",
                 "printf ALIAS > '\(alias.path)/alias.txt'",
                 "printf ALIAS >> '\(alias.path)/Note.md'",
-                "ln '\(temp.vault.rootURL.path)/Note.md' '\(outside.path)/hardlink.md' && printf HARD >> '\(outside.path)/hardlink.md'",
+                "ln '\(note.path)' '\(outside.path)/hardlink.md' && printf HARD >> '\(outside.path)/hardlink.md'",
+                "mv '\(parent.path)' '\(moved.path)' && printf MOVED >> '\(moved.path)/Vault/Note.md'; mv '\(moved.path)' '\(parent.path)'",
             ]
             let events = Events()
             let stop = try await ask(
@@ -159,9 +165,10 @@ struct RealCopilotConversationTests {
 
             let controlText = try? String(contentsOf: control, encoding: .utf8)
             try #require(controlText == "OUTSIDE", "the Agent ran the commands (the write outside the Vault worked)")
-            #expect(!temp.fileExists("direct.txt"))
-            #expect(!temp.fileExists("alias.txt"))
-            #expect(try temp.read("Note.md") == "ORIGINAL\n")
+            #expect(!FileManager.default.fileExists(atPath: root.appending(path: "direct.txt").path))
+            #expect(!FileManager.default.fileExists(atPath: root.appending(path: "alias.txt").path))
+            #expect(!FileManager.default.fileExists(atPath: moved.path))
+            #expect(try String(contentsOf: note, encoding: .utf8) == "ORIGINAL\n")
         }
     }
 }

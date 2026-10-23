@@ -366,6 +366,32 @@ struct AppModelBrainConversationTests {
         try await eventually { !model.isAgentOperationActive }
     }
 
+    @Test("leaving a Vault right after a follow-up starts still closes the Agent kept between turns")
+    func vaultSwitchBeforeFollowUpPicksUpAgent() async throws {
+        let fixture = try Fixture()
+        let connections = Connections()
+        connections.holdsClose = true
+        let runner = HoldingRunner()
+        let model = fixture.makeModel(connections: connections, runner: runner)
+        model.askBrainConversation("Q")
+        try await eventually { connections.made.first?.isPrompting == true }
+        connections.last.send(.finish(.endTurn))
+        try await eventually { !model.isAgentOperationActive }
+        let kept = connections.last
+
+        // The turn's task has not run yet, so it has not picked up the kept Agent.
+        #expect(model.askBrainConversation("Follow-up?"))
+        model.chooseVault(at: fixture.otherURL)
+
+        try await eventually { kept.closeCount >= 1 }
+        #expect(model.isAgentOperationActive)
+        kept.releaseClose()
+        try await eventually { !model.isAgentOperationActive }
+        #expect(!model.ownsAgentProcesses)
+        #expect(connections.made.count == 1)
+        #expect(kept.prompts.count == 1)
+    }
+
     @Test("stale events of a finished turn are rejected")
     func lateEventsAfterFinish() async throws {
         let fixture = try Fixture()

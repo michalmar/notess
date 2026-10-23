@@ -114,6 +114,27 @@ struct VaultWriteSandboxTests {
         #expect(try VaultWriteSandbox(vault: fixture.vault).outsideHardLinks().isEmpty)
     }
 
+    @Test("renaming a folder above the Vault fails, so the Vault cannot escape the rule by moving")
+    func ancestorRenames() throws {
+        let fixture = try Fixture(vaultName: "parent/Vault")
+        let parent = fixture.base.appending(path: "parent").path(percentEncoded: false)
+        let basePath = fixture.base.path(percentEncoded: false)
+        let base = basePath.hasSuffix("/") ? String(basePath.dropLast()) : basePath
+        let paths = #"P=$(dirname "$VAULT"); B=$(dirname "$P"); "#
+
+        _ = try fixture.runSandboxed(paths + #"mv "$P" "$B/moved" && echo pwned >> "$B/moved/Vault/Journal.md"; mv "$B/moved" "$P""#)
+        #expect(try fixture.runSandboxed(paths + #"mv "$P" "$B/moved""#).status != 0)
+        #expect(try fixture.runSandboxed(paths + #"mv "$B" "$B-moved""#).status != 0)
+        #expect(try fixture.runSandboxed(paths + #"mv "$VAULT" "$P/Renamed""#).status != 0)
+        #expect(try fixture.runSandboxed(paths + #"echo free > "$P/Sibling.md" && mkdir "$B/New""#).status == 0)
+
+        #expect(FileManager.default.fileExists(atPath: parent + "/Sibling.md"))
+        #expect(!FileManager.default.fileExists(atPath: base + "/moved"))
+        #expect(!FileManager.default.fileExists(atPath: base + "-moved"))
+        #expect(try fixture.read("Journal.md") == "original\n")
+        try VaultWriteSandbox(vault: fixture.vault).verify()
+    }
+
     @Test("a hard link that already exists outside the Vault is refused before anything runs")
     func outsideHardLinkIsRefused() throws {
         let fixture = try Fixture()

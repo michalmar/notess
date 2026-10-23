@@ -67,26 +67,36 @@ extension AppModel {
     }
 
     /// A new Vault starts with an empty conversation. A running turn is stopped by the
-    /// boundary and closes its own Agent; an idle Agent is closed as a cleanup that keeps
-    /// the shared boundary occupied until its process group is gone.
+    /// boundary and closes its own Agent. The Agent kept between turns is closed as a
+    /// cleanup even while a turn runs: that turn may not have picked it up yet.
     func resetBrainConversation() {
-        closeIdleBrainConversation()
-        brainConversationConnection = nil
+        closeKeptBrainConversationConnection()
         brainConversationOperation = nil
         brainConversation.conversation = BrainConversation()
         brainConversation.refusal = nil
     }
 
-    /// Closes the Agent kept between turns, as a cleanup that keeps the shared boundary
-    /// occupied until its process group is gone. A running turn closes its Agent itself
-    /// once it is stale or the Vault is left.
+    /// Closes the Agent kept between turns unless a turn is using it. A running turn
+    /// closes its Agent itself once it is stale or the Vault is left.
     func closeIdleBrainConversation() {
-        guard brainConversationOperation == nil, let connection = brainConversationConnection,
-              let vault else { return }
+        guard brainConversationOperation == nil else { return }
+        closeKeptBrainConversationConnection()
+    }
+
+    /// Closes the kept Agent as a cleanup that keeps the shared boundary occupied until
+    /// its process group is gone.
+    private func closeKeptBrainConversationConnection() {
+        guard let connection = brainConversationConnection, let vault else { return }
         brainConversationConnection = nil
         agentOperations.cleanUp(.conversationTurn, in: vault) {
             await connection.close()
         }
+    }
+
+    /// Closes `connection` and forgets it if it is still the kept Agent.
+    private func closeBrainConversationConnection(_ connection: any ACPConnection) async {
+        await connection.close()
+        if brainConversationConnection === connection { brainConversationConnection = nil }
     }
 
     /// Whether quitting must wait for an Agent process: an operation or an idle conversation.
@@ -126,8 +136,7 @@ extension AppModel {
 
         var connection = operation.isStale ? nil : brainConversationConnection
         if let existing = connection, !(await existing.isOpen()) {
-            await existing.close()
-            if brainConversationConnection === existing { brainConversationConnection = nil }
+            await closeBrainConversationConnection(existing)
             connection = nil
             report { $0.note("Předchozí relace Agenta skončila; pokračuje nová relace bez dřívějšího kontextu.", in: turnID) }
         }
@@ -143,8 +152,7 @@ extension AppModel {
             do {
                 try await active.start()
             } catch {
-                await active.close()
-                if brainConversationConnection === active { brainConversationConnection = nil }
+                await closeBrainConversationConnection(active)
                 if Task.isCancelled {
                     report { $0.stop(turnID, at: now()) }
                 } else {
@@ -172,8 +180,7 @@ extension AppModel {
 
         let stillOpen = await active.isOpen()
         if operation.isStale || !stillOpen || result.isFailure {
-            await active.close()
-            if brainConversationConnection === active { brainConversationConnection = nil }
+            await closeBrainConversationConnection(active)
         }
         switch result {
         case .success(let stopReason):

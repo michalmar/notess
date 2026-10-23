@@ -16,7 +16,8 @@ public enum VaultWriteSandboxError: Error, Equatable, Sendable {
 }
 
 /// Runs a command tree under macOS `sandbox-exec` with an allow-default policy that
-/// denies every file write under the Vault's resolved real path.
+/// denies every file write under the Vault's resolved real path, and any write to the
+/// folders above it, so the Vault cannot be moved to a path the rule does not cover.
 ///
 /// The kernel resolves symlinks, letter case and Unicode normalization before checking
 /// the path, and a sandboxed process cannot create a hard link to a Vault file. A hard
@@ -45,12 +46,27 @@ public struct VaultWriteSandbox: Sendable {
         self.sandboxExecutableURL = sandboxExecutableURL
     }
 
-    /// The Seatbelt profile; the path is a string literal, so quotes and backslashes are escaped.
+    /// The Seatbelt profile; paths are string literals, so quotes and backslashes are escaped.
+    ///
+    /// Each folder above the Vault is denied as an exact path: renaming one would give the
+    /// Vault a new path the subpath rule does not cover. Writes inside those folders stay allowed.
     public var profile: String {
-        let escaped = vaultRealPath
-            .replacingOccurrences(of: "\\", with: "\\\\")
-            .replacingOccurrences(of: "\"", with: "\\\"")
-        return "(version 1)(allow default)(deny file-write* (subpath \"\(escaped)\"))(deny appleevent-send)"
+        func quoted(_ path: String) -> String {
+            "\"" + path.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"") + "\""
+        }
+        let ancestors = ancestorPaths.map { "(deny file-write* (literal \(quoted($0))))" }.joined()
+        return "(version 1)(allow default)(deny file-write* (subpath \(quoted(vaultRealPath))))\(ancestors)(deny appleevent-send)"
+    }
+
+    /// The folders above the Vault's real path, nearest first, ending with `/`.
+    public var ancestorPaths: [String] {
+        var paths: [String] = []
+        var path = vaultRealPath
+        while path != "/" {
+            path = (path as NSString).deletingLastPathComponent
+            paths.append(path)
+        }
+        return paths
     }
 
     /// The command line that runs `executable` with `arguments` inside the sandbox.
@@ -59,7 +75,8 @@ public struct VaultWriteSandbox: Sendable {
     }
 
     /// Proves the protection works for this Vault before anything runs under it:
-    /// `sandbox-exec` runs a harmless command, refuses a new file in the Vault, and
+    /// `sandbox-exec` runs a harmless command, refuses a new file in the Vault and a
+    /// time stamp change on the folder above it (which a rename would also need), and
     /// no Vault file has a hard link outside the Vault.
     public func verify() throws(VaultWriteSandboxError) {
         let sandboxPath = sandboxExecutableURL.path(percentEncoded: false)
@@ -76,6 +93,9 @@ public struct VaultWriteSandbox: Sendable {
         let status = run(["/usr/bin/touch", probePath])
         if FileManager.default.fileExists(atPath: probePath) || status == 0 {
             try? FileManager.default.removeItem(at: probe)
+            throw .ineffective
+        }
+        if let parent = ancestorPaths.first, run(["/usr/bin/touch", "-c", parent]) == 0 {
             throw .ineffective
         }
         let linked = try outsideHardLinks()
