@@ -81,7 +81,6 @@ struct AgentOperationBoundaryTests {
         boundary.cancel(operation)
         await Task.yield()
 
-        #expect(operation.isCancelling)
         #expect(boundary.isOccupied)
         #expect(boundary.begin(.brainRun, in: vault) { _ in } == nil)
 

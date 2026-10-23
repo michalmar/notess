@@ -28,8 +28,6 @@ public final class AgentOperationBoundary {
     public final class Operation {
         public let kind: AgentOperationKind
         public let vault: Vault
-        /// Cancellation was requested; ownership continues until the work has cleaned up.
-        public fileprivate(set) var isCancelling = false
         /// The Vault was changed while the operation ran: nothing it reports counts any more.
         public fileprivate(set) var isStale = false
         fileprivate var task: Task<Void, Never>?
@@ -73,7 +71,6 @@ public final class AgentOperationBoundary {
     /// Asks the operation to stop. It keeps the Vault until its work returns; repeating this is harmless.
     public func cancel(_ operation: Operation) {
         guard owners[ObjectIdentifier(operation)] != nil else { return }
-        operation.isCancelling = true
         operation.task?.cancel()
     }
 
