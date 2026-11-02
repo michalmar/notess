@@ -392,6 +392,10 @@ private struct SectionCard: View {
                 onImageLoadFailure: { message in
                     if !imageFailures.contains(message) { imageFailures.append(message) }
                 },
+                onCopyAsHTMLFailure: { error in
+                    let message = error.localizedDescription
+                    if !imageFailures.contains(message) { imageFailures.append(message) }
+                },
                 onOpenTag: openTag,
                 onOpenWikiLink: { openWikiLink($0, section) },
                 onOpenWebLink: openWebLink
