@@ -36,6 +36,7 @@ final class SourceLineMenuController {
     }
 
     static func install(in mainMenu: NSMenu?) {
+        CopyAsHTMLMenuItem.install(in: mainMenu)
         guard let edit = mainMenu?.items.compactMap(\.submenu).first(where: {
             $0.items.contains { $0.action == #selector(NSText.copy(_:)) }
         }), !edit.items.contains(where: { $0.action == SourceLineCommand.all.first?.action }) else { return }

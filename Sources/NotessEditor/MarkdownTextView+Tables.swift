@@ -91,6 +91,7 @@ extension MarkdownTextView {
     /// The context menu starts with the table commands when clicked in a table.
     public override func menu(for event: NSEvent) -> NSMenu? {
         let menu = super.menu(for: event) ?? NSMenu()
+        addCopyAsHTMLItem(to: menu)
         let index = characterIndexForInsertion(at: convert(event.locationInWindow, from: nil))
         addHeadingFoldItem(to: menu, at: index)
         guard isEditable, !hasMarkedText() else { return menu }

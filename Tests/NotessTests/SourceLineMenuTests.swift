@@ -18,7 +18,7 @@ struct SourceLineMenuTests {
         SourceLineMenuController.install(in: main)
         SourceLineMenuController.install(in: main)
         #expect(edit.items.map(\.title) == [
-            "Copy", "Paste", "", "Přesunout řádek nahoru", "Přesunout řádek dolů",
+            "Copy", "Kopírovat jako HTML", "Paste", "", "Přesunout řádek nahoru", "Přesunout řádek dolů",
             "Duplikovat řádek nad", "Duplikovat řádek pod",
         ])
         let commands = Array(edit.items.suffix(4))
