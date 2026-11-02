@@ -87,6 +87,7 @@ public struct MarkdownEditor: NSViewRepresentable {
     private let noteURL: URL?
     private let onPasteImage: ((Data, String) -> String?)?
     private let onPasteImageFailure: ((Error) -> Void)?
+    private let onCopyAsHTMLFailure: ((Error) -> Void)?
     private let inlineImageData: ((String) -> Data?)?
     private let onOpenImagePreview: ((ImagePreviewContent) -> Void)?
     private let onImageLoadFailure: ((String) -> Void)?
@@ -117,6 +118,7 @@ public struct MarkdownEditor: NSViewRepresentable {
         noteURL: URL? = nil,
         onPasteImage: ((Data, String) -> String?)? = nil,
         onPasteImageFailure: ((Error) -> Void)? = nil,
+        onCopyAsHTMLFailure: ((Error) -> Void)? = nil,
         inlineImageData: ((String) -> Data?)? = nil,
         onOpenImagePreview: ((ImagePreviewContent) -> Void)? = nil,
         onImageLoadFailure: ((String) -> Void)? = nil,
@@ -137,6 +139,7 @@ public struct MarkdownEditor: NSViewRepresentable {
         self.noteURL = noteURL
         self.onPasteImage = onPasteImage
         self.onPasteImageFailure = onPasteImageFailure
+        self.onCopyAsHTMLFailure = onCopyAsHTMLFailure
         self.inlineImageData = inlineImageData
         self.onOpenImagePreview = onOpenImagePreview
         self.onImageLoadFailure = onImageLoadFailure
@@ -214,6 +217,7 @@ public struct MarkdownEditor: NSViewRepresentable {
     private func configureImages(in textView: MarkdownTextView) {
         textView.onPasteImage = onPasteImage
         textView.onPasteImageFailure = onPasteImageFailure
+        textView.onCopyAsHTMLFailure = onCopyAsHTMLFailure
         textView.inlineImageData = inlineImageData
         textView.onOpenImagePreview = onOpenImagePreview
         textView.onImageLoadFailure = onImageLoadFailure

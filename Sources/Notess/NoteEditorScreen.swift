@@ -21,6 +21,7 @@ struct NoteEditorScreen: View {
     var onOpenTag: ((String) -> Void)?
     var onOpenBacklink: (Backlink) -> Void = { _ in }
     var onPasteImageFailure: (Error) -> Void = { _ in }
+    var onCopyAsHTMLFailure: (Error) -> Void = { _ in }
     var onOpenImagePreview: (ImagePreviewContent) -> Void = { _ in }
     var onImageLoadFailure: (String) -> Void = { _ in }
     var tagSuggestionSource: TagSuggestionSource?
@@ -51,6 +52,7 @@ struct NoteEditorScreen: View {
                     document.stageAttachment(data: data, fileExtension: fileExtension).markdown
                 },
                 onPasteImageFailure: onPasteImageFailure,
+                onCopyAsHTMLFailure: onCopyAsHTMLFailure,
                 inlineImageData: { document.stagedAttachmentData(relativePath: $0) },
                 onOpenImagePreview: onOpenImagePreview,
                 onImageLoadFailure: onImageLoadFailure,

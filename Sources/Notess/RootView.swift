@@ -189,6 +189,9 @@ struct RootView: View {
                     onPasteImageFailure: { error in
                         model.errorMessage = "Obrázek se nepodařilo vložit: \(error.localizedDescription)"
                     },
+                    onCopyAsHTMLFailure: { error in
+                        model.errorMessage = "Výběr se nepodařilo zkopírovat jako HTML: \(error.localizedDescription)"
+                    },
                     onOpenImagePreview: model.presentImagePreview,
                     onImageLoadFailure: {
                         model.errorMessage = $0

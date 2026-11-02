@@ -47,6 +47,7 @@ public struct ReadOnlyMarkdownView: NSViewRepresentable {
     private let noteURL: URL?
     private let onOpenImagePreview: ((ImagePreviewContent) -> Void)?
     private let onImageLoadFailure: ((String) -> Void)?
+    private let onCopyAsHTMLFailure: ((Error) -> Void)?
     private let onOpenTag: ((String) -> Void)?
     private let onOpenWikiLink: ((WikiLink) -> Void)?
     private let onOpenWebLink: ((URL) -> Void)?
@@ -57,6 +58,8 @@ public struct ReadOnlyMarkdownView: NSViewRepresentable {
     ///     resolve against its directory and are read from disk, never from staged bytes.
     ///   - onOpenImagePreview: Called with the clicked image for the shared preview.
     ///   - onImageLoadFailure: Called with a message when an image cannot be loaded.
+    ///   - onCopyAsHTMLFailure: Called when Copy as HTML cannot export the
+    ///     selection; the clipboard is left unchanged.
     ///   - onOpenTag: Called with the normalised name of a clicked `#tag`;
     ///     without it Tags are plain text.
     ///   - onOpenWikiLink: Called with a clicked Wiki-link.
@@ -72,6 +75,7 @@ public struct ReadOnlyMarkdownView: NSViewRepresentable {
         noteURL: URL? = nil,
         onOpenImagePreview: ((ImagePreviewContent) -> Void)? = nil,
         onImageLoadFailure: ((String) -> Void)? = nil,
+        onCopyAsHTMLFailure: ((Error) -> Void)? = nil,
         onOpenTag: ((String) -> Void)? = nil,
         onOpenWikiLink: ((WikiLink) -> Void)? = nil,
         onOpenWebLink: ((URL) -> Void)? = nil
@@ -82,6 +86,7 @@ public struct ReadOnlyMarkdownView: NSViewRepresentable {
         self.noteURL = noteURL
         self.onOpenImagePreview = onOpenImagePreview
         self.onImageLoadFailure = onImageLoadFailure
+        self.onCopyAsHTMLFailure = onCopyAsHTMLFailure
         self.markdown = markdown
         self.style = MarkdownEditorStyle(fontName: fontName, fontSize: fontSize, colors: colors)
     }
@@ -99,6 +104,7 @@ public struct ReadOnlyMarkdownView: NSViewRepresentable {
     private func configureImages(in textView: MarkdownTextView) {
         textView.onOpenImagePreview = onOpenImagePreview
         textView.onImageLoadFailure = onImageLoadFailure
+        textView.onCopyAsHTMLFailure = onCopyAsHTMLFailure
         let tick = $imageLayoutTick
         // Deferred: this fires during AppKit layout, possibly inside a SwiftUI update.
         textView.onInlineImagesLaidOut = {

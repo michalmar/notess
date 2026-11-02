@@ -584,7 +584,10 @@ public final class MarkdownTextView: NSTextView {
     /// Called when clipboard image data cannot be turned into a PNG; nothing is inserted.
     public var onPasteImageFailure: ((Error) -> Void)?
 
-    /// The pasteboard Paste reads; tests substitute a private one.
+    /// Called when Copy as HTML cannot export the selection; the clipboard is unchanged.
+    public var onCopyAsHTMLFailure: ((Error) -> Void)?
+
+    /// The pasteboard Paste reads and Copy as HTML writes; tests substitute a private one.
     var pasteboard: NSPasteboard = .general
 
     /// The Edit ▸ Paste item (and so Cmd+V) is enabled by AppKit only for the
@@ -597,7 +600,9 @@ public final class MarkdownTextView: NSTextView {
         if item.action == #selector(performFindPanelAction(_:)) || item.action == #selector(showFind(_:)) {
             return isSelectable
         }
-        return validatePaste(item.action) ?? validateTableCommand(item.action) ?? super.validateUserInterfaceItem(item)
+        return validateSourceLineCommand(item.action) ?? validatePaste(item.action) ?? validateCopyAsHTML(item.action)
+            ?? validateTableCommand(item.action)
+            ?? super.validateUserInterfaceItem(item)
     }
 
     public override func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
@@ -608,7 +613,9 @@ public final class MarkdownTextView: NSTextView {
             let location = menuItem.representedObject as? Int ?? selectedRange().location
             return isSelectable && headingFolding.canToggle(at: location)
         }
-        return validatePaste(menuItem.action) ?? validateTableCommand(menuItem.action) ?? super.validateMenuItem(menuItem)
+        return validateSourceLineCommand(menuItem.action) ?? validatePaste(menuItem.action) ?? validateCopyAsHTML(menuItem.action)
+            ?? validateTableCommand(menuItem.action)
+            ?? super.validateMenuItem(menuItem)
     }
 
     /// Whether Paste is enabled, or `nil` to leave the decision to AppKit.
@@ -982,21 +989,7 @@ public final class MarkdownTextView: NSTextView {
         if let cached = imageCache[source] {
             return cached
         }
-        let unescaped = unescapeMarkdownPath(source)
-        let decoded = unescaped.removingPercentEncoding ?? unescaped
-        guard isSafeRelativePath(decoded) else {
-            reportImageLoadFailure(source: source)
-            return nil
-        }
-        let image: NSImage?
-        if let data = inlineImageData?(source) {
-            image = NSImage(data: data)
-        } else {
-            let url = noteURL.deletingLastPathComponent()
-                .appending(path: decoded, directoryHint: .notDirectory)
-                .standardizedFileURL
-            image = NSImage(contentsOf: url)
-        }
+        let image = localImageData(source: source, noteURL: noteURL).flatMap(NSImage.init(data:))
         if let image {
             imageCache[source] = image
             reportedImageFailures.remove(source)
@@ -1004,6 +997,21 @@ public final class MarkdownTextView: NSTextView {
             reportImageLoadFailure(source: source)
         }
         return image
+    }
+
+    /// The bytes of an image stored with the note: data staged for the unsaved
+    /// note first, then the file relative to the note. Nil when the source is
+    /// not a safe relative path or nothing can be read.
+    func localImageData(source: String, noteURL: URL?) -> Data? {
+        let unescaped = unescapeMarkdownPath(source)
+        let decoded = unescaped.removingPercentEncoding ?? unescaped
+        guard isSafeRelativePath(decoded) else { return nil }
+        if let data = inlineImageData?(source) { return data }
+        guard let noteURL else { return nil }
+        let url = noteURL.deletingLastPathComponent()
+            .appending(path: decoded, directoryHint: .notDirectory)
+            .standardizedFileURL
+        return try? Data(contentsOf: url)
     }
 
     private func reportImageLoadFailure(source: String) {
