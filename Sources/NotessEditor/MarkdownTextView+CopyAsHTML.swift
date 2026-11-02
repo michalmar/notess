@@ -1,16 +1,22 @@
 import AppKit
+import ImageIO
 import NotessCore
+import UniformTypeIdentifiers
 
 /// Why Copy as HTML left the clipboard unchanged.
 public enum CopyAsHTMLError: LocalizedError, Equatable {
-    /// The selection contains an image stored with the note, which cannot be
-    /// embedded yet.
-    case unsupportedLocalImage(source: String)
+    /// A selected image stored with the note is missing or cannot be read.
+    case unreadableLocalImage(source: String)
+    /// A selected image stored with the note is not an image that can be
+    /// exported.
+    case unexportableLocalImage(source: String)
 
     public var errorDescription: String? {
         switch self {
-        case .unsupportedLocalImage(let source):
-            "Obrázek „\(source)“ zatím nelze zkopírovat jako HTML. Schránka zůstala beze změny."
+        case .unreadableLocalImage(let source):
+            "Obrázek „\(source)“ se nepodařilo najít nebo načíst. Schránka zůstala beze změny."
+        case .unexportableLocalImage(let source):
+            "Obrázek „\(source)“ nelze zkopírovat, protože to není podporovaný obrázek. Schránka zůstala beze změny."
         }
     }
 }
@@ -43,12 +49,19 @@ extension MarkdownTextView {
         pasteboard.setString(output.plainText, forType: .string)
     }
 
-    /// The `src` that embeds a selected local image in the copied HTML.
+    /// The `src` that embeds a selected local image in the copied HTML: its
+    /// bytes as a data URL, so recipients need neither the Vault nor the file.
     ///
-    /// Local images cannot be embedded yet, so they fail the whole copy
-    /// rather than being dropped or replaced with their description.
+    /// An image that cannot be read or exported fails the whole copy rather
+    /// than being dropped or replaced with its description.
     func embedLocalImageForHTML(_ image: MarkdownExport.LocalImage) throws -> String {
-        throw CopyAsHTMLError.unsupportedLocalImage(source: image.source)
+        guard let data = localImageData(source: image.source, noteURL: noteURL) else {
+            throw CopyAsHTMLError.unreadableLocalImage(source: image.source)
+        }
+        guard let portable = PortableImage(data) else {
+            throw CopyAsHTMLError.unexportableLocalImage(source: image.source)
+        }
+        return "data:\(portable.mimeType);base64,\(portable.data.base64EncodedString())"
     }
 
     /// Enabled for one nonempty selection in selectable text.
@@ -71,5 +84,37 @@ extension MarkdownTextView {
         } else {
             menu.addItem(item)
         }
+    }
+}
+
+/// Image bytes in a format recipients such as Mail and browsers display.
+/// PNG, JPEG and GIF keep their original bytes; other decodable images are
+/// converted to PNG.
+struct PortableImage {
+    let data: Data
+    let mimeType: String
+
+    private static let portableTypes: [UTType] = [.png, .jpeg, .gif]
+
+    init?(_ data: Data) {
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil),
+              CGImageSourceGetCount(source) > 0,
+              let identifier = CGImageSourceGetType(source) as String?,
+              let type = UTType(identifier),
+              let image = CGImageSourceCreateImageAtIndex(source, 0, nil) else { return nil }
+        if let portable = Self.portableTypes.first(where: { type.conforms(to: $0) }),
+           let mimeType = portable.preferredMIMEType {
+            self.data = data
+            self.mimeType = mimeType
+            return
+        }
+        let png = NSMutableData()
+        guard let destination = CGImageDestinationCreateWithData(png, UTType.png.identifier as CFString, 1, nil) else {
+            return nil
+        }
+        CGImageDestinationAddImage(destination, image, nil)
+        guard CGImageDestinationFinalize(destination) else { return nil }
+        self.data = png as Data
+        self.mimeType = "image/png"
     }
 }
