@@ -24,7 +24,12 @@ struct MarkdownTextViewCopyAsHTMLTests {
 
         enum Kind { case note, readOnly, brainNote }
 
-        init(_ text: String, selecting selected: String? = nil, kind: Kind = .note) {
+        init(
+            _ text: String,
+            selecting selected: String? = nil,
+            kind: Kind = .note,
+            noteURL: URL = URL(filePath: "/NotessTests-nonexistent/Journal/2026/11/2026-11-02.md")
+        ) {
             pasteboard = .withUniqueName()
             window = NSWindow(
                 contentRect: NSRect(x: 0, y: 0, width: 600, height: 400),
@@ -45,7 +50,7 @@ struct MarkdownTextViewCopyAsHTMLTests {
             }
             if kind == .brainNote { textView.isEditable = false }
             textView.string = text
-            textView.noteURL = URL(filePath: "/NotessTests-nonexistent/Journal/2026/11/2026-11-02.md")
+            textView.noteURL = noteURL
             textView.pasteboard = pasteboard
             textView.onCopyAsHTMLFailure = { [unowned self] in failures.append($0) }
             window.makeFirstResponder(textView)
@@ -142,6 +147,16 @@ struct MarkdownTextViewCopyAsHTMLTests {
                 documentAttributes: nil
             )
             return (attributed?.string ?? "").trimmingCharacters(in: .newlines)
+        }
+
+        /// The bytes of each image, in order, embedded in the HTML itself.
+        var images: [Data] {
+            nodes("//img/@src").map { node in
+                let src = node.stringValue ?? ""
+                guard src.hasPrefix("data:"), let comma = src.firstIndex(of: ","),
+                      src[..<comma].hasSuffix(";base64") else { return Data() }
+                return Data(base64Encoded: String(src[src.index(after: comma)...])) ?? Data()
+            }
         }
 
         /// The visible text of the body with whitespace collapsed.
@@ -383,10 +398,33 @@ struct MarkdownTextViewCopyAsHTMLTests {
         #expect(copied.visibleText == copied.plainText)
     }
 
-    @Test("a local image fails clearly and leaves the clipboard and note unchanged")
-    func localImage() throws {
+    @Test("a local image is copied as its actual bytes, resolved next to its note")
+    func localImageBytes() throws {
+        let vault = try TemporaryVault()
+        defer { vault.remove() }
+        let schema = try vault.write(Self.png(.red), to: "Journal/2026/obrazky/schema.png")
+        try vault.write(Self.png(.blue), to: "obrazky/schema.png")
         let note = "Text\n\n![Schéma](obrazky/schema.png)\n\nDalší"
-        let harness = Harness(note)
+        let harness = Harness(note, noteURL: vault.url("Journal/2026/2026-11-02.md"))
+        defer { harness.close() }
+        harness.textView.selectAll(nil)
+
+        harness.chooseCopyAsHTML()
+
+        let copied = try harness.copied()
+        #expect(copied.images == [schema])
+        #expect(copied.plainText == "Text\n\n[Obrázek: Schéma]\n\nDalší")
+        #expect(harness.failures.isEmpty)
+        #expect(harness.textView.string == note)
+    }
+
+    @Test("a missing local image fails clearly without copying the images that exist")
+    func missingLocalImage() throws {
+        let vault = try TemporaryVault()
+        defer { vault.remove() }
+        let existing = try vault.write(Self.png(.red), to: "obrazky/ok.png")
+        let note = "![OK](obrazky/ok.png) a ![Chybí](obrazky/chybi.png)"
+        let harness = Harness(note, noteURL: vault.url("poznamka.md"))
         defer { harness.close() }
         harness.textView.selectAll(nil)
         harness.putPreviousClipboard()
@@ -394,10 +432,63 @@ struct MarkdownTextViewCopyAsHTMLTests {
         harness.chooseCopyAsHTML()
 
         #expect(harness.clipboardIsUnchanged)
-        #expect(harness.textView.string == note)
         let error = try #require(harness.failures.first as? CopyAsHTMLError)
-        #expect(error == .unsupportedLocalImage(source: "obrazky/schema.png"))
-        #expect(error.localizedDescription.contains("obrazky/schema.png"))
+        #expect(error == .unreadableLocalImage(source: "obrazky/chybi.png"))
+        #expect(error.localizedDescription.contains("obrazky/chybi.png"))
+        #expect(harness.textView.string == note)
+        #expect(try Data(contentsOf: vault.url("obrazky/ok.png")) == existing)
+    }
+
+    @Test("a local file that is not an image fails clearly and leaves the clipboard unchanged")
+    func unexportableLocalImage() throws {
+        let vault = try TemporaryVault()
+        defer { vault.remove() }
+        try vault.write(Data("není obrázek".utf8), to: "obrazky/rozbity.png")
+        let harness = Harness("![Rozbitý](obrazky/rozbity.png)", noteURL: vault.url("poznamka.md"))
+        defer { harness.close() }
+        harness.textView.selectAll(nil)
+        harness.putPreviousClipboard()
+
+        harness.chooseCopyAsHTML()
+
+        #expect(harness.clipboardIsUnchanged)
+        let error = try #require(harness.failures.first as? CopyAsHTMLError)
+        #expect(error == .unexportableLocalImage(source: "obrazky/rozbity.png"))
+        #expect(error.localizedDescription.contains("obrazky/rozbity.png"))
+    }
+
+    @Test("a local image in a format mail apps may not show is copied as PNG")
+    func nonPortableLocalImage() throws {
+        let vault = try TemporaryVault()
+        defer { vault.remove() }
+        let tiff = try #require(NSBitmapImageRep(data: Self.png(.purple))?.tiffRepresentation)
+        try vault.write(tiff, to: "sken.tiff")
+        let harness = Harness("![Sken](sken.tiff)", noteURL: vault.url("poznamka.md"))
+        defer { harness.close() }
+        harness.textView.selectAll(nil)
+
+        harness.chooseCopyAsHTML()
+
+        let copied = try harness.copied()
+        let image = try #require(copied.images.first)
+        #expect(image.starts(with: [0x89, 0x50, 0x4E, 0x47]))
+        #expect(copied.html.contains("data:image/png;base64,"))
+        let rep = try #require(NSBitmapImageRep(data: image))
+        #expect(rep.pixelsWide == 8 && rep.pixelsHigh == 6)
+    }
+
+    @Test("an image pasted into the unsaved note is copied from its staged bytes")
+    func stagedLocalImage() throws {
+        let staged = Self.png(.green)
+        let harness = Harness("Vloženo: ![](attachments/vlozeny.png)", selecting: "![](attachments/vlozeny.png)")
+        defer { harness.close() }
+        harness.textView.inlineImageData = { $0 == "attachments/vlozeny.png" ? staged : nil }
+
+        harness.chooseCopyAsHTML()
+
+        let copied = try harness.copied()
+        #expect(copied.images == [staged])
+        #expect(copied.plainText == "[Obrázek]")
     }
 
     @Test("rich and plain text carry the same mixed content")
@@ -478,6 +569,25 @@ struct MarkdownTextViewCopyAsHTMLTests {
         #expect(try harness.contextMenu(at: "důrazem").items.contains { $0.action == #selector(MarkdownTextView.copyAsHTML(_:)) })
     }
 
+    @Test("read-only Markdown and Brain Notes copy their local images", arguments: [false, true])
+    func readOnlyLocalImage(isBrainNote: Bool) throws {
+        let vault = try TemporaryVault()
+        defer { vault.remove() }
+        let image = try vault.write(Self.png(.orange), to: "Brain/obrazky/graf.png")
+        let note = "## Fakta\n- Graf: ![Tržby](obrazky/graf.png) roste"
+        let harness = Harness(note, kind: isBrainNote ? .brainNote : .readOnly, noteURL: vault.url("Brain/firma.md"))
+        defer { harness.close() }
+        harness.select("- Graf: ![Tržby](obrazky/graf.png) roste")
+
+        harness.chooseCopyAsHTML()
+
+        let copied = try harness.copied()
+        #expect(copied.images == [image])
+        #expect(copied.nodes("//li//img").count == 1)
+        #expect(copied.plainText == "• Graf: [Obrázek: Tržby] roste")
+        #expect(harness.textView.string == note)
+    }
+
     @Test("ordinary Copy still copies the Markdown source as plain text")
     func ordinaryCopyUnchanged() throws {
         let general = NSPasteboard.general
@@ -492,6 +602,50 @@ struct MarkdownTextViewCopyAsHTMLTests {
         #expect(general.string(forType: .string) == "**tučně**")
         #expect(general.data(forType: .html) == nil)
         #expect(try harness.copied().texts("//strong") == ["tučně"])
+    }
+}
+
+extension MarkdownTextViewCopyAsHTMLTests {
+    static func png(_ color: NSColor, width: Int = 8, height: Int = 6) -> Data {
+        let bitmap = NSBitmapImageRep(
+            bitmapDataPlanes: nil, pixelsWide: width, pixelsHigh: height, bitsPerSample: 8,
+            samplesPerPixel: 4, hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB,
+            bytesPerRow: 0, bitsPerPixel: 0
+        )!
+        let rgb = color.usingColorSpace(.sRGB)!
+        let pixel = [rgb.redComponent, rgb.greenComponent, rgb.blueComponent, 1].map { UInt8($0 * 255) }
+        let pixels = bitmap.bitmapData!
+        for offset in stride(from: 0, to: bitmap.bytesPerRow * height, by: 4) {
+            for channel in 0..<4 { pixels[offset + channel] = pixel[channel] }
+        }
+        return bitmap.representation(using: .png, properties: [:])!
+    }
+}
+
+/// A temporary folder standing in for a Vault, removed after the test.
+private struct TemporaryVault {
+    let root: URL
+
+    init() throws {
+        root = FileManager.default.temporaryDirectory
+            .appending(path: "NotessCopyAsHTMLTests-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    }
+
+    func url(_ path: String) -> URL {
+        root.appending(path: path, directoryHint: .notDirectory)
+    }
+
+    @discardableResult
+    func write(_ data: Data, to path: String) throws -> Data {
+        let file = url(path)
+        try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try data.write(to: file)
+        return data
+    }
+
+    func remove() {
+        try? FileManager.default.removeItem(at: root)
     }
 }
 

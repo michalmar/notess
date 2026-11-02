@@ -989,21 +989,7 @@ public final class MarkdownTextView: NSTextView {
         if let cached = imageCache[source] {
             return cached
         }
-        let unescaped = unescapeMarkdownPath(source)
-        let decoded = unescaped.removingPercentEncoding ?? unescaped
-        guard isSafeRelativePath(decoded) else {
-            reportImageLoadFailure(source: source)
-            return nil
-        }
-        let image: NSImage?
-        if let data = inlineImageData?(source) {
-            image = NSImage(data: data)
-        } else {
-            let url = noteURL.deletingLastPathComponent()
-                .appending(path: decoded, directoryHint: .notDirectory)
-                .standardizedFileURL
-            image = NSImage(contentsOf: url)
-        }
+        let image = localImageData(source: source, noteURL: noteURL).flatMap(NSImage.init(data:))
         if let image {
             imageCache[source] = image
             reportedImageFailures.remove(source)
@@ -1011,6 +997,21 @@ public final class MarkdownTextView: NSTextView {
             reportImageLoadFailure(source: source)
         }
         return image
+    }
+
+    /// The bytes of an image stored with the note: data staged for the unsaved
+    /// note first, then the file relative to the note. Nil when the source is
+    /// not a safe relative path or nothing can be read.
+    func localImageData(source: String, noteURL: URL?) -> Data? {
+        let unescaped = unescapeMarkdownPath(source)
+        let decoded = unescaped.removingPercentEncoding ?? unescaped
+        guard isSafeRelativePath(decoded) else { return nil }
+        if let data = inlineImageData?(source) { return data }
+        guard let noteURL else { return nil }
+        let url = noteURL.deletingLastPathComponent()
+            .appending(path: decoded, directoryHint: .notDirectory)
+            .standardizedFileURL
+        return try? Data(contentsOf: url)
     }
 
     private func reportImageLoadFailure(source: String) {
