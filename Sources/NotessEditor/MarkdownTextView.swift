@@ -597,7 +597,8 @@ public final class MarkdownTextView: NSTextView {
         if item.action == #selector(performFindPanelAction(_:)) || item.action == #selector(showFind(_:)) {
             return isSelectable
         }
-        return validatePaste(item.action) ?? validateTableCommand(item.action) ?? super.validateUserInterfaceItem(item)
+        return validateSourceLineCommand(item.action) ?? validatePaste(item.action) ?? validateTableCommand(item.action)
+            ?? super.validateUserInterfaceItem(item)
     }
 
     public override func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
@@ -608,7 +609,8 @@ public final class MarkdownTextView: NSTextView {
             let location = menuItem.representedObject as? Int ?? selectedRange().location
             return isSelectable && headingFolding.canToggle(at: location)
         }
-        return validatePaste(menuItem.action) ?? validateTableCommand(menuItem.action) ?? super.validateMenuItem(menuItem)
+        return validateSourceLineCommand(menuItem.action) ?? validatePaste(menuItem.action) ?? validateTableCommand(menuItem.action)
+            ?? super.validateMenuItem(menuItem)
     }
 
     /// Whether Paste is enabled, or `nil` to leave the decision to AppKit.
