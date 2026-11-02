@@ -94,11 +94,15 @@ struct MarkdownLineLexer {
     /// completion can work on a prefix that is not yet a Tag. Never used for
     /// highlighting or Tag recognition.
     private let recognizesTagPrefixes: Bool
+    /// Export must discover images inside link labels without changing the
+    /// editor's existing link and image hit regions.
+    private let recognizesLinkedImages: Bool
 
-    init(line: [UInt16], offset: Int, recognizesTagPrefixes: Bool = false) {
+    init(line: [UInt16], offset: Int, recognizesTagPrefixes: Bool = false, recognizesLinkedImages: Bool = false) {
         self.c = line
         self.offset = offset
         self.recognizesTagPrefixes = recognizesTagPrefixes
+        self.recognizesLinkedImages = recognizesLinkedImages
     }
 
     // MARK: Block structure
@@ -534,7 +538,7 @@ struct MarkdownLineLexer {
                 if let after = lexWikiLink(at: i, end: end) { i = after } else { i += 2 }
             case Char.lbracket where allowsLinks:
                 i = lexLink(at: i, textStart: i + 1, end: end, isImage: false) ?? i + 1
-            case Char.bang where allowsLinks && i + 1 < end && c[i + 1] == Char.lbracket:
+            case Char.bang where (allowsLinks || recognizesLinkedImages) && i + 1 < end && c[i + 1] == Char.lbracket:
                 i = lexLink(at: i, textStart: i + 2, end: end, isImage: true) ?? i + 2
             case Char.lt where allowsLinks:
                 i = lexAutolink(at: i, end: end) ?? i + 1

@@ -313,6 +313,51 @@ struct MarkdownTextViewCopyAsHTMLTests {
         #expect(copied.plainText == "Viz web, jana@example.com a https://notess.app/docs.")
     }
 
+    @Test("quoted tasks preserve their list structure and completion states")
+    func quotedTasks() throws {
+        let harness = Harness("Nevybrané\n> - [x] Hotovo\n> - [ ] Další\nKonec")
+        defer { harness.close() }
+        harness.select("> - [x] Hotovo\n> - [ ] Další")
+
+        harness.chooseCopyAsHTML()
+
+        let copied = try harness.copied()
+        #expect(copied.texts("//blockquote/ul/li") == ["☑ Hotovo", "☐ Další"])
+        #expect(copied.plainText == "    • ☑ Hotovo\n    • ☐ Další")
+        #expect(!copied.html.contains("Nevybrané") && !copied.html.contains("Konec"))
+        #expect(!copied.html.contains("[x]") && !copied.html.contains("[ ]"))
+    }
+
+    @Test("a partial quoted nested task keeps its context without copying its parent")
+    func partialQuotedNestedTask() throws {
+        let harness = Harness("> - [x] Nevybrané\n>   - [ ] další úkol\n>     pokračování\n>   - závěr\nKonec")
+        defer { harness.close() }
+        harness.select("úkol\n>     pokračování\n>   - závěr")
+
+        harness.chooseCopyAsHTML()
+
+        let copied = try harness.copied()
+        #expect(copied.texts("//blockquote/ul/li").map(copied.collapse) == ["☐ úkol pokračování", "závěr"])
+        #expect(copied.nodes("//li/br").count == 1)
+        #expect(copied.plainText == "    • ☐ úkol\n      pokračování\n    • závěr")
+        #expect(!copied.html.contains("Nevybrané") && !copied.html.contains("další") && !copied.html.contains("Konec"))
+    }
+
+    @Test("quoted code keeps its fence context, whitespace and literal quote characters")
+    func quotedCode() throws {
+        let harness = Harness("> ```\n> > literal\n>   spaces\n> ```\nKonec")
+        defer { harness.close() }
+        harness.select("> literal\n>   spaces")
+
+        harness.chooseCopyAsHTML()
+
+        let copied = try harness.copied()
+        #expect(copied.nodes("//blockquote").count == 1)
+        #expect(copied.nodes("//blockquote/pre/code").map(\.stringValue) == ["> literal\n  spaces"])
+        #expect(copied.plainText == "    > literal\n      spaces")
+        #expect(!copied.html.contains("Konec") && !copied.html.contains("```"))
+    }
+
     @Test("tables export as semantic tables")
     func tables() throws {
         let harness = Harness("Před\n\n| Jméno | Role |\n| --- | :-: |\n| Jana | **autorka** |\n\nPo")
@@ -437,6 +482,73 @@ struct MarkdownTextViewCopyAsHTMLTests {
         #expect(error.localizedDescription.contains("obrazky/chybi.png"))
         #expect(harness.textView.string == note)
         #expect(try Data(contentsOf: vault.url("obrazky/ok.png")) == existing)
+    }
+
+    @Test("a selected image inside a link embeds its bytes and keeps the surrounding destination")
+    func linkedLocalImage() throws {
+        let vault = try TemporaryVault()
+        defer { vault.remove() }
+        let image = try vault.write(Self.png(.red), to: "obrazky/schema.png")
+        let harness = Harness(
+            "Před [![Schéma](obrazky/schema.png)](https://example.com) po ![Nevybrané](chybi.png)",
+            selecting: "![Schéma](obrazky/schema.png)",
+            noteURL: vault.url("poznamka.md")
+        )
+        defer { harness.close() }
+
+        harness.chooseCopyAsHTML()
+
+        let copied = try harness.copied()
+        #expect(copied.images == [image])
+        #expect(copied.texts("//a/@href") == ["https://example.com"])
+        #expect(copied.nodes("//a/img").count == 1)
+        #expect(copied.texts("//img/@alt") == ["[Obrázek: Schéma]"])
+        #expect(copied.plainText == "[Obrázek: Schéma]")
+        #expect(harness.failures.isEmpty)
+    }
+
+    @Test("a missing or invalid linked image fails atomically", arguments: [false, true])
+    func linkedImageFailure(invalid: Bool) throws {
+        let vault = try TemporaryVault()
+        defer { vault.remove() }
+        try vault.write(Self.png(.blue), to: "ok.png")
+        if invalid { try vault.write(Data("not an image".utf8), to: "chyba.png") }
+        let harness = Harness(
+            "![OK](ok.png) a [![Chyba](chyba.png)](https://example.com)",
+            noteURL: vault.url("poznamka.md")
+        )
+        defer { harness.close() }
+        harness.textView.selectAll(nil)
+        harness.putPreviousClipboard()
+
+        harness.chooseCopyAsHTML()
+
+        #expect(harness.clipboardIsUnchanged)
+        let error = try #require(harness.failures.first as? CopyAsHTMLError)
+        #expect(error == (invalid ? .unexportableLocalImage(source: "chyba.png") : .unreadableLocalImage(source: "chyba.png")))
+        #expect(harness.failures.count == 1)
+    }
+
+    @Test("a linked remote image becomes a description without reading or referencing its image source")
+    func linkedRemoteImage() throws {
+        let harness = Harness("[![Logo](https://images.example.com/logo.png)](https://example.com)")
+        defer { harness.close() }
+        harness.textView.selectAll(nil)
+        var imageReads: [String] = []
+        harness.textView.inlineImageData = {
+            imageReads.append($0)
+            return nil
+        }
+
+        harness.chooseCopyAsHTML()
+
+        let copied = try harness.copied()
+        #expect(copied.nodes("//img").isEmpty)
+        #expect(!copied.html.contains("images.example.com"))
+        #expect(copied.texts("//a/@href") == ["https://example.com"])
+        #expect(copied.texts("//a") == ["[Obrázek: Logo]"])
+        #expect(copied.plainText == "[Obrázek: Logo]")
+        #expect(imageReads.isEmpty && harness.failures.isEmpty)
     }
 
     @Test("a local file that is not an image fails clearly and leaves the clipboard unchanged")

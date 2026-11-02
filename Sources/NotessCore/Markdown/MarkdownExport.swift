@@ -112,7 +112,6 @@ private enum LineKind {
     case paragraph
     case listItem(level: Int, marker: ListMarker, task: Bool?)
     case listContinuation(level: Int)
-    case quote
     case code
     case tableRow(isHeader: Bool)
     case rule
@@ -121,6 +120,7 @@ private enum LineKind {
 
 private struct Line {
     var kind: LineKind
+    var quoteDepth = 0
     /// Inline content; for a table row, one entry per cell.
     var cells: [[Run]]
     /// Raw text of a code line.
@@ -138,6 +138,7 @@ private struct Renderer {
     /// One line of the note as the lexer sees it.
     private struct Lexed {
         var range: NSRange
+        var quoteDepth: Int
         /// Including the line break.
         var fullRange: NSRange
         var state: MarkdownLineState
@@ -166,7 +167,9 @@ private struct Renderer {
         }
         for lexed in candidates {
             guard let kind = kind(of: lexed) else { continue }
-            lines.append(try line(lexed, kind: kind, selection: selection))
+            var rendered = try line(lexed, kind: kind, selection: selection)
+            rendered.quoteDepth = lexed.quoteDepth
+            lines.append(rendered)
         }
         return inlineFragment ? renderInline(lines.first) : renderBlocks(lines)
     }
@@ -188,17 +191,27 @@ private struct Renderer {
             return buffer
         }
         var result: [Lexed] = []
-        var state = MarkdownLineState.documentStart
+        var states = [MarkdownLineState.documentStart]
         for line in starts.indices {
             guard starts[line] <= end || line == 0 else { break }
             let lineUnits = units(line)
-            var lexer = MarkdownLineLexer(line: lineUnits, offset: starts[line])
-            let next = lexer.lex(state: state, isFirstLine: line == 0) {
-                line + 1 < starts.count ? units(line + 1) : nil
+            let prefix = quotePrefix(in: lineUnits, states: states)
+            let contentStart = starts[line] + prefix.length
+            let state = prefix.depth < states.count ? states[prefix.depth] : MarkdownLineState()
+            var lexer = MarkdownLineLexer(
+                line: Array(lineUnits.dropFirst(prefix.length)), offset: contentStart, recognizesLinkedImages: true
+            )
+            let next = lexer.lex(state: state, isFirstLine: line == 0 && prefix.depth == 0) {
+                guard line + 1 < starts.count else { return nil }
+                let following = units(line + 1)
+                let nextPrefix = quotePrefix(in: following, states: states)
+                guard nextPrefix.depth == prefix.depth else { return nil }
+                return Array(following.dropFirst(nextPrefix.length))
             }
             let fullEnd = line + 1 < starts.count ? starts[line + 1] : text.length
             result.append(Lexed(
-                range: NSRange(location: starts[line], length: lineUnits.count),
+                range: NSRange(location: contentStart, length: lineUnits.count - prefix.length),
+                quoteDepth: prefix.depth,
                 fullRange: NSRange(location: starts[line], length: fullEnd - starts[line]),
                 state: state,
                 next: next,
@@ -207,9 +220,27 @@ private struct Renderer {
                 listLine: lexer.listLine,
                 isFirst: line == 0
             ))
-            state = next
+            states = Array(repeating: MarkdownLineState(followsBlankLine: false, allowsIndentedCode: false), count: prefix.depth)
+                + [next]
         }
         return result
+    }
+
+    /// Keep a separate block context inside each quote, preserving indentation
+    /// for nested lists and treating `>` inside fenced code as literal text.
+    private func quotePrefix(in units: [UInt16], states: [MarkdownLineState]) -> (depth: Int, length: Int) {
+        var depth = 0
+        var end = 0
+        while end < units.count {
+            if depth < states.count, states[depth].fence != nil || states[depth].isFrontMatter { break }
+            var marker = end
+            while marker < units.count && marker - end < 3 && units[marker] == Char.space { marker += 1 }
+            guard marker < units.count, units[marker] == Char.gt else { break }
+            end = marker + 1
+            if end < units.count && Char.isWhitespace(units[end]) { end += 1 }
+            depth += 1
+        }
+        return (depth, end)
     }
 
     /// The line's block meaning, or nil for lines that are only syntax or
@@ -230,7 +261,6 @@ private struct Renderer {
             if case .heading(let level) = kind { return .heading(level) }
         }
         if kinds.contains(.thematicBreak) { return .rule }
-        if kinds.contains(.blockquote) { return .quote }
         if let listLine = line.listLine {
             switch listLine.marker {
             case nil:
@@ -269,9 +299,8 @@ private struct Renderer {
             return NSRange(location: start, length: end - start)
         case .listItem:
             start = line.listLine?.contentStart ?? start
-        case .heading, .quote:
-            // Leading markers (`#`, `>`, a list marker in a quote) and the
-            // whitespace after them.
+        case .heading:
+            // Leading heading markers and the whitespace after them.
             var advanced = true
             while advanced {
                 advanced = false
@@ -419,7 +448,10 @@ private struct Renderer {
             case .strikethrough: style.isStrikethrough = true
             case .inlineCode: style.isCode = true
             case .link:
-                if !tokens.contains(where: { $0.isImage && NSLocationInRange(index, $0.range) }) {
+                if !tokens.contains(where: {
+                    $0.isImage && token.range.location > $0.range.location
+                        && token.range.upperBound < $0.range.upperBound
+                }) {
                     style.link = destination(of: token, in: tokens)
                 }
             default: break
@@ -443,11 +475,12 @@ private struct Renderer {
     }
 
     private func imageRun(_ image: MarkdownToken, source: String, tokens: [MarkdownToken], style: Run.Style) throws -> Run {
-        let altRange = tokens.first { $0.kind == .link && NSLocationInRange($0.range.location, image.range) }?.range
+        let altRange = tokens.first {
+            $0.kind == .link && $0.range.location > image.range.location
+                && $0.range.upperBound < image.range.upperBound
+        }?.range
         let alt = altRange.map { visibleText(in: $0, tokens: tokens) } ?? ""
         let description = MarkdownExport.imageDescription(alt: alt)
-        var style = style
-        style.link = nil
         if MarkdownExport.isRemoteImage(source) {
             return Run(content: .text(description), style: style)
         }
@@ -497,12 +530,25 @@ private struct Renderer {
         return .init(html: HTML.document(html), plainText: plain, isEmpty: isEmpty)
     }
 
-    private func renderBlocks(_ lines: [Line]) -> MarkdownExport.Output {
+    private func renderBlocks(_ lines: [Line], wrappingDocument: Bool = true) -> MarkdownExport.Output {
         var html = ""
         var plain: [String] = []
         var index = 0
         while index < lines.count {
             let line = lines[index]
+            if line.quoteDepth > 0 {
+                var group: [Line] = []
+                while index < lines.count && lines[index].quoteDepth > 0 {
+                    var quoted = lines[index]
+                    quoted.quoteDepth -= 1
+                    group.append(quoted)
+                    index += 1
+                }
+                let quote = renderBlocks(group, wrappingDocument: false)
+                html += "<blockquote style=\"\(Style.quote)\">\(quote.html)</blockquote>"
+                plain += quote.plainText.components(separatedBy: "\n").map { "    " + $0 }
+                continue
+            }
             switch line.kind {
             case .heading(let level):
                 html += "<h\(level)>\(HTML.inline(line.runs))</h\(level)>"
@@ -519,11 +565,6 @@ private struct Renderer {
                 let group = take(lines, from: &index) { if case .paragraph = $0 { true } else { false } }
                 html += "<p>" + group.map { HTML.inline($0.runs) }.joined(separator: "<br>") + "</p>"
                 plain += group.map { Plain.text($0.runs) }
-            case .quote:
-                let group = take(lines, from: &index) { if case .quote = $0 { true } else { false } }
-                html += "<blockquote style=\"\(Style.quote)\"><p>"
-                    + group.map { HTML.inline($0.runs) }.joined(separator: "<br>") + "</p></blockquote>"
-                plain += group.map { "    " + Plain.text($0.runs) }
             case .code:
                 let group = take(lines, from: &index) { if case .code = $0 { true } else { false } }
                 let code = group.map(\.code).joined(separator: "\n")
@@ -544,12 +585,12 @@ private struct Renderer {
         let text = plain.joined(separator: "\n")
         let isEmpty = text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             && !lines.contains { line in line.cells.joined().contains { if case .image = $0.content { true } else { false } } }
-        return .init(html: HTML.document(html), plainText: text, isEmpty: isEmpty)
+        return .init(html: wrappingDocument ? HTML.document(html) : html, plainText: text, isEmpty: isEmpty)
     }
 
     private func take(_ lines: [Line], from index: inout Int, while matches: (LineKind) -> Bool) -> [Line] {
         var group: [Line] = []
-        while index < lines.count && matches(lines[index].kind) {
+        while index < lines.count && lines[index].quoteDepth == 0 && matches(lines[index].kind) {
             group.append(lines[index])
             index += 1
         }
@@ -559,15 +600,15 @@ private struct Renderer {
     /// List lines, including blank lines between items of the same list.
     private func takeList(_ lines: [Line], from index: inout Int) -> [Line] {
         var group: [Line] = []
-        while index < lines.count {
+        while index < lines.count && lines[index].quoteDepth == 0 {
             switch lines[index].kind {
             case .listItem, .listContinuation:
                 group.append(lines[index])
                 index += 1
             case .blank:
                 var next = index
-                while next < lines.count, case .blank = lines[next].kind { next += 1 }
-                guard next < lines.count else { return group }
+                while next < lines.count, lines[next].quoteDepth == 0, case .blank = lines[next].kind { next += 1 }
+                guard next < lines.count, lines[next].quoteDepth == 0 else { return group }
                 switch lines[next].kind {
                 case .listItem, .listContinuation: index = next
                 default: return group
