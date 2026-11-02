@@ -613,11 +613,11 @@ public final class MarkdownTextView: NSTextView {
     private func validatePaste(_ action: Selector?) -> Bool? {
         if action == #selector(pasteAsPlainText(_:)) {
             // AppKit enables Paste and Match Style only for plain-text types.
-            if hasRichClipboardText { return isEditable }
+            if richClipboard.offersRichText { return isEditable }
             return validatePrivatePasteboardText()
         }
         guard action == #selector(paste(_:)) else { return nil }
-        if hasRichClipboardText { return isEditable }
+        if richClipboard.offersRichText { return isEditable }
         if canPasteImage { return true }
         // AppKit validates against the general pasteboard only.
         return validatePrivatePasteboardText()
@@ -653,8 +653,8 @@ public final class MarkdownTextView: NSTextView {
 
     private func pasteText(_ sender: Any?) {
         guard isEditable else { return }
-        if hasRichClipboardText {
-            guard let text = clipboardText(preservingLinks: true) else {
+        if richClipboard.offersRichText {
+            guard let text = richClipboard.linkPreservingText() else {
                 // Do not retry failed rich decodes through AppKit's HTML importer.
                 NSSound.beep()
                 return
@@ -669,67 +669,21 @@ public final class MarkdownTextView: NSTextView {
         }
     }
 
-    private var hasRichClipboardText: Bool {
-        pasteboard.types?.contains(where: { $0 == .html || $0 == .rtf }) == true
-    }
-
-    /// Pick one complete representation, never combine text or targets from
-    /// different formats. Usable HTML links precede RTF links; otherwise plain
-    /// text precedes readable HTML, then RTF.
-    private func clipboardText(preservingLinks: Bool) -> String? {
-        let plain = pasteboard.string(forType: .string).flatMap { $0.isEmpty ? nil : $0 }
-        if !preservingLinks, let plain { return plain }
-        var visible: String?
-        for type in [NSPasteboard.PasteboardType.html, .rtf] {
-            let segments = type == .html ? clipboardHTMLSegments() : clipboardRTFSegments()
-            guard let segments else { continue }
-            if preservingLinks, let markdown = RichTextLinkMarkdown.markdown(from: segments) {
-                return markdown
-            }
-            let text = RichTextLinkMarkdown.visibleText(from: segments)
-            if visible == nil, !text.isEmpty { visible = text }
-        }
-        return plain ?? visible
-    }
-
-    private func clipboardHTMLSegments() -> [RichTextLinkMarkdown.Segment]? {
-        guard pasteboard.types?.contains(.html) == true else { return nil }
-        guard let data = pasteboard.data(forType: .html) else {
-            NSLog("Could not read HTML clipboard data")
-            return nil
-        }
-        if data.isEmpty { return nil }
-        guard let html = ClipboardHTML.string(from: data) else {
-            NSLog("Could not decode HTML clipboard text")
-            return nil
-        }
-        return ClipboardHTML.segments(in: html)
-    }
-
-    private func clipboardRTFSegments() -> [RichTextLinkMarkdown.Segment]? {
-        guard pasteboard.types?.contains(.rtf) == true else { return nil }
-        guard let data = pasteboard.data(forType: .rtf) else {
-            NSLog("Could not read RTF clipboard data")
-            return nil
-        }
-        do {
-            return try ClipboardRTF.segments(in: data)
-        } catch {
-            NSLog("Could not decode RTF clipboard text: %@", error.localizedDescription)
-            return nil
-        }
-    }
+    private var richClipboard: RichClipboard { RichClipboard(pasteboard: pasteboard) }
 
     /// Paste and Match Style: only the visible text, never link conversion.
     /// AppKit's own version reads the general pasteboard regardless of ours.
     public override func pasteAsPlainText(_ sender: Any?) {
         guard isEditable else { return }
-        if let text = clipboardText(preservingLinks: false) {
-            replace(selectedRange(), with: text, actionName: "Vložit")
-        } else if hasRichClipboardText {
-            NSSound.beep()
-        } else if pasteboard == .general {
+        let richClipboard = richClipboard
+        guard richClipboard.offersRichText || pasteboard != .general else {
             super.pasteAsPlainText(sender)
+            return
+        }
+        if let text = richClipboard.visibleText() {
+            replace(selectedRange(), with: text, actionName: "Vložit")
+        } else if richClipboard.offersRichText {
+            NSSound.beep()
         }
     }
 

@@ -446,6 +446,14 @@ struct MarkdownTextViewPasteTests {
         (#"{\field{\*\fldinst HYPERLINK "https://example.com/a(b)c"}{\fldrslt x}}"#, "[x](https://example.com/a(b)c)"),
         (#"{\field{\*\fldinst HYPERLINK "https://example.com/a b"}{\fldrslt x}}"#, "[x](https://example.com/a%20b)"),
         (#"{\b Bold} and {\i italic} text"#, "Bold and italic text"),
+        (#"{\field{\*\fldinst HYPERLINK "https://example.com/a"}{\fldrslt docs\par}}next"#, "[docs](https://example.com/a)\nnext"),
+        // Word's field switches are not part of the target.
+        (#"{\field{\*\fldinst HYPERLINK "https://example.com/a" \\t "_blank"}{\fldrslt x}}"#, "[x](https://example.com/a)"),
+        (#"{\field{\*\fldinst HYPERLINK "https://example.com/a"  \\o  "tip text" \\h}{\fldrslt x}}"#, "[x](https://example.com/a)"),
+        (#"{\field{\*\fldinst HYPERLINK "https://example.com/q?x=%22y%22"}{\fldrslt x}}"#, "[x](https://example.com/q?x=%22y%22)"),
+        (#"{\field{\*\fldinst HYPERLINK "https://example.com/a" \\l "part-2"}{\fldrslt x}}"#, "[x](https://example.com/a#part-2)"),
+        // AppKit truncates a target at a Unicode escape, so the RTF's links cannot be trusted.
+        (#"{\field{\*\fldinst HYPERLINK "https://cs.wikipedia.org/wiki/\u268?aj"}{\fldrslt \u268?aj}} and {\field{\*\fldinst HYPERLINK "https://example.com/b"}{\fldrslt b}}"#, "Čaj and b"),
     ])
     func rtfLinkSemantics(body: String, expected: String) {
         let harness = Harness("")
@@ -673,6 +681,8 @@ struct MarkdownTextViewPasteTests {
         (#"<a href="">x</a> <a href="https://example.com/a">y</a>"#, "x [y](https://example.com/a)"),
         (#"<a name="top">x</a> <a href="https://example.com/a">y</a>"#, "x [y](https://example.com/a)"),
         (#"<a href="data:text/html,hi">x</a> <a href="https://example.com/a">y</a>"#, "x [y](https://example.com/a)"),
+        // Browsers drop ASCII tabs and line breaks inside URLs; Word wraps long hrefs with them.
+        ("<a href=\"https://example.com/long\r\n/path?a=1&#10;&amp;b=\t2\">x</a>", "[x](https://example.com/long/path?a=1&b=2)"),
     ])
     func destinations(html: String, expected: String) {
         let harness = Harness("")
@@ -730,6 +740,9 @@ struct MarkdownTextViewPasteTests {
         (#"<a href="https://example.com/a&lt;b&gt;c\d">x</a>"#, "[x](https://example.com/a%3Cb%3Ec%5Cd)"),
         (#"<a href="https://example.com/čaj?x=1&amp;y=2#h">x</a>"#, "[x](https://example.com/čaj?x=1&y=2#h)"),
         (#"Wow!<a href="https://example.com/a">link</a>"#, #"Wow\![link](https://example.com/a)"#),
+        (#"Wow\!<a href="https://example.com/a">link</a>"#, #"Wow\![link](https://example.com/a)"#),
+        (#"C:\Temp\<a href="https://example.com/a">docs</a>"#, #"C:\Temp\\[docs](https://example.com/a)"#),
+        (#"C:\\<a href="https://example.com/a">docs</a>"#, #"C:\\[docs](https://example.com/a)"#),
     ])
     func markdownSensitive(html: String, expected: String) {
         let harness = Harness("")
@@ -751,6 +764,10 @@ struct MarkdownTextViewPasteTests {
         (#"<pre>  keep\n  this</pre> <a href="https://e.com/a">x</a>"#.replacingOccurrences(of: #"\n"#, with: "\n"), "  keep\n  this\n\n[x](https://e.com/a)"),
         (#"1 &lt; 2 &amp;&amp; 3 &gt; 2&nbsp;&#x2713; &quot;q&quot; <a href="https://e.com/a">x</a>"#, #"1 < 2 && 3 > 2 ✓ "q" [x](https://e.com/a)"#),
         (#"<a href="https://e.com/a"><img src="https://tracker.example/p.png"></a>text"#, "text"),
+        (#"Caf&eacute; <a href="https://e.com/a">P&rcaron;&iacute;loha men&uuml;</a> &Scaron;&ccaron;&ecaron;&zcaron;&uring;&ncaron;&dcaron;&tcaron;&yacute; &szlig;&oslash;&aring;"#, "Café [Příloha menü](https://e.com/a) Ščěžůňďťý ßøå"),
+        ("<pre>\ncode</pre><a href=\"https://e.com/a\">x</a>", "code\n\n[x](https://e.com/a)"),
+        (#"<noscript>Enable JavaScript</noscript><template><a href="https://e.com/t">t</a></template>t <a href="https://e.com/a">x</a>"#, "t [x](https://e.com/a)"),
+        (#"Intro<a href="https://e.com/a"><div>Go</div></a>next"#, "Intro\n[Go](https://e.com/a)\nnext"),
     ])
     func otherFormatting(html: String, expected: String) {
         let harness = Harness("")

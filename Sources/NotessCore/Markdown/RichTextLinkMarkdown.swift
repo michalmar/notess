@@ -26,20 +26,14 @@ public enum RichTextLinkMarkdown {
                 result += text
             case .link(let rawLabel, let rawDestination):
                 let label = Label(rawLabel)
-                guard !label.core.isEmpty else {
-                    result += label.hasEdgeSpace ? " " : ""
-                    continue
-                }
-                guard let destination = Destination(rawDestination),
+                guard !label.core.isEmpty,
+                      let destination = Destination(rawDestination),
                       !(destination.isWeb && label.core == destination.source) else {
-                    result += label.leading + label.core + label.trailing
+                    result += label.text
                     continue
                 }
                 result += label.leading
-                if result.hasSuffix("!") {
-                    result.removeLast()
-                    result += "\\!"
-                }
+                keepLinkOpening(after: &result)
                 result += "[\(escapeLabel(label.core))](\(destination.encoded))"
                 result += label.trailing
                 wroteLink = true
@@ -53,25 +47,25 @@ public enum RichTextLinkMarkdown {
         segments.map { segment in
             switch segment {
             case .text(let text): text
-            case .link(let label, _):
-                { let label = Label(label); return label.leading + label.core + label.trailing }()
+            case .link(let label, _): Label(label).text
             }
         }.joined()
     }
 
-    /// A link label with its whitespace (including line breaks) collapsed to
-    /// single spaces; edge whitespace belongs outside the link.
+    /// A link label with its inner whitespace (including line breaks) collapsed
+    /// to single spaces. Edge whitespace, such as a paragraph break, stays as
+    /// it is but belongs outside the link.
     private struct Label {
         let leading: String
         let core: String
         let trailing: String
-        var hasEdgeSpace: Bool { !leading.isEmpty || !trailing.isEmpty }
+        var text: String { leading + core + trailing }
 
         init(_ raw: String) {
             let words = raw.split(whereSeparator: { $0.isWhitespace })
             core = words.joined(separator: " ")
-            leading = raw.first?.isWhitespace == true ? " " : ""
-            trailing = raw.last?.isWhitespace == true && !words.isEmpty ? " " : ""
+            leading = String(raw.prefix(while: { $0.isWhitespace }))
+            trailing = words.isEmpty ? "" : String(raw.reversed().prefix(while: { $0.isWhitespace }).reversed())
         }
     }
 
@@ -81,7 +75,9 @@ public enum RichTextLinkMarkdown {
         let isWeb: Bool
 
         init?(_ raw: String) {
+            // As in browsers, ASCII tabs and line breaks inside a URL are dropped.
             let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+                .filter { $0 != "\t" && $0 != "\n" && $0 != "\r" && $0 != "\r\n" }
             guard !trimmed.isEmpty,
                   !trimmed.unicodeScalars.contains(where: { $0.value < 0x20 || $0.value == 0x7F }),
                   let colon = trimmed.firstIndex(of: ":") else { return nil }
@@ -135,6 +131,19 @@ public enum RichTextLinkMarkdown {
                 if depth < 0 { return false }
             }
             return depth == 0
+        }
+    }
+
+    /// Keeps the `[` about to be written opening a link rather than being
+    /// escaped by a trailing backslash or turned into an image by a trailing `!`.
+    private static func keepLinkOpening(after text: inout String) {
+        func trailingBackslashes(_ text: Substring) -> Int {
+            text.reversed().prefix(while: { $0 == "\\" }).count
+        }
+        if trailingBackslashes(text[...]).isMultiple(of: 2) == false {
+            text += "\\"
+        } else if text.hasSuffix("!"), trailingBackslashes(text.dropLast()).isMultiple(of: 2) {
+            text.insert("\\", at: text.index(before: text.endIndex))
         }
     }
 

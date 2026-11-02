@@ -45,6 +45,13 @@ enum ClipboardHTML {
 
     // MARK: Text and links
 
+    struct UndecodableText: Error {}
+
+    static func segments(in data: Data) throws -> [Segment] {
+        guard let html = string(from: data) else { throw UndecodableText() }
+        return segments(in: html)
+    }
+
     static func segments(in html: String) -> [Segment] {
         var reader = Reader(Array(html.unicodeScalars))
         reader.read()
@@ -155,6 +162,8 @@ enum ClipboardHTML {
         private var inHead = false
         private var inTitle = false
         private var preformattedDepth = 0
+        /// A line break right after `<pre>` is not content.
+        private var dropsNextLineBreak = false
 
         init(_ scalars: [Unicode.Scalar]) { self.scalars = scalars }
 
@@ -203,7 +212,10 @@ enum ClipboardHTML {
         private mutating func readText() {
             let start = index
             while index < scalars.count && scalars[index] != "<" { index += 1 }
-            emit(HTMLEntities.decode(String(String.UnicodeScalarView(scalars[start..<index]))))
+            var text = HTMLEntities.decode(String(String.UnicodeScalarView(scalars[start..<index])))
+            if dropsNextLineBreak, text.first == "\n" || text.first == "\r\n" { text.removeFirst() }
+            dropsNextLineBreak = false
+            emit(text)
         }
 
         private mutating func readName() -> String {
@@ -215,6 +227,7 @@ enum ClipboardHTML {
         }
 
         private mutating func readEndTag() {
+            dropsNextLineBreak = false
             index += 2
             let name = readName()
             skip(past: ">", from: index)
@@ -229,11 +242,12 @@ enum ClipboardHTML {
         }
 
         private mutating func readStartTag() {
+            dropsNextLineBreak = false
             index += 1
             let name = readName()
             let attributes = readAttributes()
             switch name {
-            case "script", "style":
+            case "script", "style", "noscript", "template":
                 skipRawText(until: "</\(name)")
             case "head": inHead = true
             case "body": inHead = false
@@ -246,6 +260,7 @@ enum ClipboardHTML {
             case "pre":
                 if !isHidden { builder.block(margin: 2) }
                 preformattedDepth += 1
+                dropsNextLineBreak = true
             default:
                 if !isHidden, let margin = ClipboardHTML.blockMargins[name] { builder.block(margin: margin) }
             }
@@ -345,14 +360,41 @@ enum HTMLEntities {
         return named[reference]
     }
 
-    private static let named: [String: String] = [
-        "amp": "&", "lt": "<", "gt": ">", "quot": "\"", "apos": "'", "nbsp": "\u{A0}",
-        "ensp": " ", "emsp": " ", "thinsp": " ", "copy": "©", "reg": "®", "trade": "™",
-        "hellip": "…", "mdash": "—", "ndash": "–", "lsquo": "‘", "rsquo": "’", "sbquo": "‚",
-        "ldquo": "“", "rdquo": "”", "bdquo": "„", "laquo": "«", "raquo": "»", "bull": "•",
-        "middot": "·", "euro": "€", "pound": "£", "yen": "¥", "cent": "¢", "deg": "°",
-        "plusmn": "±", "times": "×", "divide": "÷", "para": "¶", "sect": "§", "larr": "←",
-        "rarr": "→", "uarr": "↑", "darr": "↓", "check": "✓", "zwnj": "\u{200C}", "zwj": "\u{200D}",
-        "shy": "\u{AD}",
-    ]
+    private static let named: [String: String] = {
+        var named: [String: String] = [
+            "amp": "&", "lt": "<", "gt": ">", "quot": "\"", "apos": "'",
+            "ensp": " ", "emsp": " ", "thinsp": " ", "zwnj": "\u{200C}", "zwj": "\u{200D}",
+            "trade": "™", "hellip": "…", "mdash": "—", "ndash": "–", "lsquo": "‘", "rsquo": "’", "sbquo": "‚",
+            "ldquo": "“", "rdquo": "”", "bdquo": "„", "lsaquo": "‹", "rsaquo": "›", "bull": "•", "dagger": "†",
+            "Dagger": "‡", "permil": "‰", "prime": "′", "Prime": "″", "minus": "−", "euro": "€", "larr": "←",
+            "rarr": "→", "uarr": "↑", "darr": "↓", "check": "✓", "fnof": "ƒ", "circ": "ˆ", "tilde": "˜",
+        ]
+        // HTML's Latin-1 names, U+00A0 to U+00FF in order.
+        let latin1 = """
+            nbsp iexcl cent pound curren yen brvbar sect uml copy ordf laquo not shy reg macr \
+            deg plusmn sup2 sup3 acute micro para middot cedil sup1 ordm raquo frac14 frac12 frac34 iquest \
+            Agrave Aacute Acirc Atilde Auml Aring AElig Ccedil Egrave Eacute Ecirc Euml Igrave Iacute Icirc Iuml \
+            ETH Ntilde Ograve Oacute Ocirc Otilde Ouml times Oslash Ugrave Uacute Ucirc Uuml Yacute THORN szlig \
+            agrave aacute acirc atilde auml aring aelig ccedil egrave eacute ecirc euml igrave iacute icirc iuml \
+            eth ntilde ograve oacute ocirc otilde ouml divide oslash ugrave uacute ucirc uuml yacute thorn yuml
+            """.split(separator: " ")
+        for (offset, name) in latin1.enumerated() {
+            named[String(name)] = String(Unicode.Scalar(UInt8(0xA0 + offset)))
+        }
+        // Central European letters (Latin Extended-A), as in Czech, Slovak and Polish text.
+        let latinExtendedA: [(String, UInt32)] = [
+            ("Aogon", 0x104), ("Cacute", 0x106), ("Ccaron", 0x10C), ("Dcaron", 0x10E), ("Dstrok", 0x110),
+            ("Eogon", 0x118), ("Ecaron", 0x11A), ("Lacute", 0x139), ("Lcaron", 0x13D), ("Lstrok", 0x141),
+            ("Nacute", 0x143), ("Ncaron", 0x147), ("Odblac", 0x150), ("OElig", 0x152), ("Racute", 0x154),
+            ("Rcaron", 0x158), ("Sacute", 0x15A), ("Scaron", 0x160), ("Tcaron", 0x164), ("Uring", 0x16E),
+            ("Udblac", 0x170), ("Zacute", 0x179), ("Zdot", 0x17B), ("Zcaron", 0x17D),
+        ]
+        for (name, value) in latinExtendedA {
+            // Each lowercase letter directly follows its capital.
+            named[name] = String(Unicode.Scalar(value)!)
+            named[name == "OElig" ? "oelig" : name.prefix(1).lowercased() + name.dropFirst()] = String(Unicode.Scalar(value + 1)!)
+        }
+        named["Yuml"] = "Ÿ"
+        return named
+    }()
 }

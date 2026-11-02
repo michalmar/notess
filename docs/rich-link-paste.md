@@ -7,8 +7,8 @@ Tickets #131 and #132, implementing spec #130. Cmd+V keeps hyperlinks from HTML 
 - `RichTextLinkMarkdown` (`NotessCore`) turns `[Segment]` (`.text` / `.link(label:destination:)`) into Markdown. Both clipboard readers use the same destination and escaping rules.
 - `ClipboardHTML` (`NotessEditor`) is a tolerant, dependency-free HTML scanner producing those segments. It deliberately avoids `NSAttributedString` HTML import (WebKit, run-loop spinning, possible remote fetches). Nothing is fetched or opened on paste.
 - `ClipboardRTF` (`NotessEditor`) uses AppKit's local RTF reader and extracts only visible text and `.link` attributes. Enumerating the link attribute, rather than all styling attributes, keeps a label split by bold/color styling as one link. The editor remains plain text and TextKit 2.
-- `MarkdownTextView.paste` resolves supported rich representations completely before making one normal, undoable replacement. Rich decoding failures are logged with `NSLog`; other readable representations are still considered. If none contains readable text, paste beeps without editing. Failed rich decoding is not retried through AppKit's HTML importer.
-- Plain-text-only and other existing AppKit text paste paths remain unchanged. The existing image-only attachment workflow and text-over-image-preview behavior remain intact.
+- `RichClipboard` (`NotessEditor`) reads the HTML and RTF representations of a pasteboard and applies the precedence below. `MarkdownTextView.paste` resolves them completely before making one normal, undoable replacement. Rich decoding failures are logged with `NSLog`; other readable representations are still considered. If none contains readable text, paste beeps without editing. Failed rich decoding is not retried through AppKit's HTML importer.
+- Plain-text-only clipboards go through AppKit's own Paste and Paste and Match Style unchanged, as do other existing AppKit text paste paths. The existing image-only attachment workflow and text-over-image-preview behavior remain intact.
 
 ## Representation precedence
 
@@ -28,10 +28,12 @@ An HTML passage without usable links cannot hide usable RTF links. If HTML and R
 
 - Destinations: absolute `http`/`https` with a host, and `mailto:` with an address. Relative URLs, `javascript:`, `file:` and others are not links; their label stays plain text.
 - A web link whose label equals its destination stays a bare URL. Empty labels are dropped.
-- Labels have Markdown metacharacters escaped; text outside labels is never escaped. Spaces and unbalanced parentheses in destinations are percent-encoded.
-- `<p>`/headings/lists/tables give a blank line, `<div>`/`<li>`/`<br>` a single newline, table cells a space. Other formatting adds no Markdown.
+- Labels have Markdown metacharacters escaped; text outside labels is never escaped, except that a backslash or `!` right before a link gets one more backslash so the `[` still opens a link (not an escape or an image). Whitespace inside a label collapses to single spaces; leading and trailing whitespace, including a line break, is kept outside the link.
+- Destination text: surrounding whitespace is trimmed and, as in browsers, tabs and line breaks inside them are dropped. Spaces, `<`, `>`, `` ` ``, `\` and unbalanced parentheses are percent-encoded; nothing else is changed.
+- `<p>`/headings/lists/tables give a blank line, `<div>`/`<li>`/`<br>` a single newline, table cells a space; a block inside a link breaks lines around the link. The line break right after `<pre>` is dropped, as in browsers. `script`, `style`, `noscript` and `template` content is not visible text. Other formatting adds no Markdown.
+- HTML character references: numeric ones, and the named ones for Latin-1, Central European letters and common punctuation.
 - Encodings: UTF-8/16 (with or without BOM), the declared charset, then Windows-1252.
-- RTF retains its decoded line/paragraph characters without translating visual paragraph spacing into extra blank lines. Its decoded link attributes feed the same Markdown semantics as HTML; unsupported fields remain visible text.
+- RTF retains its decoded line/paragraph characters without translating visual paragraph spacing into extra blank lines. Its decoded link attributes feed the same Markdown semantics as HTML; unsupported fields remain visible text. AppKit keeps a `HYPERLINK` field's quoted switches (Word's `\t "_blank"`, `\o "tip"`) inside the link; they are removed, and `\l "bookmark"` becomes the `#bookmark` fragment. AppKit truncates a target at its first `\u` escape (for example `wiki/\u268?aj` becomes `wiki/`), so when any `HYPERLINK` target contains one, that RTF's links are pasted as their text only rather than to a wrong address.
 
 ## Observed clipboards
 
