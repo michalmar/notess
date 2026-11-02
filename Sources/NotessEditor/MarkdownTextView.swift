@@ -611,9 +611,21 @@ public final class MarkdownTextView: NSTextView {
 
     /// Whether Paste is enabled, or `nil` to leave the decision to AppKit.
     private func validatePaste(_ action: Selector?) -> Bool? {
+        if action == #selector(pasteAsPlainText(_:)) {
+            // AppKit enables Paste and Match Style only for plain-text types.
+            if richClipboard.offersRichText { return isEditable }
+            return validatePrivatePasteboardText()
+        }
         guard action == #selector(paste(_:)) else { return nil }
+        if richClipboard.offersRichText { return isEditable }
         if canPasteImage { return true }
         // AppKit validates against the general pasteboard only.
+        return validatePrivatePasteboardText()
+    }
+
+    /// Whether the text paste actions are enabled for a test pasteboard, or `nil`
+    /// to leave the decision to AppKit, which validates the general pasteboard only.
+    private func validatePrivatePasteboardText() -> Bool? {
         guard pasteboard != .general else { return nil }
         return isEditable && pasteboard.availableType(from: readablePasteboardTypes) != nil
     }
@@ -640,10 +652,38 @@ public final class MarkdownTextView: NSTextView {
     }
 
     private func pasteText(_ sender: Any?) {
+        guard isEditable else { return }
+        if richClipboard.offersRichText {
+            guard let text = richClipboard.linkPreservingText() else {
+                // Do not retry failed rich decodes through AppKit's HTML importer.
+                NSSound.beep()
+                return
+            }
+            replace(selectedRange(), with: text, actionName: "Vložit")
+            return
+        }
         if pasteboard == .general {
             super.paste(sender)
         } else {
             readSelection(from: pasteboard)
+        }
+    }
+
+    private var richClipboard: RichClipboard { RichClipboard(pasteboard: pasteboard) }
+
+    /// Paste and Match Style: only the visible text, never link conversion.
+    /// AppKit's own version reads the general pasteboard regardless of ours.
+    public override func pasteAsPlainText(_ sender: Any?) {
+        guard isEditable else { return }
+        let richClipboard = richClipboard
+        guard richClipboard.offersRichText || pasteboard != .general else {
+            super.pasteAsPlainText(sender)
+            return
+        }
+        if let text = richClipboard.visibleText() {
+            replace(selectedRange(), with: text, actionName: "Vložit")
+        } else if richClipboard.offersRichText {
+            NSSound.beep()
         }
     }
 
