@@ -31,19 +31,14 @@ struct NotessApp: App {
 final class AppDelegate: NSObject, NSApplicationDelegate {
     let model = AppModel()
     private var closeTabEventMonitor: Any?
-    private var editMenuObserver: Any?
+    private let sourceLineMenu = SourceLineMenuController()
     private var isWaitingForAgentOperationTermination = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Needed when launched as a bare executable (`swift run`), harmless in the .app bundle.
         NSApp.setActivationPolicy(.regular)
         NSApp.activate()
-        CopyAsHTMLMenuItem.install(in: NSApp.mainMenu)
-        editMenuObserver = NotificationCenter.default.addObserver(
-            forName: NSApplication.didUpdateNotification, object: NSApp, queue: .main
-        ) { _ in
-            MainActor.assumeIsolated { _ = CopyAsHTMLMenuItem.install(in: NSApp.mainMenu) }
-        }
+        sourceLineMenu.start()
         closeTabEventMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) {
             [weak self] event in
             let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
@@ -87,6 +82,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        sourceLineMenu.stop()
         if let closeTabEventMonitor {
             NSEvent.removeMonitor(closeTabEventMonitor)
         }

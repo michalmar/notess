@@ -5,8 +5,8 @@ import NotessEditor
 ///
 /// An AppKit item sent through the responder chain, so the focused Markdown
 /// view enables it only for a current selection, which a SwiftUI command
-/// cannot do. SwiftUI may rebuild the Edit menu, so installing is idempotent
-/// and repeated whenever the app updates.
+/// cannot do. SwiftUI may rebuild the Edit menu, so installing is idempotent;
+/// `SourceLineMenuController` repeats it whenever menu items change.
 @MainActor
 enum CopyAsHTMLMenuItem {
     static let title = "Kopírovat jako HTML"

@@ -600,7 +600,8 @@ public final class MarkdownTextView: NSTextView {
         if item.action == #selector(performFindPanelAction(_:)) || item.action == #selector(showFind(_:)) {
             return isSelectable
         }
-        return validatePaste(item.action) ?? validateCopyAsHTML(item.action) ?? validateTableCommand(item.action)
+        return validateSourceLineCommand(item.action) ?? validatePaste(item.action) ?? validateCopyAsHTML(item.action)
+            ?? validateTableCommand(item.action)
             ?? super.validateUserInterfaceItem(item)
     }
 
@@ -612,7 +613,8 @@ public final class MarkdownTextView: NSTextView {
             let location = menuItem.representedObject as? Int ?? selectedRange().location
             return isSelectable && headingFolding.canToggle(at: location)
         }
-        return validatePaste(menuItem.action) ?? validateCopyAsHTML(menuItem.action) ?? validateTableCommand(menuItem.action)
+        return validateSourceLineCommand(menuItem.action) ?? validatePaste(menuItem.action) ?? validateCopyAsHTML(menuItem.action)
+            ?? validateTableCommand(menuItem.action)
             ?? super.validateMenuItem(menuItem)
     }
 
