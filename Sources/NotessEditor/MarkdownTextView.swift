@@ -584,7 +584,10 @@ public final class MarkdownTextView: NSTextView {
     /// Called when clipboard image data cannot be turned into a PNG; nothing is inserted.
     public var onPasteImageFailure: ((Error) -> Void)?
 
-    /// The pasteboard Paste reads; tests substitute a private one.
+    /// Called when Copy as HTML cannot export the selection; the clipboard is unchanged.
+    public var onCopyAsHTMLFailure: ((Error) -> Void)?
+
+    /// The pasteboard Paste reads and Copy as HTML writes; tests substitute a private one.
     var pasteboard: NSPasteboard = .general
 
     /// The Edit ▸ Paste item (and so Cmd+V) is enabled by AppKit only for the
@@ -597,7 +600,8 @@ public final class MarkdownTextView: NSTextView {
         if item.action == #selector(performFindPanelAction(_:)) || item.action == #selector(showFind(_:)) {
             return isSelectable
         }
-        return validatePaste(item.action) ?? validateTableCommand(item.action) ?? super.validateUserInterfaceItem(item)
+        return validatePaste(item.action) ?? validateCopyAsHTML(item.action) ?? validateTableCommand(item.action)
+            ?? super.validateUserInterfaceItem(item)
     }
 
     public override func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
@@ -608,7 +612,8 @@ public final class MarkdownTextView: NSTextView {
             let location = menuItem.representedObject as? Int ?? selectedRange().location
             return isSelectable && headingFolding.canToggle(at: location)
         }
-        return validatePaste(menuItem.action) ?? validateTableCommand(menuItem.action) ?? super.validateMenuItem(menuItem)
+        return validatePaste(menuItem.action) ?? validateCopyAsHTML(menuItem.action) ?? validateTableCommand(menuItem.action)
+            ?? super.validateMenuItem(menuItem)
     }
 
     /// Whether Paste is enabled, or `nil` to leave the decision to AppKit.
