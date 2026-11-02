@@ -611,9 +611,20 @@ public final class MarkdownTextView: NSTextView {
 
     /// Whether Paste is enabled, or `nil` to leave the decision to AppKit.
     private func validatePaste(_ action: Selector?) -> Bool? {
+        if action == #selector(pasteAsPlainText(_:)) {
+            // AppKit enables Paste and Match Style only for plain-text types.
+            if isEditable, pasteboard.availableType(from: [.html]) != nil { return true }
+            return validatePrivatePasteboardText()
+        }
         guard action == #selector(paste(_:)) else { return nil }
         if canPasteImage { return true }
         // AppKit validates against the general pasteboard only.
+        return validatePrivatePasteboardText()
+    }
+
+    /// Whether the text paste actions are enabled for a test pasteboard, or `nil`
+    /// to leave the decision to AppKit, which validates the general pasteboard only.
+    private func validatePrivatePasteboardText() -> Bool? {
         guard pasteboard != .general else { return nil }
         return isEditable && pasteboard.availableType(from: readablePasteboardTypes) != nil
     }
@@ -640,10 +651,38 @@ public final class MarkdownTextView: NSTextView {
     }
 
     private func pasteText(_ sender: Any?) {
+        if isEditable, let markdown = linkMarkdownFromPasteboard() {
+            replace(selectedRange(), with: markdown, actionName: "Vložit")
+            return
+        }
         if pasteboard == .general {
             super.paste(sender)
         } else {
             readSelection(from: pasteboard)
+        }
+    }
+
+    /// The Markdown for the hyperlinks in the clipboard's HTML, or `nil` when
+    /// it has none worth keeping and Paste should insert the clipboard as text.
+    private func linkMarkdownFromPasteboard() -> String? {
+        clipboardHTMLSegments().flatMap(RichTextLinkMarkdown.markdown(from:))
+    }
+
+    private func clipboardHTMLSegments() -> [RichTextLinkMarkdown.Segment]? {
+        guard let data = pasteboard.data(forType: .html), let html = ClipboardHTML.string(from: data) else { return nil }
+        return ClipboardHTML.segments(in: html)
+    }
+
+    /// Paste and Match Style: only the visible text, never link conversion.
+    /// AppKit's own version reads the general pasteboard regardless of ours.
+    public override func pasteAsPlainText(_ sender: Any?) {
+        guard isEditable else { return }
+        let text = pasteboard.string(forType: .string)
+            ?? clipboardHTMLSegments().map(RichTextLinkMarkdown.visibleText(from:))
+        if let text, !text.isEmpty {
+            replace(selectedRange(), with: text, actionName: "Vložit")
+        } else if pasteboard == .general {
+            super.pasteAsPlainText(sender)
         }
     }
 

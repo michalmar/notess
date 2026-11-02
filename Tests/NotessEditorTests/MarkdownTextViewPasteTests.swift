@@ -17,6 +17,11 @@ struct MarkdownTextViewPasteTests {
         let pasteboard: NSPasteboard
         let editMenu = NSMenu(title: "Úpravy")
         let pasteItem = NSMenuItem(title: "Vložit", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
+        let pasteAndMatchStyleItem = NSMenuItem(
+            title: "Vložit a přizpůsobit styl",
+            action: #selector(NSTextView.pasteAsPlainText(_:)),
+            keyEquivalent: "v"
+        )
         let coordinator = MarkdownEditor.Coordinator()
         var staged: [String: Data] = [:]
         var failures: [Error] = []
@@ -58,7 +63,9 @@ struct MarkdownTextViewPasteTests {
             ) { [unowned self] _ in MainActor.assumeIsolated { changeNotifications += 1 } }
 
             pasteItem.keyEquivalentModifierMask = .command
+            pasteAndMatchStyleItem.keyEquivalentModifierMask = [.command, .option, .shift]
             editMenu.addItem(pasteItem)
+            editMenu.addItem(pasteAndMatchStyleItem)
             textView.undoManager?.groupsByEvent = false
         }
 
@@ -86,14 +93,31 @@ struct MarkdownTextViewPasteTests {
             return pasteItem.isEnabled
         }
 
+        /// Whether Edit ▸ Paste and Match Style is enabled, as validated by the menu.
+        var isPasteAndMatchStyleEnabled: Bool {
+            pasteAndMatchStyleItem.target = responderChainTarget(for: #selector(NSTextView.pasteAsPlainText(_:)))
+            editMenu.update()
+            return pasteAndMatchStyleItem.isEnabled
+        }
+
         /// Presses Cmd+V: the menu matches the key equivalent, validates the
         /// Paste item and sends `paste:` to the responder chain. One undo step.
         func pressCommandV() {
             pasteItem.target = responderChainTarget(for: #selector(NSText.paste(_:)))
+            press(modifiers: .command)
+        }
+
+        /// Presses Option+Shift+Cmd+V, Paste and Match Style. One undo step.
+        func pressPasteAndMatchStyle() {
+            pasteAndMatchStyleItem.target = responderChainTarget(for: #selector(NSTextView.pasteAsPlainText(_:)))
+            press(modifiers: [.command, .option, .shift])
+        }
+
+        private func press(modifiers: NSEvent.ModifierFlags) {
             let event = NSEvent.keyEvent(
                 with: .keyDown,
                 location: .zero,
-                modifierFlags: .command,
+                modifierFlags: modifiers,
                 timestamp: ProcessInfo.processInfo.systemUptime,
                 windowNumber: window.windowNumber,
                 context: nil,
@@ -116,6 +140,13 @@ struct MarkdownTextViewPasteTests {
         func putPNG(_ data: Data) {
             pasteboard.clearContents()
             pasteboard.setData(data, forType: .png)
+        }
+
+        /// An HTML clipboard, optionally with a plain-text representation of the same selection.
+        func putHTML(_ html: String, plainText: String? = nil) {
+            pasteboard.clearContents()
+            pasteboard.setData(Data(html.utf8), forType: .html)
+            if let plainText { pasteboard.setString(plainText, forType: .string) }
         }
     }
 
@@ -249,6 +280,409 @@ struct MarkdownTextViewPasteTests {
 
         harness.textView.undoManager?.undo()
         #expect(harness.textView.string == "before  after")
+    }
+
+    @Test("Cmd+V pastes an HTML-only hyperlink as a Markdown link")
+    func pasteHTMLLink() {
+        let harness = Harness("")
+        defer { harness.close() }
+        harness.putHTML(#"<a href="https://example.com/docs">documentation</a>"#)
+
+        #expect(harness.isPasteEnabled)
+        harness.pressCommandV()
+
+        #expect(harness.textView.string == "[documentation](https://example.com/docs)")
+    }
+
+    // MARK: HTML hyperlinks
+
+    /// What WebKit (Safari, Mail) put on the clipboard for a selection of three
+    /// paragraphs, as observed by a real copy; inline styles trimmed.
+    private static let webKitCopy = """
+        <head><meta charset="UTF-8"></head><p style="color: rgb(0, 0, 0);">See<span class="Apple-converted-space"> </span>\
+        <a href="https://example.com/docs?a=1&amp;b=2">documentation</a><span class="Apple-converted-space"> </span>and\
+        <span class="Apple-converted-space"> </span><a href="https://example.com/pricing">pricing</a>.</p>\
+        <p style="color: rgb(0, 0, 0);">Mail<span class="Apple-converted-space"> </span><a href="mailto:team@example.com">the team</a>\
+        <span class="Apple-converted-space"> </span>or visit<span class="Apple-converted-space"> </span>\
+        <a href="https://example.com/x">https://example.com/x</a>.</p>\
+        <p style="color: rgb(0, 0, 0);">Odd<span class="Apple-converted-space"> </span><a href="file:///etc/hosts">local</a>\
+        <span class="Apple-converted-space"> </span><a>js</a><span class="Apple-converted-space"> </span>\
+        <a href="https://example.com/wiki/Foo_(bar)">Foo (bar)</a>.</p>
+        """
+
+    @Test("several links, surrounding text and paragraph boundaries survive a WebKit copy")
+    func webKitSelection() {
+        let harness = Harness("")
+        defer { harness.close() }
+        harness.putHTML(Self.webKitCopy)
+
+        harness.pressCommandV()
+
+        #expect(harness.textView.string == """
+            See [documentation](https://example.com/docs?a=1&b=2) and [pricing](https://example.com/pricing).
+
+            Mail [the team](mailto:team@example.com) or visit https://example.com/x.
+
+            Odd local js [Foo (bar)](https://example.com/wiki/Foo_(bar)).
+            """)
+    }
+
+    @Test("Chromium's copy-link markup becomes a link", arguments: [false, true])
+    func chromiumCopy(withPlainText: Bool) {
+        let harness = Harness("")
+        defer { harness.close() }
+        harness.putHTML(
+            #"<meta charset='utf-8'><div itemprop="teams-copy-link"><a href="https://teams.example.com/l/message/1?context=%7B%22a%22%3A1%7D&amp;x=2">Jan: Je to na Vás 🙂</a></div>"#,
+            plainText: withPlainText ? "Jan: Je to na Vás 🙂" : nil
+        )
+
+        harness.pressCommandV()
+
+        #expect(harness.textView.string == "[Jan: Je to na Vás 🙂](https://teams.example.com/l/message/1?context=%7B%22a%22%3A1%7D&x=2)")
+    }
+
+    @Test("Outlook-style markup keeps its links and drops office-only noise")
+    func outlookStyleCopy() {
+        let harness = Harness("")
+        defer { harness.close() }
+        harness.putHTML("""
+            <html xmlns:o="urn:schemas-microsoft-com:office:office"><head><meta http-equiv=Content-Type content="text/html; charset=utf-8">\
+            <style><!-- p.MsoNormal {margin:0cm} a:link {color:blue} --></style></head>\
+            <body lang=CS><!--StartFragment--><div class=WordSection1>\
+            <p class=MsoNormal>Dobrý den,<o:p></o:p></p><p class=MsoNormal><o:p>&nbsp;</o:p></p>\
+            <p class=MsoNormal>viz <a href="https://example.com/a"><span style='color:#0563C1'>návod</span></a>.<o:p></o:p></p>\
+            </div><!--EndFragment--></body></html>
+            """)
+
+        harness.pressCommandV()
+
+        #expect(harness.textView.string == "Dobrý den,\n\nviz [návod](https://example.com/a).")
+    }
+
+    @Test("only valid absolute http, https and mailto destinations stay links", arguments: [
+        (#"<a href="http://example.com/a">x</a>"#, "[x](http://example.com/a)"),
+        (#"<a href="https://example.com/a">x</a>"#, "[x](https://example.com/a)"),
+        (#"<a href="HTTPS://EXAMPLE.com/A">x</a>"#, "[x](HTTPS://EXAMPLE.com/A)"),
+        (#"<a href="mailto:a@example.com">x</a>"#, "[x](mailto:a@example.com)"),
+        (#"<a href="mailto:a@example.com?subject=Hi%20there">x</a>"#, "[x](mailto:a@example.com?subject=Hi%20there)"),
+        (#"<a href="  https://example.com/a  ">x</a>"#, "[x](https://example.com/a)"),
+        (#"<a href='https://example.com/a'>x</a>"#, "[x](https://example.com/a)"),
+        (#"<A HREF=https://example.com/a>x</A>"#, "[x](https://example.com/a)"),
+        (#"<a href="file:///etc/hosts">x</a> <a href="https://example.com/a">y</a>"#, "x [y](https://example.com/a)"),
+        (#"<a href="javascript:alert(1)">x</a> <a href="https://example.com/a">y</a>"#, "x [y](https://example.com/a)"),
+        (#"<a href="/relative">x</a> <a href="https://example.com/a">y</a>"#, "x [y](https://example.com/a)"),
+        (#"<a href="//example.com/a">x</a> <a href="https://example.com/a">y</a>"#, "x [y](https://example.com/a)"),
+        (#"<a href="example.com/a">x</a> <a href="https://example.com/a">y</a>"#, "x [y](https://example.com/a)"),
+        (#"<a href="ftp://example.com/a">x</a> <a href="https://example.com/a">y</a>"#, "x [y](https://example.com/a)"),
+        (#"<a href="tel:+420123456789">x</a> <a href="https://example.com/a">y</a>"#, "x [y](https://example.com/a)"),
+        (#"<a href="https://">x</a> <a href="https://example.com/a">y</a>"#, "x [y](https://example.com/a)"),
+        (#"<a href="mailto:">x</a> <a href="https://example.com/a">y</a>"#, "x [y](https://example.com/a)"),
+        (#"<a href="">x</a> <a href="https://example.com/a">y</a>"#, "x [y](https://example.com/a)"),
+        (#"<a name="top">x</a> <a href="https://example.com/a">y</a>"#, "x [y](https://example.com/a)"),
+        (#"<a href="data:text/html,hi">x</a> <a href="https://example.com/a">y</a>"#, "x [y](https://example.com/a)"),
+    ])
+    func destinations(html: String, expected: String) {
+        let harness = Harness("")
+        defer { harness.close() }
+        harness.putHTML(html)
+
+        harness.pressCommandV()
+
+        #expect(harness.textView.string == expected)
+    }
+
+    @Test("a clipboard with only unsupported destinations pastes its visible text", arguments: [
+        #"<a href="file:///etc/hosts">local file</a>"#,
+        #"<a href="javascript:void(0)">script</a> and <a href="/relative">relative</a>"#,
+    ])
+    func onlyUnsupportedDestinations(html: String) {
+        let harness = Harness("")
+        defer { harness.close() }
+        harness.putHTML(html)
+        let visible = html.replacing(/<[^>]*>/, with: "")
+
+        harness.pressCommandV()
+
+        #expect(harness.textView.string == visible)
+    }
+
+    @Test("a web link shown as its own destination stays a bare URL; any difference keeps both", arguments: [
+        (#"go <a href="https://example.com/x">https://example.com/x</a> now"#, "go https://example.com/x now"),
+        (#"<a href="https://example.com/x">https://example.com/x</a> <a href="https://example.com/y">y</a>"#, "https://example.com/x [y](https://example.com/y)"),
+        (#"<a href="https://example.com/b">https://example.com/a</a>"#, "[https://example.com/a](https://example.com/b)"),
+        (#"<a href="https://example.com/">https://example.com</a>"#, "[https://example.com](https://example.com/)"),
+        (#"<a href="https://example.com/x">HTTPS://example.com/x</a>"#, "[HTTPS://example.com/x](https://example.com/x)"),
+        (#"<a href="https://evil.example/r?u=https%3A%2F%2Fexample.com">https://example.com</a>"#, "[https://example.com](https://evil.example/r?u=https%3A%2F%2Fexample.com)"),
+        (#"<a href="mailto:a@example.com">mailto:a@example.com</a>"#, "[mailto:a@example.com](mailto:a@example.com)"),
+        (#"<a href="mailto:a@example.com">a@example.com</a>"#, "[a@example.com](mailto:a@example.com)"),
+    ])
+    func redundantWebLinks(html: String, expected: String) {
+        let harness = Harness("")
+        defer { harness.close() }
+        harness.putHTML(html, plainText: expected)
+
+        harness.pressCommandV()
+
+        #expect(harness.textView.string == expected)
+    }
+
+    @Test("Markdown-sensitive labels and destinations keep their meaning", arguments: [
+        (#"<a href="https://example.com/a">a*b_c [x] \ &lt;y&gt; `z` ~w~</a>"#, #"[a\*b\_c \[x\] \\ \<y\> \`z\` \~w\~](https://example.com/a)"#),
+        (#"<a href="https://example.com/a">AT&amp;T &amp;copy; &amp;#35;</a>"#, #"[AT&T \&copy; \&#35;](https://example.com/a)"#),
+        (#"<a href="https://example.com/a">two\#nlines</a>"#.replacingOccurrences(of: #"\#n"#, with: "\n   "), "[two lines](https://example.com/a)"),
+        (#"<a href="https://example.com/a b">x</a>"#, "[x](https://example.com/a%20b)"),
+        (#"<a href="https://example.com/a)b">x</a>"#, "[x](https://example.com/a%29b)"),
+        (#"<a href="https://example.com/(a">x</a>"#, "[x](https://example.com/%28a)"),
+        (#"<a href="https://example.com/a(b)c(d)">x</a>"#, "[x](https://example.com/a(b)c(d))"),
+        (#"<a href="https://example.com/a&lt;b&gt;c\d">x</a>"#, "[x](https://example.com/a%3Cb%3Ec%5Cd)"),
+        (#"<a href="https://example.com/čaj?x=1&amp;y=2#h">x</a>"#, "[x](https://example.com/čaj?x=1&y=2#h)"),
+        (#"Wow!<a href="https://example.com/a">link</a>"#, #"Wow\![link](https://example.com/a)"#),
+    ])
+    func markdownSensitive(html: String, expected: String) {
+        let harness = Harness("")
+        defer { harness.close() }
+        harness.putHTML(html)
+
+        harness.pressCommandV()
+
+        #expect(harness.textView.string == expected)
+    }
+
+    @Test("other formatting adds no Markdown; tables and lists become plain lines", arguments: [
+        (#"<b>bold</b> <i>it</i> <u>u</u> <span style="color:red">red</span> <a href="https://e.com/a"><b>Link</b></a>"#, "bold it u red [Link](https://e.com/a)"),
+        ("<table><tr><td>a</td><td><a href=\"https://e.com/a\">b</a></td></tr><tr><td>c</td><td>d</td></tr></table>", "a [b](https://e.com/a)\nc d"),
+        (#"<h1>Title</h1><ul><li>one <a href="https://e.com/a">two</a></li><li>three</li></ul>"#, "Title\n\none [two](https://e.com/a)\nthree"),
+        (#"line<br>break<br><br>blank <a href="https://e.com/a">x</a>"#, "line\nbreak\n\nblank [x](https://e.com/a)"),
+        (#"<div>a</div><div><br></div><div><a href="https://e.com/a">b</a></div>"#, "a\n\n[b](https://e.com/a)"),
+        (#"<style>a{color:red}</style><script>var a = "<a href='https://e.com/s'>s</a>";</script><!-- <a href="https://e.com/c">c</a> -->t <a href="https://e.com/a">x</a>"#, "t [x](https://e.com/a)"),
+        (#"<pre>  keep\n  this</pre> <a href="https://e.com/a">x</a>"#.replacingOccurrences(of: #"\n"#, with: "\n"), "  keep\n  this\n\n[x](https://e.com/a)"),
+        (#"1 &lt; 2 &amp;&amp; 3 &gt; 2&nbsp;&#x2713; &quot;q&quot; <a href="https://e.com/a">x</a>"#, #"1 < 2 && 3 > 2 ✓ "q" [x](https://e.com/a)"#),
+        (#"<a href="https://e.com/a"><img src="https://tracker.example/p.png"></a>text"#, "text"),
+    ])
+    func otherFormatting(html: String, expected: String) {
+        let harness = Harness("")
+        defer { harness.close() }
+        harness.putHTML(html)
+
+        harness.pressCommandV()
+
+        #expect(harness.textView.string == expected)
+    }
+
+    @Test("HTML without hyperlinks pastes as ordinary text")
+    func htmlWithoutLinks() {
+        let withText = Harness("")
+        defer { withText.close() }
+        withText.putHTML("<p><b>Bold</b> and <i>italic</i></p>", plainText: "Bold and italic")
+        withText.pressCommandV()
+        #expect(withText.textView.string == "Bold and italic")
+
+        let htmlOnly = Harness("")
+        defer { htmlOnly.close() }
+        htmlOnly.putHTML("<span><b>Bold</b> and <i>italic</i></span>")
+        #expect(htmlOnly.isPasteEnabled)
+        htmlOnly.pressCommandV()
+        #expect(htmlOnly.textView.string == "Bold and italic")
+    }
+
+    @Test("HTML and plain text of the same selection paste once")
+    func htmlAndPlainTextPasteOnce() {
+        let harness = Harness("")
+        defer { harness.close() }
+        harness.putHTML(
+            #"<p>See <a href="https://example.com/docs">documentation</a></p>"#,
+            plainText: "See documentation"
+        )
+
+        harness.pressCommandV()
+
+        #expect(harness.textView.string == "See [documentation](https://example.com/docs)")
+        #expect(harness.changeNotifications == 1)
+    }
+
+    @Test("HTML decodes from UTF-8 with a BOM, UTF-16 and a declared legacy charset")
+    func htmlEncodings() throws {
+        let html = #"<meta charset="UTF-8"><a href="https://example.com/a">Čaj</a>"#
+        let encodings: [(String, Data)] = [
+            ("utf8 bom", Data([0xEF, 0xBB, 0xBF]) + Data(html.utf8)),
+            ("utf16 bom", try #require(("\u{FEFF}" + html).data(using: .utf16LittleEndian))),
+            ("utf16 big endian", try #require(("\u{FEFF}" + html).data(using: .utf16BigEndian))),
+            ("cp1250", try #require(html.replacing("UTF-8", with: "windows-1250").data(using: .windowsCP1250))),
+        ]
+        for (name, data) in encodings {
+            let harness = Harness("")
+            defer { harness.close() }
+            harness.pasteboard.clearContents()
+            harness.pasteboard.setData(data, forType: .html)
+
+            harness.pressCommandV()
+
+            #expect(harness.textView.string == "[Čaj](https://example.com/a)", Comment(rawValue: name))
+        }
+    }
+
+    @Test("a link paste replaces the selection, leaves the caret after it and reports one edit")
+    func replacesSelectionAndNotifies() {
+        let harness = Harness("keep REPLACE keep", selection: NSRange(location: 5, length: 7))
+        defer { harness.close() }
+        harness.putHTML(#"<a href="https://example.com/a">new</a>"#)
+
+        harness.pressCommandV()
+
+        let expected = "keep [new](https://example.com/a) keep"
+        #expect(harness.textView.string == expected)
+        #expect(harness.textView.selectedRange() == NSRange(location: 33, length: 0))
+        #expect(harness.changeNotifications == 1)
+        #expect(harness.reportedTexts == [expected])
+        #expect(harness.staged.isEmpty)
+    }
+
+    @Test("a link paste is undone and redone as one step without merging an earlier edit")
+    func linkPasteUndoRedo() throws {
+        let harness = Harness("ab")
+        defer { harness.close() }
+        harness.type("c")
+        harness.putHTML(#"x <a href="https://example.com/a">y</a>"#)
+        harness.pressCommandV()
+        let pasted = "abcx [y](https://example.com/a)"
+        #expect(harness.textView.string == pasted)
+        let undoManager = try #require(harness.textView.undoManager)
+
+        undoManager.undo()
+        #expect(harness.textView.string == "abc")
+        #expect(harness.reportedTexts.last == "abc")
+
+        undoManager.redo()
+        #expect(harness.textView.string == pasted)
+        #expect(harness.reportedTexts.last == pasted)
+
+        undoManager.undo()
+        undoManager.undo()
+        #expect(harness.textView.string == "ab")
+        #expect(harness.reportedTexts.last == "ab")
+    }
+
+    @Test("Paste and Match Style inserts only the visible text when links are present", arguments: [
+        (#"<p>See <a href="https://example.com/docs">documentation</a></p>"#, "See documentation" as String?),
+        (#"<p>See <a href="https://example.com/docs">documentation</a></p>"#, nil),
+    ])
+    func pasteAndMatchStyle(html: String, plainText: String?) {
+        let harness = Harness("a ")
+        defer { harness.close() }
+        harness.putHTML(html, plainText: plainText)
+
+        #expect(harness.isPasteAndMatchStyleEnabled)
+        harness.pressPasteAndMatchStyle()
+
+        #expect(harness.textView.string == "a See documentation")
+        #expect(harness.textView.selectedRange() == NSRange(location: 19, length: 0))
+        #expect(harness.reportedTexts == ["a See documentation"])
+        harness.textView.undoManager?.undo()
+        #expect(harness.textView.string == "a ")
+    }
+
+    @Test("Paste and Match Style stays disabled in a read-only editor or for an empty clipboard")
+    func pasteAndMatchStyleDisabled() {
+        let readOnly = Harness("Brain Note")
+        defer { readOnly.close() }
+        readOnly.textView.isEditable = false
+        readOnly.putHTML(#"<a href="https://example.com/a">x</a>"#, plainText: "x")
+        #expect(readOnly.isPasteAndMatchStyleEnabled == false)
+
+        let empty = Harness("")
+        defer { empty.close() }
+        empty.pasteboard.clearContents()
+        #expect(empty.isPasteAndMatchStyleEnabled == false)
+    }
+
+    @Test("a read-only editor or an empty clipboard ignores HTML links")
+    func linkPasteRestrictions() {
+        let readOnly = Harness("Brain Note")
+        defer { readOnly.close() }
+        readOnly.textView.isEditable = false
+        readOnly.putHTML(#"<a href="https://example.com/a">x</a>"#)
+        #expect(readOnly.isPasteEnabled == false)
+        readOnly.textView.paste(nil)
+        #expect(readOnly.textView.string == "Brain Note")
+        #expect(readOnly.changeNotifications == 0)
+
+        let empty = Harness("keep")
+        defer { empty.close() }
+        empty.pasteboard.clearContents()
+        #expect(empty.isPasteEnabled == false)
+        empty.pressCommandV()
+        #expect(empty.textView.string == "keep")
+        #expect(empty.changeNotifications == 0)
+    }
+
+    @Test("plain text, bare URLs and Markdown source paste unchanged", arguments: [
+        "just words",
+        "https://example.com/a",
+        "[docs](https://example.com/a) and [[Note]] #tag",
+    ])
+    func plainTextUnchanged(text: String) {
+        let harness = Harness("")
+        defer { harness.close() }
+        harness.pasteboard.clearContents()
+        harness.pasteboard.setString(text, forType: .string)
+
+        harness.pressCommandV()
+
+        #expect(harness.textView.string == text)
+    }
+
+    @Test("a link with an image preview pastes as text; a linked image alone still attaches")
+    func linkAndImagePreview() throws {
+        let png = try #require(makePNG(width: 2, height: 2))
+        let withText = Harness("")
+        defer { withText.close() }
+        withText.putHTML(#"<a href="https://example.com/a">label</a>"#, plainText: "label")
+        withText.pasteboard.setData(png, forType: .png)
+        withText.pressCommandV()
+        #expect(withText.textView.string == "[label](https://example.com/a)")
+        #expect(withText.staged.isEmpty)
+
+        let imageOnly = Harness("")
+        defer { imageOnly.close() }
+        imageOnly.putHTML(#"<a href="https://example.com/a"><img src="https://example.com/p.png"></a>"#)
+        imageOnly.pasteboard.setData(png, forType: .png)
+        imageOnly.pressCommandV()
+        #expect(imageOnly.textView.string == "![](attachments/image-1.png)")
+        #expect(imageOnly.staged.count == 1)
+    }
+
+    @Test("nothing is fetched or opened when a link is pasted")
+    func pasteDoesNotTouchTheNetwork() {
+        let harness = Harness("")
+        defer { harness.close() }
+        harness.putHTML(#"<link rel="stylesheet" href="https://example.invalid/s.css"><a href="https://example.invalid/a"><img src="https://example.invalid/p.png">x</a>"#)
+
+        harness.pressCommandV()
+
+        #expect(harness.textView.string == "[x](https://example.invalid/a)")
+    }
+
+    @Test("ordinary Paste and Paste and Match Style handle links on the real clipboard, which is then restored")
+    func generalClipboardLinks() {
+        let general = NSPasteboard.general
+        let saved = ClipboardSnapshot(general)
+        defer { saved.restore(to: general) }
+
+        let harness = Harness("", pasteboard: general)
+        defer { harness.close() }
+        general.clearContents()
+        general.setData(Data(Self.webKitCopy.utf8), forType: .html)
+
+        #expect(harness.isPasteEnabled)
+        #expect(harness.isPasteAndMatchStyleEnabled)
+        harness.pressCommandV()
+        #expect(harness.textView.string.hasPrefix("See [documentation](https://example.com/docs?a=1&b=2) and [pricing]"))
+
+        harness.textView.string = ""
+        harness.textView.setSelectedRange(NSRange(location: 0, length: 0))
+        harness.pressPasteAndMatchStyle()
+        #expect(harness.textView.string.hasPrefix("See documentation and pricing.\n"))
+        #expect(harness.textView.string.contains("](") == false)
     }
 
     @Test("an unreadable clipboard image is reported and inserts nothing")
