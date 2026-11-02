@@ -613,10 +613,11 @@ public final class MarkdownTextView: NSTextView {
     private func validatePaste(_ action: Selector?) -> Bool? {
         if action == #selector(pasteAsPlainText(_:)) {
             // AppKit enables Paste and Match Style only for plain-text types.
-            if isEditable, pasteboard.availableType(from: [.html]) != nil { return true }
+            if hasRichClipboardText { return isEditable }
             return validatePrivatePasteboardText()
         }
         guard action == #selector(paste(_:)) else { return nil }
+        if hasRichClipboardText { return isEditable }
         if canPasteImage { return true }
         // AppKit validates against the general pasteboard only.
         return validatePrivatePasteboardText()
@@ -651,8 +652,14 @@ public final class MarkdownTextView: NSTextView {
     }
 
     private func pasteText(_ sender: Any?) {
-        if isEditable, let markdown = linkMarkdownFromPasteboard() {
-            replace(selectedRange(), with: markdown, actionName: "Vložit")
+        guard isEditable else { return }
+        if hasRichClipboardText {
+            guard let text = clipboardText(preservingLinks: true) else {
+                // Do not retry failed rich decodes through AppKit's HTML importer.
+                NSSound.beep()
+                return
+            }
+            replace(selectedRange(), with: text, actionName: "Vložit")
             return
         }
         if pasteboard == .general {
@@ -662,25 +669,65 @@ public final class MarkdownTextView: NSTextView {
         }
     }
 
-    /// The Markdown for the hyperlinks in the clipboard's HTML, or `nil` when
-    /// it has none worth keeping and Paste should insert the clipboard as text.
-    private func linkMarkdownFromPasteboard() -> String? {
-        clipboardHTMLSegments().flatMap(RichTextLinkMarkdown.markdown(from:))
+    private var hasRichClipboardText: Bool {
+        pasteboard.types?.contains(where: { $0 == .html || $0 == .rtf }) == true
+    }
+
+    /// Pick one complete representation, never combine text or targets from
+    /// different formats. Usable HTML links precede RTF links; otherwise plain
+    /// text precedes readable HTML, then RTF.
+    private func clipboardText(preservingLinks: Bool) -> String? {
+        let plain = pasteboard.string(forType: .string).flatMap { $0.isEmpty ? nil : $0 }
+        if !preservingLinks, let plain { return plain }
+        var visible: String?
+        for type in [NSPasteboard.PasteboardType.html, .rtf] {
+            let segments = type == .html ? clipboardHTMLSegments() : clipboardRTFSegments()
+            guard let segments else { continue }
+            if preservingLinks, let markdown = RichTextLinkMarkdown.markdown(from: segments) {
+                return markdown
+            }
+            let text = RichTextLinkMarkdown.visibleText(from: segments)
+            if visible == nil, !text.isEmpty { visible = text }
+        }
+        return plain ?? visible
     }
 
     private func clipboardHTMLSegments() -> [RichTextLinkMarkdown.Segment]? {
-        guard let data = pasteboard.data(forType: .html), let html = ClipboardHTML.string(from: data) else { return nil }
+        guard pasteboard.types?.contains(.html) == true else { return nil }
+        guard let data = pasteboard.data(forType: .html) else {
+            NSLog("Could not read HTML clipboard data")
+            return nil
+        }
+        if data.isEmpty { return nil }
+        guard let html = ClipboardHTML.string(from: data) else {
+            NSLog("Could not decode HTML clipboard text")
+            return nil
+        }
         return ClipboardHTML.segments(in: html)
+    }
+
+    private func clipboardRTFSegments() -> [RichTextLinkMarkdown.Segment]? {
+        guard pasteboard.types?.contains(.rtf) == true else { return nil }
+        guard let data = pasteboard.data(forType: .rtf) else {
+            NSLog("Could not read RTF clipboard data")
+            return nil
+        }
+        do {
+            return try ClipboardRTF.segments(in: data)
+        } catch {
+            NSLog("Could not decode RTF clipboard text: %@", error.localizedDescription)
+            return nil
+        }
     }
 
     /// Paste and Match Style: only the visible text, never link conversion.
     /// AppKit's own version reads the general pasteboard regardless of ours.
     public override func pasteAsPlainText(_ sender: Any?) {
         guard isEditable else { return }
-        let text = pasteboard.string(forType: .string)
-            ?? clipboardHTMLSegments().map(RichTextLinkMarkdown.visibleText(from:))
-        if let text, !text.isEmpty {
+        if let text = clipboardText(preservingLinks: false) {
             replace(selectedRange(), with: text, actionName: "Vložit")
+        } else if hasRichClipboardText {
+            NSSound.beep()
         } else if pasteboard == .general {
             super.pasteAsPlainText(sender)
         }

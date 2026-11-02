@@ -148,6 +148,12 @@ struct MarkdownTextViewPasteTests {
             pasteboard.setData(Data(html.utf8), forType: .html)
             if let plainText { pasteboard.setString(plainText, forType: .string) }
         }
+
+        func putRTF(_ rtf: String, plainText: String? = nil) {
+            pasteboard.clearContents()
+            pasteboard.setData(Data(rtf.utf8), forType: .rtf)
+            if let plainText { pasteboard.setString(plainText, forType: .string) }
+        }
     }
 
     @Test("Cmd+V is enabled for an image-only clipboard and inserts a standalone image", arguments: [
@@ -292,6 +298,293 @@ struct MarkdownTextViewPasteTests {
         harness.pressCommandV()
 
         #expect(harness.textView.string == "[documentation](https://example.com/docs)")
+    }
+
+    // MARK: RTF hyperlinks
+
+    @Test("Cmd+V preserves a named link from an RTF-only clipboard")
+    func pasteRTFLink() {
+        let harness = Harness("")
+        defer { harness.close() }
+        harness.putRTF(#"{\rtf1\ansi See {\field{\*\fldinst HYPERLINK "https://example.com/docs"}{\fldrslt documentation}}.}"#)
+
+        #expect(harness.isPasteEnabled)
+        harness.pressCommandV()
+
+        #expect(harness.textView.string == "See [documentation](https://example.com/docs).")
+        #expect(harness.reportedTexts == ["See [documentation](https://example.com/docs)."])
+    }
+
+    @Test("Paste and Match Style drops RTF destinations, preferring the supplied plain text", arguments: [
+        (false, false, "See documentation."),
+        // macOS advertises a plain-text rendition synthesized from RTF.
+        (true, false, "See documentation."),
+        (true, true, "Plain documentation"),
+    ])
+    func pasteRTFAndMatchStyle(withHTML: Bool, withPlainText: Bool, visible: String) {
+        let harness = Harness("keep REPLACE", selection: NSRange(location: 5, length: 7))
+        defer { harness.close() }
+        harness.putRTF(#"{\rtf1\ansi See {\field{\*\fldinst HYPERLINK "https://example.com/docs"}{\fldrslt documentation}}.}"#)
+        if withHTML {
+            harness.pasteboard.setString(#"HTML <a href="https://example.com/html">documentation</a>"#, forType: .html)
+        }
+        if withPlainText { harness.pasteboard.setString("Plain documentation", forType: .string) }
+
+        #expect(harness.isPasteAndMatchStyleEnabled)
+        harness.pressPasteAndMatchStyle()
+
+        #expect(harness.textView.string == "keep \(visible)")
+        #expect(harness.textView.selectedRange() == NSRange(location: 5 + visible.utf16.count, length: 0))
+        #expect(harness.reportedTexts == ["keep \(visible)"])
+        harness.textView.undoManager?.undo()
+        #expect(harness.textView.string == "keep REPLACE")
+    }
+
+    @Test("mixed representations paste once: usable HTML links, then RTF links, then plain text", arguments: [
+        (#"See <a href="https://example.com/docs">documentation</a>."#, "See documentation.", "See [documentation](https://example.com/docs)."),
+        (#"HTML <a href="https://example.com/html">label</a>"#, "Plain label", "HTML [label](https://example.com/html)"),
+        ("<b>HTML without links</b>", "Plain label", "See [documentation](https://example.com/docs)."),
+        (#"<a href="file:///tmp/x">unsupported</a>"#, "Plain label", "See [documentation](https://example.com/docs)."),
+        ("", "Plain label", "See [documentation](https://example.com/docs)."),
+    ], [false, true])
+    func mixedRepresentations(representations: (String, String, String), reversed: Bool) {
+        let (html, plain, expected) = representations
+        let harness = Harness("keep REPLACE keep", selection: NSRange(location: 5, length: 7))
+        defer { harness.close() }
+        let rtf = #"{\rtf1\ansi See {\field{\*\fldinst HYPERLINK "https://example.com/docs"}{\fldrslt documentation}}.}"#
+        let entries: [(NSPasteboard.PasteboardType, Data)] = [
+            (.html, Data(html.utf8)), (.rtf, Data(rtf.utf8)), (.string, Data(plain.utf8)),
+        ]
+        let item = NSPasteboardItem()
+        for (type, data) in reversed ? entries.reversed() : entries {
+            item.setData(data, forType: type)
+        }
+        harness.pasteboard.clearContents()
+        harness.pasteboard.writeObjects([item])
+
+        #expect(harness.isPasteEnabled)
+        harness.pressCommandV()
+
+        #expect(harness.textView.string == "keep \(expected) keep")
+        #expect(harness.textView.selectedRange() == NSRange(location: 5 + expected.utf16.count, length: 0))
+        #expect(harness.changeNotifications == 1)
+        #expect(harness.reportedTexts == ["keep \(expected) keep"])
+        #expect(harness.staged.isEmpty)
+    }
+
+    @Test("rich text without usable links prefers the plain representation even when RTF differs")
+    func richVisibleTextFallback() {
+        let harness = Harness("")
+        defer { harness.close() }
+        harness.putRTF(#"{\rtf1\ansi RTF {\b visible} {\field{\*\fldinst HYPERLINK "file:///tmp/x"}{\fldrslt local}}}"#,
+                       plainText: "Plain visible local")
+        harness.pasteboard.setData(Data("<b>HTML visible local</b>".utf8), forType: .html)
+
+        harness.pressCommandV()
+
+        #expect(harness.textView.string == "Plain visible local")
+        #expect(harness.reportedTexts == ["Plain visible local"])
+    }
+
+    @Test("unusable rich data falls through to readable text without partial edits", arguments: [
+        ("", #"{\rtf1\ansi RTF readable}"#, nil, "RTF readable"),
+        ("<p>HTML readable</p>", "not RTF", nil, "HTML readable"),
+        ("", "not RTF", "Plain readable", "Plain readable"),
+        ("", "not RTF", nil, nil),
+    ])
+    func unusableRichData(html: String, rtf: String, plain: String?, expected: String?) {
+        let harness = Harness("keep REPLACE keep", selection: NSRange(location: 5, length: 7))
+        defer { harness.close() }
+        harness.putRTF(rtf, plainText: plain)
+        harness.pasteboard.setData(Data(html.utf8), forType: .html)
+
+        harness.pressCommandV()
+
+        #expect(harness.textView.string == expected.map { "keep \($0) keep" } ?? "keep REPLACE keep")
+        #expect(harness.reportedTexts == expected.map { ["keep \($0) keep"] } ?? [])
+        #expect(harness.changeNotifications == (expected == nil ? 0 : 1))
+    }
+
+    @Test("RTF keeps link order and paragraphs, merging labels split by visual styling")
+    func rtfParagraphs() {
+        let harness = Harness("")
+        defer { harness.close() }
+        harness.putRTF(#"""
+            {\rtf1\ansi\uc1
+            See {\field{\*\fldinst HYPERLINK "http://example.com/docs"}{\fldrslt docu{\b mentation}}} and {\field{\*\fldinst HYPERLINK "https://example.com/pricing"}{\fldrslt pricing}}.\par
+            \par
+            Mail {\field{\*\fldinst HYPERLINK "mailto:team@example.com?subject=Hi%20there"}{\fldrslt the team}}.\par
+            \u268?aj and \u-10179?\u-8704? stay text.}
+            """#)
+
+        harness.pressCommandV()
+
+        #expect(harness.textView.string == """
+            See [documentation](http://example.com/docs) and [pricing](https://example.com/pricing).
+
+            Mail [the team](mailto:team@example.com?subject=Hi%20there).
+            Čaj and 😀 stay text.
+            """)
+        #expect(harness.changeNotifications == 1)
+    }
+
+    @Test("RTF uses the shared destination and Markdown label rules", arguments: [
+        (#"{\field{\*\fldinst HYPERLINK "http://example.com/a"}{\fldrslt web}}"#, "[web](http://example.com/a)"),
+        (#"{\field{\*\fldinst HYPERLINK "mailto:a@example.com"}{\fldrslt a@example.com}}"#, "[a@example.com](mailto:a@example.com)"),
+        (#"{\field{\*\fldinst HYPERLINK "https://example.com/a"}{\fldrslt https://example.com/a}}"#, "https://example.com/a"),
+        (#"{\field{\*\fldinst HYPERLINK "https://example.com/a/"}{\fldrslt https://example.com/a}}"#, "[https://example.com/a](https://example.com/a/)"),
+        (#"{\field{\*\fldinst HYPERLINK "https://other.example/target"}{\fldrslt https://example.com/a}}"#, "[https://example.com/a](https://other.example/target)"),
+        (#"{\field{\*\fldinst HYPERLINK "file:///tmp/x"}{\fldrslt local}}"#, "local"),
+        (#"{\field{\*\fldinst HYPERLINK "javascript:alert(1)"}{\fldrslt script}}"#, "script"),
+        (#"{\field{\*\fldinst HYPERLINK "ftp://example.com/x"}{\fldrslt ftp}}"#, "ftp"),
+        (#"{\field{\*\fldinst HYPERLINK "/relative"}{\fldrslt relative}}"#, "relative"),
+        (#"{\field{\*\fldinst HYPERLINK "https://"}{\fldrslt invalid}}"#, "invalid"),
+        (#"{\field{\*\fldinst HYPERLINK "mailto:"}{\fldrslt invalid}}"#, "invalid"),
+        (#"{\field{\*\fldinst HYPERLINK ""}{\fldrslt empty}}"#, "empty"),
+        (#"{\field{\*\fldinst HYPERLINK "https://example.com/a"}{\fldrslt a*b_c [x] \\ <y> `z` ~w~ &copy;}}"#, #"[a\*b\_c \[x\] \\ \<y\> \`z\` \~w\~ \&copy;](https://example.com/a)"#),
+        (#"{\field{\*\fldinst HYPERLINK "https://example.com/a)b"}{\fldrslt x}}"#, "[x](https://example.com/a%29b)"),
+        (#"{\field{\*\fldinst HYPERLINK "https://example.com/a(b)c"}{\fldrslt x}}"#, "[x](https://example.com/a(b)c)"),
+        (#"{\field{\*\fldinst HYPERLINK "https://example.com/a b"}{\fldrslt x}}"#, "[x](https://example.com/a%20b)"),
+        (#"{\b Bold} and {\i italic} text"#, "Bold and italic text"),
+    ])
+    func rtfLinkSemantics(body: String, expected: String) {
+        let harness = Harness("")
+        defer { harness.close() }
+        harness.putRTF(#"{\rtf1\ansi \#(body)}"#)
+
+        harness.pressCommandV()
+
+        #expect(harness.textView.string == expected)
+    }
+
+    @Test("RTF and mixed paste undo and redo once, independently of prior typing", arguments: [false, true])
+    func rtfUndoRedo(mixed: Bool) throws {
+        let harness = Harness("keep REPLACE keep", selection: NSRange(location: 5, length: 7))
+        defer { harness.close() }
+        harness.type("old")
+        harness.textView.setSelectedRange(NSRange(location: 5, length: 3))
+        harness.putRTF(#"{\rtf1\ansi {\field{\*\fldinst HYPERLINK "https://example.com/a"}{\fldrslt new}}}"#)
+        if mixed {
+            harness.pasteboard.setData(Data(#"<a href="https://example.com/a">new</a>"#.utf8), forType: .html)
+            harness.pasteboard.setString("new", forType: .string)
+        }
+
+        harness.pressCommandV()
+
+        let pasted = "keep [new](https://example.com/a) keep"
+        #expect(harness.textView.string == pasted)
+        #expect(harness.textView.selectedRange() == NSRange(location: 33, length: 0))
+        #expect(harness.reportedTexts == ["keep old keep", pasted])
+        let undo = try #require(harness.textView.undoManager)
+        undo.undo()
+        #expect(harness.textView.string == "keep old keep")
+        #expect(harness.reportedTexts.last == "keep old keep")
+        undo.redo()
+        #expect(harness.textView.string == pasted)
+        #expect(harness.reportedTexts.last == pasted)
+        undo.undo()
+        undo.undo()
+        #expect(harness.textView.string == "keep REPLACE keep")
+        #expect(harness.reportedTexts.last == "keep REPLACE keep")
+    }
+
+    @Test("RTF and mixed links cannot modify a read-only Brain Note", arguments: [false, true])
+    func rtfReadOnly(mixed: Bool) {
+        let harness = Harness("Brain Note")
+        defer { harness.close() }
+        harness.putRTF(#"{\rtf1\ansi {\field{\*\fldinst HYPERLINK "https://example.com/a"}{\fldrslt link}}}"#)
+        if mixed {
+            harness.pasteboard.setData(Data(#"<a href="https://example.com/a">link</a>"#.utf8), forType: .html)
+            harness.pasteboard.setString("link", forType: .string)
+        }
+        harness.textView.isEditable = false
+
+        #expect(!harness.isPasteEnabled)
+        #expect(!harness.isPasteAndMatchStyleEnabled)
+        harness.textView.paste(nil)
+        harness.textView.pasteAsPlainText(nil)
+
+        #expect(harness.textView.string == "Brain Note")
+        #expect(harness.reportedTexts.isEmpty)
+        #expect(harness.changeNotifications == 0)
+    }
+
+    /// Actual Cmd+A/Cmd+C payloads from Mail's local message viewer and TextEdit.
+    private static let mailRTFCopy = #"""
+        {\rtf1\ansi\ansicpg1252\cocoartf2908
+        \cocoatextscaling0\cocoaplatform0{\fonttbl\f0\fswiss\fcharset0 Helvetica;}
+        {\colortbl;\red255\green255\blue255;\red255\green255\blue255;\red53\green134\blue255;}
+        {\*\expandedcolortbl;;\cssrgb\c100000\c100000\c100000;\cssrgb\c25490\c61176\c100000;}
+        \deftab720
+        \pard\pardeftab720\sa240\partightenfactor0
+
+        \f0\fs24 \cf0 \expnd0\expndtw0\kerning0
+        \outl0\strokewidth0 \strokec2 Notess clipboard probe: See {\field{\*\fldinst{HYPERLINK "https://example.com/docs?a=1&b=2"}}{\fldrslt \cf3 \expnd0\expndtw0\kerning0
+        \ul \ulc3 \outl0\strokewidth0 \strokec3 documentation}} and {\field{\*\fldinst{HYPERLINK "https://example.com/pricing"}}{\fldrslt \cf3 \ul \ulc3 \strokec3 pricing}}.\
+        Mail {\field{\*\fldinst{HYPERLINK "mailto:team@example.com"}}{\fldrslt \cf3 \expnd0\expndtw0\kerning0
+        \ul \ulc3 \outl0\strokewidth0 \strokec3 the team}}.}
+        """#
+
+    private static let textEditRTFCopy = #"""
+        {\rtf1\ansi\ansicpg1252\cocoartf2908
+        \cocoatextscaling0\cocoaplatform0{\fonttbl\f0\fswiss\fcharset0 Helvetica;}
+        {\colortbl;\red255\green255\blue255;}
+        {\*\expandedcolortbl;;}
+        \pard\tx560\tx1120\tx1680\tx2240\tx2800\tx3360\tx3920\tx4480\tx5040\tx5600\tx6160\tx6720\pardirnatural\partightenfactor0
+
+        \f0\fs24 \cf0 Notess clipboard probe: See {\field{\*\fldinst{HYPERLINK "https://example.com/docs?a=1&b=2"}}{\fldrslt documentation}} and {\field{\*\fldinst{HYPERLINK "https://example.com/pricing"}}{\fldrslt pricing}}.\
+        Mail {\field{\*\fldinst{HYPERLINK "mailto:team@example.com"}}{\fldrslt the team}}.}
+        """#
+
+    @Test("real Mail and TextEdit copies preserve links; Match Style uses their visible text",
+          arguments: ["mail-rtf", "mail-mixed", "textedit"])
+    func observedSourceCopies(source: String) {
+        let harness = Harness("")
+        defer { harness.close() }
+        let plainBreak = source == "textedit" ? "\n" : "\n\n"
+        let plain = "Notess clipboard probe: See documentation and pricing.\(plainBreak)Mail the team."
+        harness.putRTF(source == "textedit" ? Self.textEditRTFCopy : Self.mailRTFCopy, plainText: plain)
+        if source == "mail-mixed" {
+            // Copied HTML with styling removed, retaining Apple's space spans.
+            harness.pasteboard.setData(Data("""
+                <head><meta charset="UTF-8"></head><p>Notess clipboard probe: See<span class="Apple-converted-space">&nbsp;</span>\
+                <a href="https://example.com/docs?a=1&amp;b=2">documentation</a><span class="Apple-converted-space">&nbsp;</span>and\
+                <span class="Apple-converted-space">&nbsp;</span><a href="https://example.com/pricing">pricing</a>.</p>\
+                <p>Mail<span class="Apple-converted-space">&nbsp;</span><a href="mailto:team@example.com">the team</a>.</p>
+                """.utf8), forType: .html)
+        }
+
+        harness.pressCommandV()
+
+        let richBreak = source == "mail-mixed" ? "\n\n" : "\n"
+        let expected = "Notess clipboard probe: See [documentation](https://example.com/docs?a=1&b=2) and [pricing](https://example.com/pricing).\(richBreak)Mail [the team](mailto:team@example.com)."
+        #expect(harness.textView.string == expected)
+        #expect(harness.reportedTexts == [expected])
+        harness.textView.undoManager?.undo()
+        #expect(harness.textView.string.isEmpty)
+        harness.pressPasteAndMatchStyle()
+        #expect(harness.textView.string == plain)
+        #expect(harness.reportedTexts.last == plain)
+    }
+
+    @Test("RTF text with an image preview inserts one passage and imports no attachment",
+          arguments: [false, true], [false, true])
+    func rtfImagePreview(withPlainText: Bool, withHTML: Bool) throws {
+        let harness = Harness("")
+        defer { harness.close() }
+        harness.putRTF(#"{\rtf1\ansi {\field{\*\fldinst HYPERLINK "https://example.com/a"}{\fldrslt label}}}"#,
+                       plainText: withPlainText ? "label" : nil)
+        if withHTML {
+            harness.pasteboard.setData(Data(#"<a href="https://example.com/a">label</a>"#.utf8), forType: .html)
+        }
+        harness.pasteboard.setData(try #require(makePNG(width: 2, height: 2)), forType: .png)
+
+        harness.pressCommandV()
+
+        #expect(harness.textView.string == "[label](https://example.com/a)")
+        #expect(harness.staged.isEmpty)
+        #expect(harness.reportedTexts == ["[label](https://example.com/a)"])
+        #expect(harness.changeNotifications == 1)
     }
 
     // MARK: HTML hyperlinks
@@ -662,8 +955,9 @@ struct MarkdownTextViewPasteTests {
         #expect(harness.textView.string == "[x](https://example.invalid/a)")
     }
 
-    @Test("ordinary Paste and Paste and Match Style handle links on the real clipboard, which is then restored")
-    func generalClipboardLinks() {
+    @Test("ordinary Paste and Paste and Match Style handle links on the real clipboard, which is then restored",
+          arguments: ["html", "rtf", "mixed"])
+    func generalClipboardLinks(representation: String) {
         let general = NSPasteboard.general
         let saved = ClipboardSnapshot(general)
         defer { saved.restore(to: general) }
@@ -671,7 +965,13 @@ struct MarkdownTextViewPasteTests {
         let harness = Harness("", pasteboard: general)
         defer { harness.close() }
         general.clearContents()
-        general.setData(Data(Self.webKitCopy.utf8), forType: .html)
+        if representation != "rtf" { general.setData(Data(Self.webKitCopy.utf8), forType: .html) }
+        if representation != "html" {
+            general.setData(Data(#"""
+                {\rtf1\ansi See {\field{\*\fldinst HYPERLINK "https://example.com/docs?a=1&b=2"}{\fldrslt documentation}} and {\field{\*\fldinst HYPERLINK "https://example.com/pricing"}{\fldrslt pricing}}.\par
+                Mail {\field{\*\fldinst HYPERLINK "mailto:team@example.com"}{\fldrslt the team}}.}
+                """#.utf8), forType: .rtf)
+        }
 
         #expect(harness.isPasteEnabled)
         #expect(harness.isPasteAndMatchStyleEnabled)
