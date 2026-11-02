@@ -122,6 +122,94 @@ struct AppModelOpenNoteTests {
         #expect(try await switchedSettled.suggestions("s").isEmpty)
     }
 
+    @Test("heading-only timeline Wiki-links use their source Daily Entry and reuse unsaved text", arguments: [false, true])
+    func timelineHeadingLinkUsesSource(deletedOnDisk: Bool) throws {
+        let fixture = try AppModelFixture()
+        let path = "Journal/2026/10/2026-10-15.md"
+        let saved = "# 2026-10-15\n\n## Decisions\n\nSaved text\n"
+        try fixture.write(saved, to: path)
+        try fixture.write("# Other\n\n## Decisions\n", to: "Notes/Other.md")
+        let model = fixture.makeModel()
+        let source = try #require(model.openExistingNote(relativePath: path))
+        source.text = "# 2026-10-15\n\n## Decisions\n\nUnsaved text\n"
+        if deletedOnDisk {
+            try FileManager.default.removeItem(at: source.fileURL)
+            source.reconcileWithDisk()
+        }
+        let other = try #require(model.openExistingNote(relativePath: "Notes/Other.md"))
+        model.sidebarMode = .tags
+        let link = try #require(WikiLink.links(in: "[[#Decisions]]").first)
+
+        model.openWikiLink(link, sourceRelativePath: path)
+
+        #expect(model.document === source)
+        #expect(model.document !== other)
+        #expect(model.sidebarMode == .journal)
+        #expect(model.reveal?.documentID == AnyHashable(source.id))
+        #expect(model.reveal?.range == NoteSection.find("Decisions", in: source.text)?.headingRange)
+        #expect(source.hasUnsavedChanges)
+        #expect(source.text.contains("Unsaved text"))
+        #expect(model.errorMessage == nil)
+        if deletedOnDisk {
+            #expect(FileManager.default.fileExists(atPath: source.fileURL.path) == false)
+        } else {
+            #expect(try String(contentsOf: source.fileURL, encoding: .utf8) == saved)
+        }
+    }
+
+    @Test("named timeline Wiki-links open their target rather than the card's source")
+    func timelineNamedLinkUsesTarget() throws {
+        let fixture = try AppModelFixture()
+        try fixture.write("# Idea\n\n## Decisions\n", to: "Notes/Idea.md")
+        let model = fixture.makeModel()
+        let target = try #require(model.openExistingNote(relativePath: "Notes/Idea.md"))
+        model.sidebarMode = .tags
+
+        model.openWikiLink(
+            try #require(WikiLink.links(in: "[[Idea#Decisions]]").first),
+            sourceRelativePath: "Journal/2026/10/2026-10-15.md"
+        )
+
+        #expect(model.document === target)
+        #expect(model.sidebarMode == .journal)
+        #expect(model.reveal?.range == NoteSection.find("Decisions", in: target.text)?.headingRange)
+        #expect(model.errorMessage == nil)
+    }
+
+    @Test("missing timeline Wiki-link notes and headings report errors without creating files")
+    func missingTimelineLinkTargets() throws {
+        let fixture = try AppModelFixture()
+        let path = "Journal/2026/10/2026-10-15.md"
+        let saved = "# 2026-10-15\n\n## Decisions\n"
+        try fixture.write(saved, to: path)
+        let model = fixture.makeModel()
+        model.sidebarMode = .tags
+
+        model.openWikiLink(
+            try #require(WikiLink.links(in: "[[#Decisions]]").first),
+            sourceRelativePath: "Journal/2026/10/2026-10-14.md"
+        )
+        #expect(model.errorMessage == "Zdrojová poznámka už ve Vaultu neexistuje.")
+        #expect(model.sidebarMode == .tags)
+        #expect(FileManager.default.fileExists(atPath: fixture.rootURL.appending(path: "Journal/2026/10/2026-10-14.md").path) == false)
+
+        model.openWikiLink(
+            try #require(WikiLink.links(in: "[[Missing]]").first),
+            sourceRelativePath: path
+        )
+        #expect(model.errorMessage == "Poznámka „Missing“ ve Vaultu neexistuje.")
+        #expect(model.sidebarMode == .tags)
+
+        model.openWikiLink(
+            try #require(WikiLink.links(in: "[[#Missing]]").first),
+            sourceRelativePath: path
+        )
+        #expect(model.errorMessage == "Sekce „Missing“ v poznámce „2026-10-15“ neexistuje.")
+        #expect(model.document?.fileURL == fixture.rootURL.appending(path: path))
+        #expect(model.reveal == nil)
+        #expect(try String(contentsOf: fixture.rootURL.appending(path: path), encoding: .utf8) == saved)
+    }
+
     private func waitForIndexing(_ model: AppModel) async throws {
         try await waitUntil { !model.isIndexing }
     }

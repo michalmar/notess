@@ -1,4 +1,5 @@
 import AppKit
+import NotessCore
 import SwiftUI
 
 extension MarkdownTextViewFactory {
@@ -12,6 +13,7 @@ extension MarkdownTextViewFactory {
         textView.attachHighlighter()
         textView.markdownStyle = style
         textView.isEditable = false
+        textView.opensWebLinksOnPlainClick = true
         textView.isSelectable = true
         textView.allowsUndo = false
         textView.usesFindBar = false
@@ -46,6 +48,8 @@ public struct ReadOnlyMarkdownView: NSViewRepresentable {
     private let onOpenImagePreview: ((ImagePreviewContent) -> Void)?
     private let onImageLoadFailure: ((String) -> Void)?
     private let onOpenTag: ((String) -> Void)?
+    private let onOpenWikiLink: ((WikiLink) -> Void)?
+    private let onOpenWebLink: ((URL) -> Void)?
     @State private var imageLayoutTick = 0
 
     /// - Parameters:
@@ -55,6 +59,9 @@ public struct ReadOnlyMarkdownView: NSViewRepresentable {
     ///   - onImageLoadFailure: Called with a message when an image cannot be loaded.
     ///   - onOpenTag: Called with the normalised name of a clicked `#tag`;
     ///     without it Tags are plain text.
+    ///   - onOpenWikiLink: Called with a clicked Wiki-link.
+    ///   - onOpenWebLink: Called with a clicked HTTP(S) link. Both link types
+    ///     accept ordinary clicks and Command-clicks when their callback is supplied.
     ///   - fontName: The body font's PostScript name, or `"System"`.
     ///   - colors: Formatting colours; the defaults follow light/dark mode.
     public init(
@@ -65,9 +72,13 @@ public struct ReadOnlyMarkdownView: NSViewRepresentable {
         noteURL: URL? = nil,
         onOpenImagePreview: ((ImagePreviewContent) -> Void)? = nil,
         onImageLoadFailure: ((String) -> Void)? = nil,
-        onOpenTag: ((String) -> Void)? = nil
+        onOpenTag: ((String) -> Void)? = nil,
+        onOpenWikiLink: ((WikiLink) -> Void)? = nil,
+        onOpenWebLink: ((URL) -> Void)? = nil
     ) {
         self.onOpenTag = onOpenTag
+        self.onOpenWikiLink = onOpenWikiLink
+        self.onOpenWebLink = onOpenWebLink
         self.noteURL = noteURL
         self.onOpenImagePreview = onOpenImagePreview
         self.onImageLoadFailure = onImageLoadFailure
@@ -79,6 +90,8 @@ public struct ReadOnlyMarkdownView: NSViewRepresentable {
         let textView = MarkdownTextViewFactory.makeReadOnlyTextView(style: style)
         configureImages(in: textView)
         textView.onTagClick = onOpenTag
+        textView.onWikiLinkClick = onOpenWikiLink
+        textView.onOpenWebLink = onOpenWebLink
         textView.string = markdown
         return textView
     }
@@ -101,6 +114,8 @@ public struct ReadOnlyMarkdownView: NSViewRepresentable {
         _ = imageLayoutTick // re-measure the height once images changed it
         configureImages(in: textView)
         textView.onTagClick = onOpenTag
+        textView.onWikiLinkClick = onOpenWikiLink
+        textView.onOpenWebLink = onOpenWebLink
         if textView.markdownStyle != style {
             textView.markdownStyle = style
         }

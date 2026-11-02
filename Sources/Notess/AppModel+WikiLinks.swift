@@ -5,16 +5,27 @@ import NotessEditor
 extension AppModel {
     /// Follows a `[[target]]` or `[[target#Section]]` link clicked in the editor:
     /// opens the note in a tab (or selects its tab) and scrolls to the Section.
+    /// Heading-only links from a timeline card use its source note, not the active tab.
     /// A link that cannot be followed shows a message and changes nothing on disk.
-    func openWikiLink(_ link: WikiLink) {
+    func openWikiLink(_ link: WikiLink, sourceRelativePath: String? = nil) {
         guard let vault else { return }
 
         let document: NoteDocument
         let noteName: String
         if link.target.isEmpty {
-            guard let current = tabSession.activeDocument else { return }
-            document = current
-            noteName = current.fileURL.deletingPathExtension().lastPathComponent
+            if let sourceRelativePath {
+                let url = vault.rootURL.appending(path: sourceRelativePath, directoryHint: .notDirectory)
+                guard hasOpenOrExistingNote(at: url) else {
+                    errorMessage = "Zdrojová poznámka už ve Vaultu neexistuje."
+                    return
+                }
+                guard let opened = openExistingNote(relativePath: sourceRelativePath) else { return }
+                document = opened
+            } else {
+                guard let current = tabSession.activeDocument else { return }
+                document = current
+            }
+            noteName = document.fileURL.deletingPathExtension().lastPathComponent
         } else {
             let openPaths = tabSession.restorationState(relativeTo: vault.rootURL).relativePaths
             let resolver = WikiLinkResolver(relativePaths: vault.scanNotePaths() + openPaths)

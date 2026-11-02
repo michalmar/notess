@@ -244,6 +244,8 @@ struct TagTimelineView: View {
     let openImagePreview: (ImagePreviewContent) -> Void
     let open: (TagTimelineSection) -> Void
     let openTag: (String) -> Void
+    let openWikiLink: (WikiLink, TagTimelineSection) -> Void
+    let openWebLink: (URL) -> Void
 
     var body: some View {
         content
@@ -301,7 +303,9 @@ struct TagTimelineView: View {
                                 noteURL: noteURL(section),
                                 openImagePreview: openImagePreview,
                                 open: open,
-                                openTag: openTag
+                                openTag: openTag,
+                                openWikiLink: openWikiLink,
+                                openWebLink: openWebLink
                             )
                         }
                     }
@@ -373,6 +377,8 @@ private struct SectionCard: View {
     let openImagePreview: (ImagePreviewContent) -> Void
     let open: (TagTimelineSection) -> Void
     let openTag: (String) -> Void
+    let openWikiLink: (WikiLink, TagTimelineSection) -> Void
+    let openWebLink: (URL) -> Void
     @State private var imageFailures: [String] = []
 
     var body: some View {
@@ -386,7 +392,9 @@ private struct SectionCard: View {
                 onImageLoadFailure: { message in
                     if !imageFailures.contains(message) { imageFailures.append(message) }
                 },
-                onOpenTag: openTag
+                onOpenTag: openTag,
+                onOpenWikiLink: { openWikiLink($0, section) },
+                onOpenWebLink: openWebLink
             )
             ForEach(imageFailures, id: \.self) { message in
                 Label(message, systemImage: "exclamationmark.triangle")

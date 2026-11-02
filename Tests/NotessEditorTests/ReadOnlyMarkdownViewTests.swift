@@ -1,4 +1,5 @@
 import AppKit
+import NotessCore
 import SwiftUI
 import Testing
 @testable import NotessEditor
@@ -162,6 +163,83 @@ struct ReadOnlyMarkdownViewTests {
     private static func markdownTextView(in view: NSView) -> MarkdownTextView? {
         if let textView = view as? MarkdownTextView { return textView }
         return view.subviews.lazy.compactMap { markdownTextView(in: $0) }.first
+    }
+
+    @Test("timeline Markdown forwards plain and Command clicks on web links and Wiki-links without editing")
+    func forwardsLinkClicks() throws {
+        let markdown = """
+            ## Meeting #acme
+            https://example.com
+            [documentation](https://example.com/docs)
+            [[Plan#Decisions]] [[#Decisions]]
+            `https://inline.example` `[[Code]]`
+            ```
+            https://fenced.example [[Fenced]]
+            ```
+            """
+        var webLinks: [URL] = []
+        var wikiLinks: [WikiLink] = []
+        let view = NSHostingView(rootView: ReadOnlyMarkdownView(
+            markdown: markdown,
+            onOpenWikiLink: { wikiLinks.append($0) },
+            onOpenWebLink: { webLinks.append($0) }
+        ))
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 700, height: 500),
+            styleMask: [.titled], backing: .buffered, defer: true
+        )
+        window.isReleasedWhenClosed = false
+        defer { window.close() }
+        window.contentView = view
+        window.makeKeyAndOrderFront(nil)
+        view.layoutSubtreeIfNeeded()
+        let textView = try #require(Self.markdownTextView(in: view))
+        textView.layoutSubtreeIfNeeded()
+        let selection = NSRange(location: 0, length: 2)
+        textView.setSelectedRange(selection)
+
+        func point(_ substring: String) -> NSPoint {
+            let rect = textView.rect(forCharacterRange: (markdown as NSString).range(of: substring))
+            return NSPoint(x: rect.midX, y: rect.midY)
+        }
+        func event(at point: NSPoint, modifiers: NSEvent.ModifierFlags, count: Int = 1) throws -> NSEvent {
+            try #require(NSEvent.mouseEvent(
+                with: .leftMouseDown, location: textView.convert(point, to: nil),
+                modifierFlags: modifiers, timestamp: 0, windowNumber: window.windowNumber,
+                context: nil, eventNumber: 1, clickCount: count, pressure: 1
+            ))
+        }
+
+        for modifiers: NSEvent.ModifierFlags in [[], .command] {
+            for substring in ["https://example.com", "documentation", "Plan", "[[#Decisions]]"] {
+                let point = point(substring)
+                #expect(textView.pointingHandTarget(containing: point))
+                textView.mouseDown(with: try event(at: point, modifiers: modifiers))
+            }
+        }
+        #expect(webLinks.map(\.absoluteString) == [
+            "https://example.com", "https://example.com/docs",
+            "https://example.com", "https://example.com/docs"
+        ])
+        #expect(wikiLinks.map(\.target) == ["Plan", "", "Plan", ""])
+        #expect(wikiLinks.map(\.section) == ["Decisions", "Decisions", "Decisions", "Decisions"])
+        #expect(textView.selectedRange() == selection)
+        #expect(textView.string == markdown)
+        #expect(textView.isEditable == false)
+        #expect(textView.textLayoutManager != nil)
+
+        for substring in ["https://inline.example", "Code", "https://fenced.example", "Fenced"] {
+            let point = point(substring)
+            #expect(textView.pointingHandTarget(containing: point) == false)
+            #expect(textView.wikiLink(atPoint: point) == nil)
+            #expect(try textView.openWebLink(with: event(at: point, modifiers: .command), at: point) == false)
+        }
+        let webPoint = point("documentation")
+        for modifiers: NSEvent.ModifierFlags in [.shift, .option, .control, [.command, .shift]] {
+            #expect(try textView.openWebLink(with: event(at: webPoint, modifiers: modifiers), at: webPoint) == false)
+        }
+        #expect(try textView.openWebLink(with: event(at: webPoint, modifiers: [], count: 2), at: webPoint) == false)
+        #expect(webLinks.count == 4)
     }
 
     private func clickImage(in textView: MarkdownTextView, window: NSWindow) -> Bool {

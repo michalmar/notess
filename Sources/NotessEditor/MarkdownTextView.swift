@@ -262,6 +262,7 @@ public final class MarkdownTextView: NSTextView {
     public var onOpenWebLink: ((URL) -> Void)? {
         didSet { refreshPointingHand() }
     }
+    var opensWebLinksOnPlainClick = false
     /// Called with the normalised name of a clicked `#tag` when the button comes
     /// up; the click then does not move the caret. Without it Tags are plain text.
     public var onTagClick: ((String) -> Void)? {
@@ -507,11 +508,12 @@ public final class MarkdownTextView: NSTextView {
         return nil
     }
 
-    /// Handles the editor's Command+click web-link gesture; ordinary clicks
-    /// return false so `NSTextView` can place the caret.
+    /// Editable notes require Command+click; read-only timeline cards also
+    /// accept an ordinary click.
     func openWebLink(with event: NSEvent, at point: NSPoint) -> Bool {
         let modifiers = event.modifierFlags.intersection([.shift, .command, .option, .control])
-        guard event.clickCount == 1, modifiers == .command,
+        guard event.clickCount == 1,
+              modifiers == .command || (modifiers.isEmpty && opensWebLinksOnPlainClick),
               let onOpenWebLink, let url = webLink(atPoint: point) else {
             return false
         }

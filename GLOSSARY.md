@@ -43,7 +43,7 @@ The Tags of saved Daily Entries that belong to no Tag Group, in the order of All
 _Avoid_: Unsorted Tags, orphan Tags
 
 **Wiki-link**:
-A `[[Note]]` reference to another note by its file name, optionally to one of its headings with `[[Note#Heading]]`. The note is found by file name anywhere in the Vault, ignoring case; duplicate names resolve by the rule documented on `WikiLinkResolver`.
+A `[[Note]]` reference to another note by its file name, optionally to one of its headings with `[[Note#Heading]]`, or a `[[#Heading]]` reference to a heading in the note containing the link. The note is found by file name anywhere in the Vault, ignoring case; duplicate names resolve by the rule documented on `WikiLinkResolver`.
 _Avoid_: Internal link, backlink (a backlink is a wiki-link seen from its target)
 
 ### Second brain

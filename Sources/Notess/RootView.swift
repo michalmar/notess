@@ -27,7 +27,15 @@ struct RootView: View {
                                 noteURL: model.noteURL(for:),
                                 openImagePreview: model.presentImagePreview,
                                 open: model.openTimelineSection,
-                                openTag: model.openTagTimeline
+                                openTag: model.openTagTimeline,
+                                openWikiLink: { link, section in
+                                    model.openWikiLink(link, sourceRelativePath: section.relativePath)
+                                },
+                                openWebLink: { url in
+                                    if !SystemWebLinkOpener.open(url) {
+                                        model.errorMessage = "Odkaz se nepodařilo otevřít v prohlížeči."
+                                    }
+                                }
                             )
                         }
                         if model.isBrainConversationPresented {
