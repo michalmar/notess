@@ -26,6 +26,22 @@ _Avoid_: Page, document
 The span of a note from one second-level heading to the next heading of level 1 or 2; the unit that fulltext search matches and Brain Notes cite (search shows each matching note once, at its first matching Section). The text before the first second-level heading is one more, introductory Section.
 _Avoid_: Block, chunk, topic, chapter
 
+**Task**:
+An action, either open or completed, written within and belonging to a specific note. Its context comes from that note, its headings and any enclosing Tasks, without a separate project assignment.
+_Avoid_: To-do, action item, Agent operation
+
+**Open Task**:
+A Task that has not been completed, regardless of whether it has a Due Date or when that date falls.
+_Avoid_: Active Task, in-progress Task
+
+**Due Date**:
+The optional calendar day by which a Task should be completed; an Open Task becomes overdue on the following local calendar day. It is not a start date or a reminder.
+_Avoid_: Start date, scheduled date, reminder
+
+**Task Overview**:
+The read-only combined view of Tasks in saved Daily Entries and Free Notes, excluding Brain Notes.
+_Avoid_: Task manager, project board
+
 **Tag**:
 A `#word` token (hash immediately followed by a word containing at least one letter) outside code, compared case-insensitively and Unicode-normalised. In the Tag Timeline it marks its nearest preceding heading, including all descendants until the next heading of equal or higher rank; text before any heading stays local, while fulltext search still filters by the Section containing the Tag.
 _Avoid_: Label, category, topic
