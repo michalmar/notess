@@ -380,7 +380,10 @@ final class TagGroupFixture {
     }
 
     @MainActor
-    func makeModel() -> AppModel {
+    func makeModel(
+        now: @escaping () -> Date = { Date(timeIntervalSince1970: 1_760_765_000) },
+        calendar: @escaping () -> Calendar = { .current }
+    ) -> AppModel {
         let vault = Vault(rootURL: rootURL)
         VaultLocationStore(defaults: defaults).remember(vault)
         return AppModel(
@@ -393,7 +396,8 @@ final class TagGroupFixture {
             tagGroupStore: TagGroupStore(
                 directoryURL: settingsURL.appending(path: "TagGroups", directoryHint: .isDirectory)
             ),
-            now: { Date(timeIntervalSince1970: 1_760_765_000) }
+            now: now,
+            calendar: calendar
         )
     }
 

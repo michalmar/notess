@@ -298,7 +298,11 @@ final class SearchPresentationFixture {
 
     /// The app on this Vault with an indexed Vault and, when given, that note open in the editor.
     @MainActor
-    func makeHarness(opening relativePath: String? = "Notes/Plán.md") async throws -> SearchPresentationHarness {
+    func makeHarness(
+        opening relativePath: String? = "Notes/Plán.md",
+        now: @escaping () -> Date = { Date(timeIntervalSince1970: 1_760_765_000) },
+        calendar: @escaping () -> Calendar = { .current }
+    ) async throws -> SearchPresentationHarness {
         VaultLocationStore(defaults: defaults).remember(Vault(rootURL: rootURL))
         let model = AppModel(
             vaultLocationStore: VaultLocationStore(defaults: defaults),
@@ -307,7 +311,8 @@ final class SearchPresentationFixture {
             brainRunStateStore: BrainRunStateStore(
                 directoryURL: rootURL.appending(path: ".test-brain-runs", directoryHint: .isDirectory)
             ),
-            now: { Date(timeIntervalSince1970: 1_760_765_000) }
+            now: now,
+            calendar: calendar
         )
         if let relativePath, FileManager.default.fileExists(atPath: rootURL.appending(path: relativePath).path) {
             for document in model.tabSession.documents { model.closeTab(documentID: document.id) }
@@ -319,4 +324,3 @@ final class SearchPresentationFixture {
         return harness
     }
 }
-

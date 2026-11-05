@@ -320,13 +320,14 @@ struct TagTimelineView: View {
 
 private let indexingLabel = "Indexuji poznámky…"
 
-/// Stands in for an empty Tag list or timeline, which may be empty only
-/// because indexing is still running or has failed.
-private struct EmptyIndexedContent: View {
+/// Stands in for an empty Tag list, timeline or Task Overview, which may be
+/// empty only because indexing is still running or has failed.
+struct EmptyIndexedContent: View {
     let isIndexing: Bool
     let indexFailure: String?
     let title: String
     let description: String
+    var systemImage = "number"
 
     var body: some View {
         if isIndexing {
@@ -340,14 +341,14 @@ private struct EmptyIndexedContent: View {
                 description: Text(indexFailure)
             )
         } else {
-            ContentUnavailableView(title, systemImage: "number", description: Text(description))
+            ContentUnavailableView(title, systemImage: systemImage, description: Text(description))
         }
     }
 }
 
-/// Under a non-empty Tag list or timeline, which may be incomplete while
-/// indexing runs or after it failed.
-private struct IndexStatusFooter: View {
+/// Under a non-empty Tag list, timeline or Task Overview, which may be
+/// incomplete while indexing runs or after it failed.
+struct IndexStatusFooter: View {
     let isIndexing: Bool
     let indexFailure: String?
 

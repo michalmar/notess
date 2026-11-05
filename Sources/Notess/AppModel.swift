@@ -3,12 +3,14 @@ import NotessCore
 import NotessEditor
 import Observation
 
-/// The two ways to browse the Vault in the sidebar.
+/// The ways to browse the Vault in the sidebar.
 enum SidebarMode: Hashable {
     /// The day-based workflow: Journal, Notes and Brain, with the note editor.
     case journal
     /// Tags of saved Daily Entries, with the selected Tag's timeline.
     case tags
+    /// Úkoly: the Task Overview of saved Daily Entries and Free Notes.
+    case tasks
 }
 
 /// App-wide state: which Vault is open and which note tabs are open.
@@ -40,17 +42,23 @@ final class AppModel {
     var searchIndexFailure: String?
     /// Bumped whenever the search index has changed, so open results refresh.
     var searchIndexRevision = 0 {
-        didSet { refreshTagTimeline() }
+        didSet {
+            refreshTagTimeline()
+            refreshTaskOverview()
+        }
     }
-    /// What the sidebar and the detail show: the day-based workflow or the Tag Timeline.
+    /// What the sidebar and the detail show: the day-based workflow, the Tag Timeline or the Task Overview.
     var sidebarMode: SidebarMode = .journal {
         didSet {
             guard sidebarMode != oldValue else { return }
             refreshTagTimeline()
+            refreshTaskOverview()
         }
     }
     /// The Tags of saved Daily Entries and the selected Tag's timeline (Tags mode).
     let tagTimeline = TagTimelineBrowser()
+    /// The saved Tasks of the selected filter (Tasks mode).
+    let taskOverview: TaskOverviewBrowser
     /// The open Vault's Tag Groups; change them through `AppModel+TagGroups`.
     var tagGroups = TagGroups()
     /// Why the open Vault's Tag Groups could not be read; they are then not
@@ -120,7 +128,8 @@ final class AppModel {
         brainConversationConnection: @escaping BrainConversationConnectionFactory = CopilotACPConnection.factory,
         brainConversationStore: BrainConversationStore = BrainConversationStore(),
         moveToTrash: @escaping (URL) throws -> Void = FileTrash.moveToTrash,
-        now: @escaping () -> Date = Date.init
+        now: @escaping () -> Date = Date.init,
+        calendar: @escaping () -> Calendar = { .current }
     ) {
         self.vaultLocationStore = vaultLocationStore
         self.tabRestorationStore = tabRestorationStore
@@ -132,6 +141,7 @@ final class AppModel {
         self.makeBrainConversationConnection = brainConversationConnection
         self.brainConversationStore = brainConversationStore
         self.now = now
+        self.taskOverview = TaskOverviewBrowser(now: now, calendar: calendar)
         if let saved = vaultLocationStore.savedVault() {
             open(saved)
         }
@@ -388,7 +398,7 @@ final class AppModel {
         }
     }
 
-    /// Every note opened in a tab is shown in the editor, so Tags mode gives way to Journal.
+    /// Every note opened in a tab is shown in the editor, so Tags and Tasks modes give way to Journal.
     private func showOpenedTab() {
         persistTabs()
         sidebarMode = .journal

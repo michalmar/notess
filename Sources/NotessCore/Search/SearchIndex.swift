@@ -22,7 +22,10 @@ public actor SearchIndex {
     /// - 3: Sections keep their complete Markdown for the Tag Timeline.
     /// - 4: Tag Timeline spans follow heading hierarchy at every level.
     /// - 5: FTS5 prefix indexes for 1–3 characters keep short queries fast.
-    static let schemaVersion = 5
+    /// - 6: Task occurrences of Daily Entries and Free Notes (`MarkdownTask`).
+    /// - 7: Tasks keep their heading path, enclosing Tasks and duplicate rank.
+    /// - 8: Duplicate Task source fingerprints and complete list ancestry.
+    static let schemaVersion = 8
     private static let batchSize = 50
 
     public let vault: Vault
@@ -167,6 +170,23 @@ public actor SearchIndex {
 
     private static func index(_ file: NoteFile, text raw: String, in db: SQLiteDatabase) throws {
         try Self.removeSections(of: file.relativePath, in: db)
+        if file.kind != .brainNote {
+            // Offsets refer to the note as written, so its open text can be matched against them.
+            let tasks = MarkdownTask.tasks(in: raw)
+            for (task, twin) in zip(tasks, MarkdownTask.twinRanks(of: tasks, in: raw as NSString)) {
+                try db.query(
+                    """
+                    INSERT INTO tasks (path, ordinal, location, completed, text, heading_path, enclosing,
+                                       twin_index, twin_count, twin_fingerprint)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    [.text(file.relativePath), .int(Int64(task.ordinal)), .int(Int64(task.boxRange.location)),
+                     .int(task.isCompleted ? 1 : 0), .text(task.text), .text(Self.encodeTexts(task.headingPath)),
+                     .text(Self.encodeTexts(task.enclosingTasks)), .int(Int64(twin.index)), .int(Int64(twin.count)),
+                     twin.fingerprint.map { .text($0) } ?? .null]
+                )
+            }
+        }
         let text = raw.precomposedStringWithCanonicalMapping
         for section in SearchSection.split(text) {
             let markdown = (text as NSString).substring(with: section.range).trimmingCharacters(in: .newlines)
@@ -218,6 +238,7 @@ public actor SearchIndex {
         try db.query("DELETE FROM section_tags WHERE section_id IN (\(ids))", [.text(path)])
         try db.query("DELETE FROM sections WHERE path = ?", [.text(path)])
         try db.query("DELETE FROM timeline_sections WHERE path = ?", [.text(path)])
+        try db.query("DELETE FROM tasks WHERE path = ?", [.text(path)])
         try db.query("DELETE FROM files WHERE path = ?", [.text(path)])
     }
 
@@ -404,6 +425,51 @@ public actor SearchIndex {
         }
     }
 
+    // MARK: - Tasks
+
+    /// The Task occurrences of the indexed (saved) Daily Entries and Free
+    /// Notes that `filter` selects, one per checkbox, ordered by Due Date then
+    /// source. `today` is a local calendar day, never a cached urgency flag.
+    /// Brain Notes hold no Tasks here.
+    public func tasks(
+        _ filter: TaskFilter,
+        on today: Day = Day(date: Date(), calendar: Calendar(identifier: .gregorian))
+    ) throws -> [TaskOccurrence] {
+        let db = try openDatabase()
+        let completed: Int64 = filter == .completed ? 1 : 0
+        let rows = try db.query(
+            """
+            SELECT path, ordinal, location, completed, text, heading_path, enclosing,
+                   twin_index, twin_count, twin_fingerprint
+            FROM tasks WHERE completed = ?
+            """,
+            [.int(completed)]
+        )
+        return rows.compactMap { row -> TaskOccurrence? in
+            guard let path = row[0].text, let source = TaskSource(relativePath: path),
+                  let ordinal = row[1].int, let location = row[2].int else { return nil }
+            return TaskOccurrence(
+                relativePath: path, source: source, ordinal: ordinal,
+                text: row[4].text ?? "", isCompleted: row[3].int == 1, boxLocation: location,
+                headingPath: Self.decodeTexts(row[5].text), enclosingTasks: Self.decodeTexts(row[6].text),
+                twinIndex: row[7].int ?? 0, twinCount: row[8].int ?? 1, twinFingerprint: row[9].text
+            )
+        }
+        .filter { filter == .open || $0.category(on: today) == filter }
+        .sorted(by: TaskOccurrence.dueDateOrder)
+    }
+
+    /// A list of texts in one column (a JSON array).
+    private static func encodeTexts(_ texts: [String]) -> String {
+        guard !texts.isEmpty, let data = try? JSONEncoder().encode(texts) else { return "[]" }
+        return String(decoding: data, as: UTF8.self)
+    }
+
+    private static func decodeTexts(_ column: String?) -> [String] {
+        guard let column, let texts = try? JSONDecoder().decode([String].self, from: Data(column.utf8)) else { return [] }
+        return texts
+    }
+
     // MARK: - Database
 
     private func openDatabase() throws -> SQLiteDatabase {
@@ -440,6 +506,12 @@ public actor SearchIndex {
                 markdown TEXT NOT NULL, tag TEXT NOT NULL);
             CREATE INDEX IF NOT EXISTS timeline_by_tag ON timeline_sections (tag);
             CREATE INDEX IF NOT EXISTS timeline_by_path ON timeline_sections (path);
+            CREATE TABLE IF NOT EXISTS tasks (
+                path TEXT NOT NULL, ordinal INTEGER NOT NULL, location INTEGER NOT NULL,
+                completed INTEGER NOT NULL, text TEXT NOT NULL, heading_path TEXT NOT NULL,
+                enclosing TEXT NOT NULL, twin_index INTEGER NOT NULL, twin_count INTEGER NOT NULL,
+                twin_fingerprint TEXT);
+            CREATE INDEX IF NOT EXISTS tasks_by_path ON tasks (path);
             CREATE VIRTUAL TABLE IF NOT EXISTS sections_fts USING fts5 (
                 title, body, tokenize = 'unicode61 remove_diacritics 2', prefix = '1 2 3');
             PRAGMA user_version = \(schemaVersion);

@@ -8,6 +8,8 @@ import UniformTypeIdentifiers
 public final class MarkdownTextView: NSTextView {
     let highlighter = MarkdownHighlighter()
     lazy var headingFolding = HeadingFolding(textView: self)
+    lazy var taskCheckboxes = TaskCheckboxes(textView: self)
+    lazy var taskDueDateChips = TaskDueDateChips(textView: self)
     var linkCache = LinkCache()
     private var scrollObserver: NSObjectProtocol?
     private var pointerTrackingArea: NSTrackingArea?
@@ -21,7 +23,13 @@ public final class MarkdownTextView: NSTextView {
         super.layout()
         headingFolding.layoutButtons()
         positionInlineImageViews(layingOutViewport: false)
+        taskCheckboxes.layout()
+        taskDueDateChips.layout()
         refreshPointingHand()
+    }
+
+    public override func accessibilityChildren() -> [Any]? {
+        (super.accessibilityChildren() ?? []) + taskCheckboxes.accessibilityChildren
     }
 
     /// See `MarkdownTextView+Pointer.swift`.
@@ -54,7 +62,10 @@ public final class MarkdownTextView: NSTextView {
         scrollObserver = NotificationCenter.default.addObserver(
             forName: NSView.boundsDidChangeNotification, object: clipView, queue: .main
         ) { [weak self] _ in
-            MainActor.assumeIsolated { self?.refreshPointingHand() }
+            MainActor.assumeIsolated {
+                self?.needsLayout = true
+                self?.refreshPointingHand()
+            }
         }
     }
 
@@ -188,12 +199,23 @@ public final class MarkdownTextView: NSTextView {
     public override var isEditable: Bool {
         didSet {
             if !isEditable { tagCompleter.dismiss() }
+            needsLayout = true
         }
+    }
+
+    public override func becomeFirstResponder() -> Bool {
+        let became = super.becomeFirstResponder()
+        if became { needsLayout = true }
+        return became
     }
 
     public override func resignFirstResponder() -> Bool {
         let resigned = super.resignFirstResponder()
-        if resigned { tagCompleter.dismiss() }
+        if resigned {
+            tagCompleter.dismiss()
+            // Leaving the editor turns the caret line's Due Dates back into chips.
+            needsLayout = true
+        }
         return resigned
     }
 
@@ -363,6 +385,7 @@ public final class MarkdownTextView: NSTextView {
         observeUndoAndRedo()
         highlighter.didStyleText = { [weak self] range, editedRange, delta in
             guard let self else { return }
+            needsLayout = true
             headingFolding.refresh(editedRange: editedRange, delta: delta)
             if let editedRange {
                 hasUnreportedTextEdit = true
@@ -575,6 +598,8 @@ public final class MarkdownTextView: NSTextView {
         // The caret moving with a typed or deleted character is part of that
         // edit; `didChangeText()` refreshes completion for it.
         if !hasUnreportedTextEdit { tagCompleter.selectionDidChange() }
+        // The Due Dates of the lines the selection enters show their Markdown.
+        needsLayout = true
         guard isEditable, let textStorage else { return }
         highlighter.selectionDidChange(to: selectedRange(), in: textStorage)
     }
@@ -1070,17 +1095,9 @@ public final class MarkdownTextView: NSTextView {
 
     /// Toggles the task box under `point` (view coordinates), if any.
     func toggleTask(atPoint point: NSPoint) -> Bool {
-        guard isEditable, let textStorage else { return false }
-        let index = characterIndexForInsertion(at: point)
-        for candidate in [index, index - 1] {
-            guard let change = highlighter.lexer.taskToggle(at: candidate, in: textStorage.mutableString) else { continue }
-            // The `[`, mark and `]` around the replaced mark.
-            let box = NSRange(location: change.range.location - 1, length: 3)
-            if boxRect(box).insetBy(dx: -2, dy: -2).contains(point) {
-                return apply(change)
-            }
-        }
-        return false
+        guard isEditable else { return false }
+        layoutSubtreeIfNeeded()
+        return taskCheckboxes.toggle(at: point)
     }
 
     /// Toggles the `[ ]`/`[x]` box containing the character at `index`.

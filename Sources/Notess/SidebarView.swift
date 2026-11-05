@@ -16,6 +16,7 @@ struct SidebarView: View {
             Picker("Režim", selection: $model.sidebarMode) {
                 Text("Journal").tag(SidebarMode.journal)
                 Text("Tagy").tag(SidebarMode.tags)
+                Text("Úkoly").tag(SidebarMode.tasks)
             }
             .pickerStyle(.segmented)
             .labelsHidden()
@@ -27,6 +28,8 @@ struct SidebarView: View {
                 journalList
             case .tags:
                 TagList(model: model)
+            case .tasks:
+                TaskFilterList(model: model)
             }
         }
         .onChange(of: model.document?.id) { _, _ in
