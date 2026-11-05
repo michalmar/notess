@@ -39,6 +39,58 @@ struct AppModelTaskOverviewTests {
         fixture.rootURL.appending(path: relativePath, directoryHint: .notDirectory)
     }
 
+    @Test("manual dates reach time filters only after saving; opening and returning keeps that filter without writing")
+    func savedDueDateWorkflow() async throws {
+        let fixture = try TagGroupFixture()
+        try fixture.write("- [ ] Poslat 📅 2026-11-06\n", to: Self.plan)
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        let now = ISO8601DateFormatter().date(from: "2026-11-06T12:00:00Z")!
+        let model = fixture.makeModel(now: { now }, calendar: { calendar })
+        try await waitUntil { !model.isIndexing }
+        model.sidebarMode = .tasks
+        try await waitForTasks(model) { $0 == ["Poslat 📅 2026-11-06"] }
+        #expect(model.taskOverview.groups.map(\.filter) == [.today])
+        model.selectTaskFilter(.today)
+        try await waitUntil { model.taskOverview.filter == .today }
+        try await waitForTasks(model) { $0 == ["Poslat 📅 2026-11-06"] }
+        let task = try #require(listed(model)?.first)
+        model.openTask(task)
+        let document = try #require(model.document)
+        document.text = "- [ ] Poslat 📅 2026-11-07\n"
+        model.sidebarMode = .tasks
+        await model.taskOverview.refresh()
+        #expect(listed(model)?.map(\.text) == ["Poslat 📅 2026-11-06"])
+        #expect(model.taskOverview.selectedTaskID == task.id)
+        #expect(try fixture.read(Self.plan) == "- [ ] Poslat 📅 2026-11-06\n")
+
+        let revision = model.searchIndexRevision
+        #expect(model.save(documentID: document.id))
+        try await waitUntil { model.searchIndexRevision > revision }
+        try await waitForTasks(model) { $0.isEmpty }
+        model.selectTaskFilter(.upcoming)
+        try await waitForTasks(model) { $0 == ["Poslat 📅 2026-11-07"] }
+        let saved = try fixture.read(Self.plan)
+        model.openTask(try #require(listed(model)?.first))
+        #expect(model.document?.id == document.id)
+        #expect(model.reveal?.range.location == 2)
+        model.sidebarMode = .tasks
+        #expect(model.taskOverview.filter == .upcoming)
+        #expect(model.taskOverview.selectedTaskID == task.id)
+        #expect(try fixture.read(Self.plan) == saved)
+
+        // A failed manual date edit must not change the persisted projection.
+        document.text = "- [ ] Poslat 📅 2026-02-31\n"
+        let folder = url(fixture, "Projekty")
+        try FileManager.default.setAttributes([.posixPermissions: 0o555], ofItemAtPath: folder.path)
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: folder.path) }
+        #expect(!model.save(documentID: document.id))
+        await model.taskOverview.refresh()
+        #expect(listed(model)?.first?.dueDate.day == Day(year: 2026, month: 11, day: 7))
+        #expect(document.hasUnsavedChanges)
+        #expect(model.errorMessage != nil)
+    }
+
     @Test("Úkoly shows all saved Open Tasks by default and Completed Tasks on request")
     func browsesByFilter() async throws {
         let fixture = try makeFixture()

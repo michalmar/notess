@@ -419,14 +419,15 @@ public actor SearchIndex {
     // MARK: - Tasks
 
     /// The Task occurrences of the indexed (saved) Daily Entries and Free
-    /// Notes that `filter` selects, one per checkbox, in source order
-    /// (`TaskOccurrence.sourceOrder`). Brain Notes hold no Tasks here.
-    public func tasks(_ filter: TaskFilter) throws -> [TaskOccurrence] {
+    /// Notes that `filter` selects, one per checkbox, ordered by Due Date then
+    /// source. `today` is a local calendar day, never a cached urgency flag.
+    /// Brain Notes hold no Tasks here.
+    public func tasks(
+        _ filter: TaskFilter,
+        on today: Day = Day(date: Date(), calendar: Calendar(identifier: .gregorian))
+    ) throws -> [TaskOccurrence] {
         let db = try openDatabase()
-        let completed: Int64 = switch filter {
-        case .open: 0
-        case .completed: 1
-        }
+        let completed: Int64 = filter == .completed ? 1 : 0
         let rows = try db.query(
             "SELECT path, ordinal, location, completed, text FROM tasks WHERE completed = ?",
             [.int(completed)]
@@ -439,7 +440,8 @@ public actor SearchIndex {
                 text: row[4].text ?? "", isCompleted: row[3].int == 1, boxLocation: location
             )
         }
-        .sorted(by: TaskOccurrence.sourceOrder)
+        .filter { filter == .open || $0.category(on: today) == filter }
+        .sorted(by: TaskOccurrence.dueDateOrder)
     }
 
     // MARK: - Database

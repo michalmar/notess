@@ -32,6 +32,74 @@ final class TaskOverviewBrowserTests {
         return tasks.map(\.text)
     }
 
+    @Test("the default list groups deadlines in urgency order, retaining the selected time filter and row across midnight")
+    func calendarRollover() async throws {
+        try vault.write("""
+            - [ ] Včera 📅 2026-03-07
+            - [ ] Dnes 📅 2026-03-08
+            - [ ] Zítra 📅 2026-03-09
+            - [ ] Neplatný 📅 2026-02-31
+            """, to: "Plán.md")
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = try #require(TimeZone(identifier: "America/New_York"))
+        var now = ISO8601DateFormatter().date(from: "2026-03-08T05:00:00Z")!
+        let browser = TaskOverviewBrowser(now: { now }, calendar: { calendar })
+        browser.connect(try await makeIndex())
+        await browser.refresh()
+
+        #expect(browser.groups.map(\.filter) == [.overdue, .today, .upcoming, .undated])
+        #expect(browser.groups.map { $0.tasks.map(\.text) } == [
+            ["Včera 📅 2026-03-07"], ["Dnes 📅 2026-03-08"], ["Zítra 📅 2026-03-09"], ["Otevřený", "Neplatný 📅 2026-02-31"],
+        ])
+        await browser.select(.today)
+        browser.selectedTaskID = "Plán.md#1"
+        #expect(texts(browser) == ["Dnes 📅 2026-03-08"])
+
+        // The spring DST day is 23 hours long, not an elapsed 24-hour window.
+        now = ISO8601DateFormatter().date(from: "2026-03-09T03:59:59Z")!
+        await browser.refresh()
+        #expect(texts(browser) == ["Dnes 📅 2026-03-08"])
+        now = ISO8601DateFormatter().date(from: "2026-03-09T04:00:00Z")!
+        await browser.refresh()
+        #expect(browser.filter == .today)
+        #expect(texts(browser) == ["Zítra 📅 2026-03-09"])
+        #expect(browser.selectedTaskID == "Plán.md#1")
+        await browser.select(.overdue)
+        #expect(texts(browser) == ["Včera 📅 2026-03-07", "Dnes 📅 2026-03-08"])
+    }
+
+    @Test("the same saved deadline is upcoming, today and overdue by the injected local day, including a time-zone change")
+    func localDeadlineBoundaries() async throws {
+        try vault.write("- [ ] Termín 📅 2026-11-01\n", to: "Plán.md")
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "America/New_York")!
+        var now = ISO8601DateFormatter().date(from: "2026-11-01T03:59:59Z")!
+        let browser = TaskOverviewBrowser(now: { now }, calendar: { calendar })
+        browser.connect(try await makeIndex())
+        await browser.select(.upcoming)
+        #expect(texts(browser) == ["Termín 📅 2026-11-01"])
+        now = ISO8601DateFormatter().date(from: "2026-11-01T04:00:00Z")!
+        await browser.select(.today)
+        #expect(texts(browser) == ["Termín 📅 2026-11-01"])
+        // The fall DST day ends 25 hours later.
+        now = ISO8601DateFormatter().date(from: "2026-11-02T04:59:59Z")!
+        await browser.refresh()
+        #expect(texts(browser) == ["Termín 📅 2026-11-01"])
+        now = ISO8601DateFormatter().date(from: "2026-11-02T05:00:00Z")!
+        await browser.select(.overdue)
+        #expect(texts(browser) == ["Termín 📅 2026-11-01"])
+
+        now = ISO8601DateFormatter().date(from: "2026-11-02T00:30:00Z")!
+        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        await browser.refresh()
+        #expect(texts(browser) == ["Termín 📅 2026-11-01"])
+        calendar.timeZone = TimeZone(identifier: "America/Los_Angeles")!
+        await browser.refresh()
+        #expect(texts(browser) == [])
+        await browser.select(.today)
+        #expect(texts(browser) == ["Termín 📅 2026-11-01"])
+    }
+
     @Test("the Task Overview starts on all Open Tasks and switches to Completed Tasks")
     func filters() async throws {
         let browser = TaskOverviewBrowser()

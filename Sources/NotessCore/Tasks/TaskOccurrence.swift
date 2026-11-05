@@ -39,6 +39,8 @@ public struct TaskOccurrence: Hashable, Sendable, Identifiable {
     public let isCompleted: Bool
     /// The UTF-16 offset of the `[ ]` box in the saved note.
     public let boxLocation: Int
+    /// Parsed from the saved Task text; marker ranges are relative to `text`.
+    public let dueDate: TaskDueDate
 
     public var id: String { "\(relativePath)#\(ordinal)" }
 
@@ -49,6 +51,25 @@ public struct TaskOccurrence: Hashable, Sendable, Identifiable {
         self.text = text
         self.isCompleted = isCompleted
         self.boxLocation = boxLocation
+        self.dueDate = TaskDueDate.parse(in: text)
+    }
+
+    /// Completed Tasks never acquire an open urgency category.
+    public func category(on today: Day) -> TaskFilter {
+        guard !isCompleted else { return .completed }
+        guard let day = dueDate.day else { return .undated }
+        if day < today { return .overdue }
+        return day == today ? .today : .upcoming
+    }
+
+    /// Deadlines first, undated last; equal deadlines retain source ordering.
+    public static func dueDateOrder(_ lhs: TaskOccurrence, _ rhs: TaskOccurrence) -> Bool {
+        switch (lhs.dueDate.day, rhs.dueDate.day) {
+        case (let a?, let b?) where a != b: return a < b
+        case (_?, nil): return true
+        case (nil, _?): return false
+        default: return sourceOrder(lhs, rhs)
+        }
     }
 
     /// The Task's box in `currentText` (the note as open now, possibly with
@@ -89,6 +110,10 @@ public struct TaskOccurrence: Hashable, Sendable, Identifiable {
 public enum TaskFilter: Hashable, Sendable, CaseIterable {
     /// Všechny nesplněné: every Open Task.
     case open
+    case overdue
+    case today
+    case upcoming
+    case undated
     /// Splněné: every completed Task.
     case completed
 }

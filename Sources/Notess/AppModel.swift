@@ -58,7 +58,7 @@ final class AppModel {
     /// The Tags of saved Daily Entries and the selected Tag's timeline (Tags mode).
     let tagTimeline = TagTimelineBrowser()
     /// The saved Tasks of the selected filter (Tasks mode).
-    let taskOverview = TaskOverviewBrowser()
+    let taskOverview: TaskOverviewBrowser
     /// The open Vault's Tag Groups; change them through `AppModel+TagGroups`.
     var tagGroups = TagGroups()
     /// Why the open Vault's Tag Groups could not be read; they are then not
@@ -128,7 +128,8 @@ final class AppModel {
         brainConversationConnection: @escaping BrainConversationConnectionFactory = CopilotACPConnection.factory,
         brainConversationStore: BrainConversationStore = BrainConversationStore(),
         moveToTrash: @escaping (URL) throws -> Void = FileTrash.moveToTrash,
-        now: @escaping () -> Date = Date.init
+        now: @escaping () -> Date = Date.init,
+        calendar: @escaping () -> Calendar = { .current }
     ) {
         self.vaultLocationStore = vaultLocationStore
         self.tabRestorationStore = tabRestorationStore
@@ -140,6 +141,7 @@ final class AppModel {
         self.makeBrainConversationConnection = brainConversationConnection
         self.brainConversationStore = brainConversationStore
         self.now = now
+        self.taskOverview = TaskOverviewBrowser(now: now, calendar: calendar)
         if let saved = vaultLocationStore.savedVault() {
             open(saved)
         }
