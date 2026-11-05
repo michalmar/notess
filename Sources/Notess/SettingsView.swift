@@ -1,3 +1,4 @@
+import AppKit
 import NotessCore
 import SwiftUI
 
@@ -7,6 +8,7 @@ struct SettingsView: View {
     @State private var autodetectedCLIPath: URL?
 
     var body: some View {
+        @Bindable var settings = model.settings
         Form {
             Section("Vault") {
                 LabeledContent("Aktuální Vault") {
@@ -55,9 +57,10 @@ struct SettingsView: View {
 
             Section("Vzhled") {
                 LabeledContent("Téma") {
-                    Text("Podle systému")
+                    ThemePicker(selection: $settings.theme)
+                        .fixedSize()
                 }
-                Text("Notess automaticky sleduje světlý a tmavý vzhled macOS.")
+                Text("Podle systému sleduje vzhled macOS. Light a Dark platí pro celou aplikaci.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -85,6 +88,7 @@ struct SettingsView: View {
         .formStyle(.grouped)
         .padding()
         .frame(width: 500)
+        .modifier(ApplicationTheme(theme: model.settings.theme))
         .task {
             autodetectedCLIPath = await Task.detached(priority: .utility) {
                 CopilotCLILocator().detect()
@@ -145,5 +149,36 @@ struct SettingsView: View {
         guard let vaultToOpen else { return }
         model.chooseVault(at: vaultToOpen)
         self.vaultToOpen = nil
+    }
+}
+
+private struct ThemePicker: NSViewRepresentable {
+    @Binding var selection: AppTheme
+
+    func makeCoordinator() -> Coordinator { Coordinator(selection: $selection) }
+
+    func makeNSView(context: Context) -> NSPopUpButton {
+        let picker = NSPopUpButton()
+        picker.addItems(withTitles: AppTheme.allCases.map(\.title))
+        picker.setAccessibilityLabel("Téma")
+        picker.target = context.coordinator
+        picker.action = #selector(Coordinator.selectTheme(_:))
+        return picker
+    }
+
+    func updateNSView(_ picker: NSPopUpButton, context: Context) {
+        context.coordinator.selection = $selection
+        picker.selectItem(withTitle: selection.title)
+    }
+
+    @MainActor
+    final class Coordinator: NSObject {
+        var selection: Binding<AppTheme>
+
+        init(selection: Binding<AppTheme>) { self.selection = selection }
+
+        @objc func selectTheme(_ picker: NSPopUpButton) {
+            selection.wrappedValue = AppTheme.allCases[picker.indexOfSelectedItem]
+        }
     }
 }

@@ -130,6 +130,7 @@ struct RootView: View {
                 .zIndex(10)
             }
         }
+        .modifier(ApplicationTheme(theme: model.settings.theme))
         .background(KeyWindowObserver { model.isNoteWindowKey = $0 })
         .confirmationDialog(
             model.noteDeletionConfirmation.map { "Smazat \($0.displayName)?" } ?? "Smazat poznámku?",

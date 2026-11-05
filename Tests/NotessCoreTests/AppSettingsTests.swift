@@ -11,6 +11,33 @@ struct AppSettingsTests {
         return defaults
     }
 
+    @Test("each application theme persists without changing font or zoom", arguments: ["system", "light", "dark"])
+    func themePersists(rawValue: String) throws {
+        let defaults = try isolatedDefaults()
+        let settings = AppSettings(defaults: defaults)
+        settings.editorFont = EditorFont(name: "Menlo", size: 18)
+        settings.textZoom = 1.4
+        let theme = try #require(AppTheme(rawValue: rawValue))
+
+        settings.theme = theme
+
+        let reopened = AppSettings(defaults: defaults)
+        #expect(reopened.theme == theme)
+        #expect(reopened.editorFont == EditorFont(name: "Menlo", size: 18))
+        #expect(reopened.textZoom == 1.4)
+    }
+
+    @Test("new and existing installations without a theme keep System")
+    func themeDefaultsToSystem() throws {
+        let defaults = try isolatedDefaults()
+        #expect(AppSettings(defaults: defaults).theme == .system)
+        let existing = AppSettings(defaults: defaults)
+        existing.editorFont = EditorFont(name: "Menlo", size: 20)
+        existing.textZoom = 1.5
+
+        #expect(AppSettings(defaults: defaults).theme == .system)
+    }
+
     @Test("editor font settings persist across launches")
     func editorFontPersists() throws {
         let defaults = try isolatedDefaults()
