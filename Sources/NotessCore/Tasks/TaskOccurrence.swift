@@ -90,11 +90,6 @@ public struct TaskOccurrence: Hashable, Sendable, Identifiable {
         return .found(candidates[twinIndex].boxRange)
     }
 
-    public func range(in currentText: String) -> NSRange? {
-        guard case .found(let range) = locate(in: currentText) else { return nil }
-        return range
-    }
-
     /// Source ordering: Daily Entries newest first, then Free Notes by name
     /// (then folder for equal names), and source-text order within a note.
     public static func sourceOrder(_ lhs: TaskOccurrence, _ rhs: TaskOccurrence) -> Bool {
