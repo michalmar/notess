@@ -159,6 +159,63 @@ struct AppModelTaskOverviewTests {
         try await waitForTasks(model) { !$0.contains("První") }
     }
 
+    @Test("a new Daily Entry that has no saved file yet contributes no Tasks")
+    func unsavedNewNote() async throws {
+        let fixture = try makeFixture()
+        let model = try await makeModelShowingTasks(fixture)
+        model.openToday()
+        let today = try #require(model.document)
+        #expect(!FileManager.default.fileExists(atPath: today.fileURL.path))
+        today.text += "\n- [ ] Jen v paměti\n"
+        let revision = model.searchIndexRevision
+        model.handleVaultChange(VaultChange(relativePaths: [""], requiresFullRescan: true))
+        try await waitUntil { model.searchIndexRevision > revision }
+
+        model.sidebarMode = .tasks
+        try await waitForTasks(model) { $0 == ["Ranní", "První", "Druhý"] }
+        #expect(!FileManager.default.fileExists(atPath: today.fileURL.path))
+    }
+
+    @Test("a failed save leaves the listed Tasks as they were saved before")
+    func failedSave() async throws {
+        let fixture = try makeFixture()
+        let model = try await makeModelShowingTasks(fixture)
+        let document = try #require(model.openNote(at: url(fixture, Self.plan)))
+        document.text = "# Plán\n\n- [x] První\n- [ ] Druhý\n- [ ] Nový\n"
+        let folder = url(fixture, "Projekty")
+        try FileManager.default.setAttributes([.posixPermissions: 0o555], ofItemAtPath: folder.path)
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: folder.path) }
+
+        #expect(!model.save(documentID: document.id))
+        #expect(model.errorMessage != nil)
+        #expect(document.hasUnsavedChanges)
+
+        model.sidebarMode = .tasks
+        await model.taskOverview.refresh()
+        #expect(listed(model)?.map(\.text) == ["Ranní", "První", "Druhý"])
+    }
+
+    @Test("after switching Vaults only the new Vault's Tasks are listed and an old row opens nothing")
+    func switchingVaults() async throws {
+        let first = try makeFixture()
+        let second = try TagGroupFixture()
+        try second.write("# Jinde\n\n- [ ] Z druhého Vaultu\n", to: "Jinde.md")
+        let model = try await makeModelShowingTasks(first)
+        let stale = try #require(listed(model)?.first { $0.text == "První" })
+
+        model.chooseVault(at: second.rootURL)
+        try await waitUntil { !model.isIndexing }
+        model.sidebarMode = .tasks
+        try await waitForTasks(model) { $0 == ["Z druhého Vaultu"] }
+        let tabs = model.tabSession.documents.map(\.id)
+
+        model.openTask(stale)
+
+        #expect(model.tabSession.documents.map(\.id) == tabs)
+        #expect(model.sidebarMode == .tasks)
+        #expect(!FileManager.default.fileExists(atPath: second.rootURL.appending(path: Self.plan).path))
+    }
+
     @Test("browsing Tasks writes nothing to the notes")
     func browsingIsReadOnly() async throws {
         let fixture = try makeFixture()

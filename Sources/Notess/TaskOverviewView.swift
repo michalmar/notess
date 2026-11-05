@@ -73,6 +73,7 @@ struct TaskOverviewView: View {
             List(selection: $browser.selectedTaskID) {
                 ForEach(tasks) { task in
                     TaskRow(task: task, open: open)
+                        .tag(task.id)
                         .id(task.id)
                 }
             }
