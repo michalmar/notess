@@ -36,6 +36,8 @@ struct ThemePalette: Equatable, @unchecked Sendable {
     let tableHeaderBackground: NSColor
     let error: NSColor
     let warning: NSColor
+    /// Warning text, darker than the icon colour to meet text contrast on cream.
+    let strongWarning: NSColor
     let success: NSColor
 
     /// Always light. Adapted from the Noir Essence Light reference palette
@@ -63,6 +65,7 @@ struct ThemePalette: Equatable, @unchecked Sendable {
         tableHeaderBackground: color(0xEFE7D8, increased: 0xE6DCC8),
         error: color(0xB8423C, increased: 0x8E2A25),
         warning: color(0xA87612, increased: 0x7D5600),
+        strongWarning: color(0x8F5F0A, increased: 0x694500),
         success: color(0x3D7A3A, increased: 0x275A25)
     )
 
