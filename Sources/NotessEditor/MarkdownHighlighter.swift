@@ -21,7 +21,8 @@ extension NSAttributedString.Key {
 final class MarkdownHighlighter: NSObject, NSTextStorageDelegate, NSTextLayoutManagerDelegate {
     let lexer = MarkdownLexer()
     private(set) var headingTokens: [MarkdownToken] = []
-    private(set) var style: MarkdownEditorStyle
+    /// Set directly only for changes that need no restyle; see `setStyle`.
+    var style: MarkdownEditorStyle
     private var fontCache: [FontKey: NSFont] = [:]
     private var listLayout: ListLayout
     var didStyleText: (NSRange, NSRange?, Int) -> Void = { _, _, _ in }

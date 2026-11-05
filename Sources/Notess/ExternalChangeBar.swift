@@ -14,7 +14,7 @@ struct ExternalChangeBar: View {
             VStack(spacing: 0) {
                 HStack(spacing: 10) {
                     Image(systemName: "exclamationmark.triangle.fill")
-                        .foregroundStyle(.yellow)
+                        .themedForeground(\.warning, native: .yellow)
                         .accessibilityHidden(true)
                     content(for: change)
                 }

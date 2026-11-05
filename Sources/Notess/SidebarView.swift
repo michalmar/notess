@@ -10,6 +10,7 @@ private enum SidebarItem: Hashable {
 struct SidebarView: View {
     @Bindable var model: AppModel
     @State private var selection: SidebarItem?
+    @Environment(\.themePalette) private var palette
 
     var body: some View {
         VStack(spacing: 0) {
@@ -32,6 +33,9 @@ struct SidebarView: View {
                 TaskFilterList(model: model)
             }
         }
+        // A custom palette replaces the sidebar material; native themes keep it.
+        .scrollContentBackground(palette == nil ? .automatic : .hidden)
+        .themedBackground(\.surface, native: Color.clear)
         .onChange(of: model.document?.id) { _, _ in
             syncSelectionWithDocument()
         }
