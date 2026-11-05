@@ -313,7 +313,7 @@ struct ThemePresentationTests {
 }
 
 @MainActor
-private func makeSettingsWindow(model: AppModel) -> NSWindow {
+func makeSettingsWindow(model: AppModel) -> NSWindow {
     let window = NSWindow(
         contentRect: NSRect(x: 0, y: 0, width: 540, height: 650),
         styleMask: [.titled, .resizable],
@@ -327,20 +327,20 @@ private func makeSettingsWindow(model: AppModel) -> NSWindow {
 }
 
 @MainActor
-private func themePicker(in window: NSWindow) throws -> NSPopUpButton {
+func themePicker(in window: NSWindow) throws -> NSPopUpButton {
     let content = try #require(window.contentView)
     return try #require(descendants(of: content).compactMap { $0 as? NSPopUpButton }
         .first { $0.accessibilityLabel() == "Téma" })
 }
 
 @MainActor
-private func select(_ title: String, in picker: NSPopUpButton) throws {
+func select(_ title: String, in picker: NSPopUpButton) throws {
     picker.selectItem(withTitle: title)
     try #require(picker.sendAction(picker.action, to: picker.target))
 }
 
 @MainActor
-private func descendants(of view: NSView) -> [NSView] {
+func descendants(of view: NSView) -> [NSView] {
     view.subviews + view.subviews.flatMap { descendants(of: $0) }
 }
 
@@ -362,7 +362,7 @@ extension SearchPresentationHarness {
 
 /// Text attributes that determine typography and geometry, without colours.
 @MainActor
-private func srgb(_ color: NSColor, in appearance: NSAppearance) -> NSColor {
+func srgb(_ color: NSColor, in appearance: NSAppearance) -> NSColor {
     var result = color
     appearance.performAsCurrentDrawingAppearance {
         result = color.usingColorSpace(.sRGB) ?? color
@@ -371,7 +371,7 @@ private func srgb(_ color: NSColor, in appearance: NSAppearance) -> NSColor {
 }
 
 @MainActor
-private func composite(_ color: NSColor, over surface: NSColor, in appearance: NSAppearance) -> NSColor {
+func composite(_ color: NSColor, over surface: NSColor, in appearance: NSAppearance) -> NSColor {
     let top = srgb(color, in: appearance)
     let bottom = srgb(surface, in: appearance)
     let a = top.alphaComponent
@@ -385,7 +385,7 @@ private func composite(_ color: NSColor, over surface: NSColor, in appearance: N
 
 /// The WCAG contrast ratio of a colour drawn over an opaque surface.
 @MainActor
-private func contrast(_ color: NSColor, on surface: NSColor, in appearance: NSAppearance) -> Double {
+func contrast(_ color: NSColor, on surface: NSColor, in appearance: NSAppearance) -> Double {
     let bottom = composite(surface, over: .white, in: appearance)
     let top = composite(color, over: bottom, in: appearance)
     func luminance(_ c: NSColor) -> Double {
@@ -399,7 +399,7 @@ private func contrast(_ color: NSColor, on surface: NSColor, in appearance: NSAp
     return (max(a, b) + 0.05) / (min(a, b) + 0.05)
 }
 
-private func colorDistance(_ a: NSColor, _ b: NSColor) -> Double {
+func colorDistance(_ a: NSColor, _ b: NSColor) -> Double {
     let (a, b) = (a.usingColorSpace(.sRGB)!, b.usingColorSpace(.sRGB)!)
     let dr = a.redComponent - b.redComponent, dg = a.greenComponent - b.greenComponent, db = a.blueComponent - b.blueComponent
     return Double((dr * dr + dg * dg + db * db).squareRoot())
@@ -427,14 +427,14 @@ private func expectNativeColors(_ editor: NSTextView, sourceLocation: SourceLoca
 }
 
 /// A light, warm surface: cream, not native white or grey.
-private func isCream(_ color: NSColor) -> Bool {
+func isCream(_ color: NSColor) -> Bool {
     let c = color.usingColorSpace(.sRGB)!
     return c.redComponent > 0.85 && c.redComponent - c.blueComponent > 0.03
 }
 
 /// The pixel a window actually renders at a point in window coordinates.
 @MainActor
-private func renderedColor(at point: NSPoint, in window: NSWindow) -> NSColor? {
+func renderedColor(at point: NSPoint, in window: NSWindow) -> NSColor? {
     guard let view = window.contentView else { return nil }
     view.layoutSubtreeIfNeeded()
     guard let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { return nil }

@@ -33,10 +33,12 @@ struct TaskOverviewView: View {
     let isIndexing: Bool
     let indexFailure: String?
     let open: (TaskOccurrence) -> Void
+    @Environment(\.themePalette) private var palette
 
     var body: some View {
         content
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .themedBackground(\.background, native: Color.clear)
     }
 
     @ViewBuilder
@@ -78,6 +80,11 @@ struct TaskOverviewView: View {
                 }
             }
         }
+        // Draw the list's background here for every theme: toggling
+        // scrollContentBackground would rebuild the list, and an explicit
+        // value already replaces AppKit's own background.
+        .scrollContentBackground(.hidden)
+        .themedBackground(\.background, native: Color(nsColor: .controlBackgroundColor))
         .contextMenu(forSelectionType: TaskOccurrence.ID.self) { ids in
             if let task = ids.first.flatMap(browser.listed) {
                 Button("Otevřít poznámku") { open(task) }
@@ -90,9 +97,17 @@ struct TaskOverviewView: View {
     private func rows(_ tasks: [TaskOccurrence]) -> some View {
         ForEach(tasks) { task in
             TaskRow(task: task, today: browser.today, open: open)
+                .listRowBackground(rowBackground(isSelected: browser.selectedTaskID == task.id))
                 .tag(task.id)
                 .id(task.id)
         }
+    }
+
+    /// Under a custom palette the selected Task is also marked with its accent;
+    /// native themes keep the system selection alone.
+    private func rowBackground(isSelected: Bool) -> Color? {
+        guard let palette, isSelected else { return nil }
+        return Color(nsColor: palette.accent).opacity(0.24)
     }
 }
 
@@ -110,6 +125,8 @@ private struct TaskRow: View {
         return (text as String).trimmingCharacters(in: .whitespaces)
     }
 
+    private var isOverdue: Bool { task.category(on: today) == .overdue }
+
     @ViewBuilder
     private var dateLabel: some View {
         switch task.dueDate.state {
@@ -117,12 +134,15 @@ private struct TaskRow: View {
             EmptyView()
         case .valid(let day):
             Label(day.dueDateLabel, systemImage: "calendar")
-                .foregroundStyle(task.category(on: today) == .overdue ? .red : .secondary)
+                .themedForeground(
+                    isOverdue ? \.error : \.secondaryText,
+                    native: isOverdue ? AnyShapeStyle(.red) : AnyShapeStyle(.secondary)
+                )
                 .help("📅 \(day.isoString)")
                 .accessibilityLabel(task.dateAccessibilityLabel)
         case .invalid:
             Label("Neplatný termín", systemImage: "exclamationmark.triangle")
-                .foregroundStyle(.red)
+                .themedForeground(\.error, native: .red)
         }
     }
 
@@ -160,7 +180,7 @@ private struct TaskRow: View {
             } label: {
                 Label("Otevřít", systemImage: "arrow.up.forward.square")
             }
-            .buttonStyle(.link)
+            .themedLinkButtonStyle()
             .help("Otevře poznámku s úkolem k úpravám a ukáže úkol")
         }
         .padding(.vertical, 2)

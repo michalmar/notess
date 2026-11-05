@@ -250,6 +250,7 @@ struct TagTimelineView: View {
     var body: some View {
         content
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .themedBackground(\.background, native: Color.clear)
             .navigationTitle(browser.selectedTag.map { "#\($0)" } ?? "Tagy")
             .navigationSubtitle("")
     }
@@ -358,7 +359,7 @@ struct IndexStatusFooter: View {
                 .controlSize(.small)
                 .padding(8)
                 .frame(maxWidth: .infinity)
-                .background(.bar)
+                .themedBackground(\.surface, native: .bar)
         } else if let indexFailure {
             Label("Index hledání není úplný", systemImage: "exclamationmark.triangle")
                 .font(.caption)
@@ -366,7 +367,7 @@ struct IndexStatusFooter: View {
                 .help(indexFailure)
                 .padding(8)
                 .frame(maxWidth: .infinity)
-                .background(.bar)
+                .themedBackground(\.surface, native: .bar)
         }
     }
 }
@@ -381,6 +382,7 @@ private struct SectionCard: View {
     let openWikiLink: (WikiLink, TagTimelineSection) -> Void
     let openWebLink: (URL) -> Void
     @State private var imageFailures: [String] = []
+    @Environment(\.themePalette) private var palette
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -388,6 +390,7 @@ private struct SectionCard: View {
                 markdown: section.markdown,
                 fontName: settings.editorFont.name,
                 fontSize: CGFloat(settings.editorFont.size),
+                colors: settings.theme.markdownColors,
                 noteURL: noteURL,
                 onOpenImagePreview: openImagePreview,
                 onImageLoadFailure: { message in
@@ -404,7 +407,7 @@ private struct SectionCard: View {
             ForEach(imageFailures, id: \.self) { message in
                 Label(message, systemImage: "exclamationmark.triangle")
                     .font(.caption)
-                    .foregroundStyle(.orange)
+                    .themedForeground(\.warning, native: .orange)
             }
             HStack {
                 Spacer()
@@ -413,13 +416,17 @@ private struct SectionCard: View {
                 } label: {
                     Label("Otevřít v Journalu", systemImage: "arrow.up.forward.square")
                 }
-                .buttonStyle(.link)
+                .themedLinkButtonStyle()
                 .help("Otevře záznam k úpravám a ukáže tuto Sekci")
             }
         }
         .padding(14)
-        .background(.quaternary.opacity(0.4), in: .rect(cornerRadius: 8))
+        .background(cardBackground, in: .rect(cornerRadius: 8))
         .onChange(of: section.markdown) { imageFailures = [] }
         .onChange(of: noteURL) { imageFailures = [] }
+    }
+
+    private var cardBackground: AnyShapeStyle {
+        palette.map { AnyShapeStyle(Color(nsColor: $0.surface)) } ?? AnyShapeStyle(.quaternary.opacity(0.4))
     }
 }
