@@ -37,6 +37,13 @@ struct RootView: View {
                                     }
                                 }
                             )
+                        case .tasks:
+                            TaskOverviewView(
+                                browser: model.taskOverview,
+                                isIndexing: model.isIndexing,
+                                indexFailure: model.searchIndexFailure,
+                                open: model.openTask
+                            )
                         }
                         if model.isBrainConversationPresented {
                             Divider()

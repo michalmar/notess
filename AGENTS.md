@@ -27,6 +27,6 @@ Module boundaries (see `README.md`): `NotessCore` holds domain logic and must no
 ## Testing
 
 - While developing, run only the suites relevant to the feature: `swift test --filter <Suite>`.
-- Before a PR: full `swift test`, then `NOTESS_HOSTED_UI=1 swift test --no-parallel --filter 'GlobalSearchPresentationTests|BrainConversationPanelTests'` once (hosted suites must not run in parallel with each other), then the gated real-CLI tests once (`NOTESS_REAL_COPILOT=1 swift test --filter RealCopilot`; launches must pass `--disable-mcp-server workiq-mail`).
+- Before a PR: full `swift test`, then `NOTESS_HOSTED_UI=1 swift test --no-parallel --filter 'GlobalSearchPresentationTests|BrainConversationPanelTests|TaskOverviewPresentationTests'` once (hosted suites must not run in parallel with each other), then the gated real-CLI tests once (`NOTESS_REAL_COPILOT=1 swift test --filter RealCopilot`; launches must pass `--disable-mcp-server workiq-mail`).
 - Don't re-investigate failures that also fail on `main`; file an issue and disable the test with `.disabled` plus `.bug(<issue url>)`.
 - Env flags: `NOTESS_HOSTED_UI` (hosted-window UI suites in `NotessTests`, run serialized), `NOTESS_REAL_COPILOT` (real Copilot CLI), `NOTESS_REAL_BROWSER` (real web link opener), `NOTESS_SEARCH_LATENCY` (full search latency run).
