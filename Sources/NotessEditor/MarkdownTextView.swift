@@ -8,6 +8,7 @@ import UniformTypeIdentifiers
 public final class MarkdownTextView: NSTextView {
     let highlighter = MarkdownHighlighter()
     lazy var headingFolding = HeadingFolding(textView: self)
+    lazy var taskCheckboxes = TaskCheckboxes(textView: self)
     var linkCache = LinkCache()
     private var scrollObserver: NSObjectProtocol?
     private var pointerTrackingArea: NSTrackingArea?
@@ -21,7 +22,12 @@ public final class MarkdownTextView: NSTextView {
         super.layout()
         headingFolding.layoutButtons()
         positionInlineImageViews(layingOutViewport: false)
+        taskCheckboxes.layout()
         refreshPointingHand()
+    }
+
+    public override func accessibilityChildren() -> [Any]? {
+        (super.accessibilityChildren() ?? []) + taskCheckboxes.accessibilityChildren
     }
 
     /// See `MarkdownTextView+Pointer.swift`.
@@ -54,7 +60,10 @@ public final class MarkdownTextView: NSTextView {
         scrollObserver = NotificationCenter.default.addObserver(
             forName: NSView.boundsDidChangeNotification, object: clipView, queue: .main
         ) { [weak self] _ in
-            MainActor.assumeIsolated { self?.refreshPointingHand() }
+            MainActor.assumeIsolated {
+                self?.needsLayout = true
+                self?.refreshPointingHand()
+            }
         }
     }
 
@@ -363,6 +372,7 @@ public final class MarkdownTextView: NSTextView {
         observeUndoAndRedo()
         highlighter.didStyleText = { [weak self] range, editedRange, delta in
             guard let self else { return }
+            needsLayout = true
             headingFolding.refresh(editedRange: editedRange, delta: delta)
             if let editedRange {
                 hasUnreportedTextEdit = true
@@ -1070,17 +1080,9 @@ public final class MarkdownTextView: NSTextView {
 
     /// Toggles the task box under `point` (view coordinates), if any.
     func toggleTask(atPoint point: NSPoint) -> Bool {
-        guard isEditable, let textStorage else { return false }
-        let index = characterIndexForInsertion(at: point)
-        for candidate in [index, index - 1] {
-            guard let change = highlighter.lexer.taskToggle(at: candidate, in: textStorage.mutableString) else { continue }
-            // The `[`, mark and `]` around the replaced mark.
-            let box = NSRange(location: change.range.location - 1, length: 3)
-            if boxRect(box).insetBy(dx: -2, dy: -2).contains(point) {
-                return apply(change)
-            }
-        }
-        return false
+        guard isEditable else { return false }
+        layoutSubtreeIfNeeded()
+        return taskCheckboxes.toggle(at: point)
     }
 
     /// Toggles the `[ ]`/`[x]` box containing the character at `index`.
