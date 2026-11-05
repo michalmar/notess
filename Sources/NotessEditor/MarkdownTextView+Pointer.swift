@@ -108,7 +108,8 @@ extension MarkdownTextView {
     }
 
     /// The line-by-line frames of `range` in view coordinates, from TextKit 2 layout.
-    private func segmentFrames(of range: NSRange) -> [NSRect] {
+    /// The frames of `range` per line fragment, in view coordinates.
+    func segmentFrames(of range: NSRange) -> [NSRect] {
         guard let manager = textLayoutManager,
               let content = manager.textContentManager,
               let start = content.location(content.documentRange.location, offsetBy: range.location),

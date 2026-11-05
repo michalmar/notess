@@ -69,3 +69,16 @@ public struct TaskDueDate: Hashable, Sendable {
         return Day(year: year, month: month, day: day)
     }
 }
+
+extension Day {
+    /// The compact localized presentation of a Due Date, shared by the Task
+    /// Overview and the source editor's date chips.
+    public var dueDateLabel: String {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        let date = calendar.date(from: DateComponents(year: year, month: month, day: day))!
+        return date.formatted(Date.FormatStyle(
+            date: .abbreviated, time: .omitted, calendar: calendar, timeZone: calendar.timeZone
+        ))
+    }
+}

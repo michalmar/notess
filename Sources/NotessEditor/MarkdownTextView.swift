@@ -9,6 +9,7 @@ public final class MarkdownTextView: NSTextView {
     let highlighter = MarkdownHighlighter()
     lazy var headingFolding = HeadingFolding(textView: self)
     lazy var taskCheckboxes = TaskCheckboxes(textView: self)
+    lazy var taskDueDateChips = TaskDueDateChips(textView: self)
     var linkCache = LinkCache()
     private var scrollObserver: NSObjectProtocol?
     private var pointerTrackingArea: NSTrackingArea?
@@ -23,6 +24,7 @@ public final class MarkdownTextView: NSTextView {
         headingFolding.layoutButtons()
         positionInlineImageViews(layingOutViewport: false)
         taskCheckboxes.layout()
+        taskDueDateChips.layout()
         refreshPointingHand()
     }
 
@@ -197,12 +199,23 @@ public final class MarkdownTextView: NSTextView {
     public override var isEditable: Bool {
         didSet {
             if !isEditable { tagCompleter.dismiss() }
+            needsLayout = true
         }
+    }
+
+    public override func becomeFirstResponder() -> Bool {
+        let became = super.becomeFirstResponder()
+        if became { needsLayout = true }
+        return became
     }
 
     public override func resignFirstResponder() -> Bool {
         let resigned = super.resignFirstResponder()
-        if resigned { tagCompleter.dismiss() }
+        if resigned {
+            tagCompleter.dismiss()
+            // Leaving the editor turns the caret line's Due Dates back into chips.
+            needsLayout = true
+        }
         return resigned
     }
 
@@ -585,6 +598,8 @@ public final class MarkdownTextView: NSTextView {
         // The caret moving with a typed or deleted character is part of that
         // edit; `didChangeText()` refreshes completion for it.
         if !hasUnreportedTextEdit { tagCompleter.selectionDidChange() }
+        // The Due Dates of the lines the selection enters show their Markdown.
+        needsLayout = true
         guard isEditable, let textStorage else { return }
         highlighter.selectionDidChange(to: selectedRange(), in: textStorage)
     }

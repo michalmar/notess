@@ -32,24 +32,11 @@ final class TaskCheckboxes {
     }
 
     func layout() {
-        guard !isLayingOut, let textView, let storage = textView.textStorage,
-              let manager = textView.textLayoutManager,
-              let content = manager.textContentManager else { return }
+        guard !isLayingOut, let textView, let storage = textView.textStorage else { return }
         isLayingOut = true
         defer { isLayingOut = false }
         for button in buttons.values { button.isHidden = true }
-        let visible: NSTextRange
-        if textView.enclosingScrollView != nil {
-            guard let viewport = manager.textViewportLayoutController.viewportRange else { return }
-            visible = viewport
-        } else {
-            visible = manager.documentRange
-        }
-        let start = content.offset(from: content.documentRange.location, to: visible.location)
-        let end = content.offset(from: content.documentRange.location, to: visible.endLocation)
-        let range = NSIntersectionRange(
-            NSRange(location: start, length: end - start), NSRange(location: 0, length: storage.length)
-        )
+        guard let range = textView.viewportCharacterRange() else { return }
         storage.enumerateAttribute(.notessTaskCheckbox, in: range) { value, box, _ in
             guard let checked = value as? Bool, box.length == 3,
                   !textView.headingFolding.hides(box.location) else { return }
