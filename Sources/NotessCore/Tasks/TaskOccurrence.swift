@@ -39,28 +39,60 @@ public struct TaskOccurrence: Hashable, Sendable, Identifiable {
     public let isCompleted: Bool
     /// The UTF-16 offset of the `[ ]` box in the saved note.
     public let boxLocation: Int
+    /// The titles of the headings the Task lies under in the saved note,
+    /// outermost first; empty for a Task before the first heading.
+    public let headingPath: [String]
+    /// The text of the Tasks enclosing this one in nested lists, outermost first.
+    public let enclosingTasks: [String]
+    /// The Task's position among the saved note's Tasks with the same text,
+    /// heading path and enclosing Tasks, and how many there were.
+    let twinIndex: Int
+    let twinCount: Int
 
     public var id: String { "\(relativePath)#\(ordinal)" }
 
-    public init(relativePath: String, source: TaskSource, ordinal: Int, text: String, isCompleted: Bool, boxLocation: Int) {
+    public init(
+        relativePath: String, source: TaskSource, ordinal: Int, text: String, isCompleted: Bool, boxLocation: Int,
+        headingPath: [String] = [], enclosingTasks: [String] = [], twinIndex: Int = 0, twinCount: Int = 1
+    ) {
         self.relativePath = relativePath
         self.source = source
         self.ordinal = ordinal
         self.text = text
         self.isCompleted = isCompleted
         self.boxLocation = boxLocation
+        self.headingPath = headingPath
+        self.enclosingTasks = enclosingTasks
+        self.twinIndex = twinIndex
+        self.twinCount = twinCount
     }
 
-    /// The Task's box in `currentText` (the note as open now, possibly with
-    /// unsaved edits), only while the same Task is still at its saved place:
-    /// the same ordinal, offset and text. Otherwise nil, so nothing unrelated
-    /// is revealed.
+    /// Where the Task is in a note's current text, which may differ from the
+    /// saved note by unsaved edits.
+    public enum Location: Equatable, Sendable {
+        /// The Task's `[ ]` box in the current text.
+        case found(NSRange)
+        /// No Task with this text under the same headings and enclosing Tasks.
+        case missing
+        /// Identical Tasks were added or removed, so which one this is cannot be told.
+        case ambiguous
+    }
+
+    /// Finds this saved Task in `currentText` by its text, heading path and
+    /// enclosing Tasks, never by a saved offset or the first matching text.
+    /// Among identical Tasks, its saved position counts only while their
+    /// number is unchanged. A changed checkbox state is still the same Task.
+    public func locate(in currentText: String) -> Location {
+        let twins = MarkdownTask.Twins(text: text, headingPath: headingPath, enclosingTasks: enclosingTasks)
+        let candidates = MarkdownTask.tasks(in: currentText).filter { $0.twins == twins }
+        if candidates.isEmpty { return .missing }
+        guard candidates.count == twinCount, twinIndex < candidates.count else { return .ambiguous }
+        return .found(candidates[twinIndex].boxRange)
+    }
+
     public func range(in currentText: String) -> NSRange? {
-        let tasks = MarkdownTask.tasks(in: currentText)
-        guard ordinal < tasks.count else { return nil }
-        let task = tasks[ordinal]
-        guard task.boxRange.location == boxLocation, task.text == text else { return nil }
-        return task.boxRange
+        guard case .found(let range) = locate(in: currentText) else { return nil }
+        return range
     }
 
     /// Source ordering: Daily Entries newest first, then Free Notes by name

@@ -165,23 +165,176 @@ final class TaskQueryTests {
         #expect(try await reopened.tasks(.completed) == completed)
     }
 
-    @Test("a Task is located in the note's current text only while it is still at its saved place")
-    func locatingATask() async throws {
-        let saved = "# Úkoly\n\n- [ ] První\n- [ ] Druhý\n"
-        try vault.write(saved, to: "Úkoly.md")
+    @Test("each Task carries its complete heading path of ATX and setext headings; headings in code are not structure and preamble Tasks have none")
+    func headingPath() async throws {
+        try vault.write("""
+            - [ ] Úvodní
+
+            # Projekt
+
+            - [ ] Pod projektem
+
+            ## Schůzka ##
+
+            ```
+            # není nadpis
+            ```
+
+            #### Akce
+
+            - [ ] Hluboko
+
+            Další část
+            ----------
+
+            - [ ] Pod setextem
+
+            # Jiný
+
+            - [ ] Jinde
+            """, to: "Projekt.md")
         let index = makeIndex()
         try await index.synchronize()
-        let second = try #require(try await index.tasks(.open).last)
 
-        let box = try #require(second.range(in: saved))
-        #expect((saved as NSString).substring(with: box) == "[ ]")
+        let paths = try await index.tasks(.open).map { [$0.text] + $0.headingPath }
+        #expect(paths == [
+            ["Úvodní"],
+            ["Pod projektem", "Projekt"],
+            ["Hluboko", "Projekt", "Schůzka", "Akce"],
+            ["Pod setextem", "Projekt", "Další část"],
+            ["Jinde", "Jiný"],
+        ])
+    }
 
-        // Typing after the Task (an unsaved edit) keeps it in place.
-        #expect(second.range(in: saved + "Dopsáno\n") == box)
-        // Text inserted before it moves it: the saved place is no longer safe.
-        #expect(second.range(in: "# Úkoly\n\nÚvod\n- [ ] První\n- [ ] Druhý\n") == nil)
-        // A different Task at the same place is not the listed one.
-        #expect(second.range(in: "# Úkoly\n\n- [ ] První\n- [ ] Jiný\n") == nil)
-        #expect(second.range(in: "") == nil)
+    @Test("nested Tasks carry their enclosing Tasks; plain list items, other lists and a heading do not enclose")
+    func enclosingTasks() async throws {
+        try vault.write("""
+            # Den
+
+            - [x] Rodič hotový
+              - [ ] Dítě otevřené
+                - Poznámka bez políčka
+                  - [ ] Vnouče
+              - [ ] Druhé dítě
+            - [ ] Soused
+            1. [ ] Číslovaný rodič
+               1) [ ] Číslované dítě
+
+            Odstavec ukončí seznam.
+
+              - [ ] Odsazený, ale nový seznam
+
+            ## Další
+
+            - [ ] Po nadpisu
+            """, to: "Journal/2026/11/2026-11-05.md")
+        let index = makeIndex()
+        try await index.synchronize()
+
+        let open = try await index.tasks(.open)
+        #expect(open.map { [$0.text] + $0.enclosingTasks } == [
+            ["Dítě otevřené", "Rodič hotový"],
+            ["Vnouče", "Rodič hotový", "Dítě otevřené"],
+            ["Druhé dítě", "Rodič hotový"],
+            ["Soused"],
+            ["Číslovaný rodič"],
+            ["Číslované dítě", "Číslovaný rodič"],
+            ["Odsazený, ale nový seznam"],
+            ["Po nadpisu"],
+        ])
+        let parent = try #require(try await index.tasks(.completed).first)
+        #expect(parent.text == "Rodič hotový" && parent.enclosingTasks.isEmpty)
+    }
+
+    private func savedTasks(_ text: String, at path: String = "Úkoly.md") async throws -> [TaskOccurrence] {
+        try vault.write(text, to: path)
+        let index = makeIndex()
+        try await index.synchronize()
+        return try await index.tasks(.open) + index.tasks(.completed)
+    }
+
+    @Test("an unchanged note locates the Task at its saved box; unsaved text before it moves it with the text")
+    func locatingAfterInsertedAndRemovedText() async throws {
+        let saved = "# Úkoly\n\nÚvod, který zmizí.\n\n- [ ] První\n- [ ] Druhý\n"
+        let second = try #require(try await savedTasks(saved).first { $0.text == "Druhý" })
+
+        #expect(second.locate(in: saved) == .found(NSRange(location: second.boxLocation, length: 3)))
+        #expect(second.locate(in: saved + "Dopsáno\n") == .found(NSRange(location: second.boxLocation, length: 3)))
+
+        let inserted = "# Úkoly\n\n👩‍👩‍👧 Nový odstavec se smajlíky 🎉 a Cafe\u{301}.\n\nÚvod, který zmizí.\n\n- [ ] Nový\n- [ ] První\n- [ ] Druhý\n"
+        let found = try #require(boxRange(second.locate(in: inserted)))
+        #expect(found.location > second.boxLocation)
+        #expect(lineText(at: found, in: inserted) == "- [ ] Druhý")
+
+        let removed = "# Úkoly\n\n- [ ] První\n- [ ] Druhý\n"
+        let moved = try #require(boxRange(second.locate(in: removed)))
+        #expect(moved.location < second.boxLocation)
+        #expect(lineText(at: moved, in: removed) == "- [ ] Druhý")
+    }
+
+    @Test("Unicode in and before the Task: emoji and decomposed characters do not shift the located box")
+    func locatingWithUnicode() async throws {
+        let decomposed = "Zavolat Rene\u{301}e 👍🏽"
+        let saved = "# Úkoly\n\n- [ ] \(decomposed)\n"
+        let task = try #require(try await savedTasks(saved).first)
+        #expect(task.text == decomposed)
+
+        let current = "# Úkoly\n\nC\u{30C}as 🧑‍💻 a e\u{301}\n- [ ] \(decomposed)\n"
+        let range = try #require(boxRange(task.locate(in: current)))
+        #expect(lineText(at: range, in: current) == "- [ ] \(decomposed)")
+    }
+
+    @Test("identical Tasks are told apart by their heading path, enclosing Tasks and order, never by the first matching text")
+    func locatingDuplicates() async throws {
+        let saved = """
+            # A
+
+            - [ ] Zavolat
+            - [ ] Zavolat
+            - [ ] Rodič
+              - [ ] Zavolat
+
+            # B
+
+            - [ ] Zavolat
+
+            """
+        let tasks = try await savedTasks(saved)
+        let calls = tasks.filter { $0.text == "Zavolat" }
+        #expect(calls.count == 4)
+        let current = "Nový úvod\n\n" + saved.replacingOccurrences(of: "- [ ] Rodič\n", with: "- [ ] Jiný\n- [ ] Rodič\n")
+            + "Dopsáno\n"
+        let shift = ("Nový úvod\n\n" as NSString).length
+        for (call, extra) in zip(calls, [0, 0, 11, 11]) {
+            #expect(call.locate(in: current) == .found(NSRange(location: call.boxLocation + shift + extra, length: 3)))
+        }
+    }
+
+    @Test("a Task that is gone, changed or under another heading is missing; a changed number of identical Tasks is ambiguous")
+    func locatingChangedTasks() async throws {
+        let saved = "# A\n\n- [ ] Zavolat\n- [ ] Zavolat\n- [ ] Jediný\n"
+        let tasks = try await savedTasks(saved)
+        let first = try #require(tasks.first)
+        let only = try #require(tasks.last)
+
+        #expect(only.locate(in: "# A\n\n- [ ] Zavolat\n- [ ] Zavolat\n") == .missing)
+        #expect(only.locate(in: "# A\n\n- [ ] Zavolat\n- [ ] Zavolat\n- [ ] Jediný upravený\n") == .missing)
+        #expect(only.locate(in: "# A\n\n- [ ] Zavolat\n- [ ] Zavolat\n## Nový\n- [ ] Jediný\n") == .missing)
+        #expect(only.locate(in: "# A\n\n- [ ] Zavolat\n  - [ ] Jediný\n") == .missing)
+        #expect(only.locate(in: "") == .missing)
+        #expect(first.locate(in: "# A\n\n- [ ] Zavolat\n- [ ] Jediný\n") == .ambiguous)
+        #expect(first.locate(in: saved + "- [ ] Zavolat\n") == .ambiguous)
+        // A completed or reopened box is still the same Task.
+        #expect(boxRange(only.locate(in: saved.replacingOccurrences(of: "[ ] Jediný", with: "[x] Jediný"))) != nil)
+    }
+
+    private func boxRange(_ location: TaskOccurrence.Location) -> NSRange? {
+        guard case .found(let range) = location else { return nil }
+        return range
+    }
+
+    private func lineText(at range: NSRange, in text: String) -> String {
+        let string = text as NSString
+        return string.substring(with: string.lineRange(for: range)).trimmingCharacters(in: .newlines)
     }
 }
