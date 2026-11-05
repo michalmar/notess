@@ -242,7 +242,7 @@ private extension NSRect {
 }
 
 @MainActor
-private final class CheckboxEditor {
+final class CheckboxEditor {
     let window: NSWindow
     let scrollView: NSScrollView
     let textView: MarkdownTextView

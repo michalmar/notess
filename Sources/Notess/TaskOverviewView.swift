@@ -125,7 +125,7 @@ private struct TaskRow: View {
         case .missing:
             EmptyView()
         case .valid(let day):
-            Label(day.taskDateLabel, systemImage: "calendar")
+            Label(day.dueDateLabel, systemImage: "calendar")
                 .foregroundStyle(task.category(on: today) == .overdue ? .red : .secondary)
                 .help("📅 \(day.isoString)")
                 .accessibilityLabel(task.dateAccessibilityLabel)
@@ -177,17 +177,6 @@ private struct TaskRow: View {
         .accessibilityLabel(task.accessibilityLabel)
         .accessibilityHint("Otevře poznámku s úkolem")
         .accessibilityAction { open(task) }
-    }
-}
-
-private extension Day {
-    var taskDateLabel: String {
-        var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
-        let date = calendar.date(from: DateComponents(year: year, month: month, day: day))!
-        return date.formatted(Date.FormatStyle(
-            date: .abbreviated, time: .omitted, calendar: calendar, timeZone: calendar.timeZone
-        ))
     }
 }
 
