@@ -87,6 +87,99 @@ struct BrowsingThemePresentationTests {
         await harness.settle()
     }
 
+    @Test("the open Tag Timeline and its read-only Markdown recolour without losing the selected Tag or scroll, and without restyling")
+    func tagTimeline() async throws {
+        let fixture = try SearchPresentationFixture()
+        try fixture.write("# Alfa\n\nA Free Note.\n", to: "Notes/Alfa.md")
+        for day in 1...14 {
+            let date = String(format: "2026-03-%02d", day)
+            try fixture.write(
+                "## Porada \(day)\nBody text #projekt with [site](https://example.com) and [[Alfa]].\n\n> A quotation\n\n- [x] Done task\n",
+                to: "Journal/2026/03/\(date).md"
+            )
+        }
+        let harness = try await fixture.makeHarness(opening: "Notes/Alfa.md")
+        let previousAppearance = NSApp.appearance
+        defer { NSApp.appearance = previousAppearance }
+        let settingsWindow = makeSettingsWindow(model: harness.model)
+        defer { settingsWindow.close() }
+        await harness.settle()
+        let picker = try themePicker(in: settingsWindow)
+        harness.window.makeKeyAndOrderFront(nil)
+
+        harness.model.openTagTimeline("projekt")
+        try await harness.waitUntil {
+            guard case .loaded(let days) = harness.model.tagTimeline.timeline else { return false }
+            return days.count == 14 && readOnlyViews(harness).count >= 2
+        }
+        await harness.settle()
+        let browser = harness.model.tagTimeline
+        let scroll = try #require(readOnlyViews(harness).first?.enclosingScrollView)
+        scroll.contentView.scroll(to: NSPoint(x: 0, y: 400))
+        scroll.reflectScrolledClipView(scroll.contentView)
+        await harness.settle()
+        let origin = scroll.contentView.bounds.origin
+        #expect(origin.y > 0)
+        let shown = try #require(visibleReadOnlyView(harness, in: scroll))
+        let storage = try #require(shown.textStorage)
+        let formatted = NSAttributedString(attributedString: storage)
+
+        for theme in ["Noir Essence", "Dark", "Light", "Podle systému", "Noir Essence"] {
+            try select(theme, in: picker)
+            harness.window.makeKeyAndOrderFront(nil)
+            await harness.settle()
+
+            #expect(harness.model.sidebarMode == .tags && browser.selectedTag == "projekt", "\(theme) keeps the selected Tag")
+            #expect(scroll.contentView.bounds.origin == origin, "\(theme) keeps the timeline's scroll")
+            #expect(readOnlyViews(harness).contains { $0 === shown }, "the read-only Markdown stays mounted")
+            #expect(storage.isEqual(to: formatted), "\(theme) only redraws the read-only Markdown")
+            #expect(!harness.model.hasUnsavedChanges)
+            let colors = try timelineColors(harness, card: shown)
+            switch theme {
+            case "Noir Essence":
+                try expectNoirEssenceTimeline(colors, in: shown)
+            case "Dark":
+                #expect(colors.detail.luminance < 0.3, "dark timeline: \(colors.detail)")
+                #expect(srgb(colors.text, in: shown.effectiveAppearance).luminance > 0.7, "light text on dark")
+            default:
+                #expect(!isCream(colors.detail) && !isCream(colors.card), "\(theme) is native: \(colors.detail)")
+                #expect(colorDistance(srgb(colors.text, in: shown.effectiveAppearance), srgb(.textColor, in: shown.effectiveAppearance)) < 0.01,
+                        "\(theme) read-only text is native")
+            }
+        }
+
+        harness.model.sidebarMode = .journal
+        await harness.settle()
+        harness.model.openTagTimeline("projekt")
+        try await harness.waitUntil { readOnlyViews(harness).count >= 2 }
+        await harness.settle()
+        let reopened = try #require(readOnlyViews(harness).first)
+        try expectNoirEssenceTimeline(try timelineColors(harness, card: reopened), in: reopened)
+
+        try select("Podle systému", in: picker)
+        await harness.settle()
+    }
+
+    private func expectNoirEssenceTimeline(_ colors: TimelineColors, in view: MarkdownTextView, sourceLocation: SourceLocation = #_sourceLocation) throws {
+        #expect(isCream(colors.detail), "the timeline uses the palette: \(colors.detail)", sourceLocation: sourceLocation)
+        #expect(isCream(colors.card), "Section cards use the palette: \(colors.card)", sourceLocation: sourceLocation)
+        #expect(colorDistance(colors.card, colors.detail) > 0.02, "cards stand out from the timeline", sourceLocation: sourceLocation)
+        let appearance = view.effectiveAppearance
+        defer { ThemePalette.increasedContrastOverride = nil }
+        for (increased, minimum) in [(false, 4.5), (true, 7.0)] {
+            ThemePalette.increasedContrastOverride = increased
+            for (role, color) in colors.roles {
+                #expect(contrast(color, on: colors.card, in: appearance) >= minimum, "\(role) is readable on its card", sourceLocation: sourceLocation)
+            }
+        }
+        ThemePalette.increasedContrastOverride = nil
+        let text = srgb(colors.text, in: appearance)
+        let reference = srgb(ThemePalette.noirEssence.text, in: appearance)
+        #expect(colorDistance(text, reference) < 0.01, "read-only text follows the palette", sourceLocation: sourceLocation)
+        let tag = srgb(try #require(colors.roles.first { $0.0 == "Tag" }?.1), in: appearance)
+        #expect(tag.redComponent > tag.blueComponent + 0.2, "Tags keep their warm palette colour: \(tag)", sourceLocation: sourceLocation)
+    }
+
     private func expectNoirEssenceSearch(_ colors: SearchColors, sourceLocation: SourceLocation = #_sourceLocation) throws {
         #expect(isCream(colors.panel), "the panel uses the palette: \(colors.panel)", sourceLocation: sourceLocation)
         #expect(isCream(colors.listBackground), "results use the palette: \(colors.listBackground)", sourceLocation: sourceLocation)
@@ -100,6 +193,47 @@ struct BrowsingThemePresentationTests {
         #expect(contrast(text, on: colors.selection, in: appearance) >= 4.5, "selected results stay readable", sourceLocation: sourceLocation)
         #expect(colorDistance(colors.selection, colors.listBackground) > 0.08, "the selection is distinguishable", sourceLocation: sourceLocation)
     }
+}
+
+struct TimelineColors {
+    let detail: NSColor
+    let card: NSColor
+    let text: NSColor
+    /// Markdown roles drawn in the card, by name.
+    let roles: [(String, NSColor)]
+}
+
+/// The read-only Markdown views shown, such as Tag Timeline Sections.
+@MainActor
+private func readOnlyViews(_ harness: SearchPresentationHarness) -> [MarkdownTextView] {
+    descendants(of: harness.hostingView).compactMap { $0 as? MarkdownTextView }.filter { !$0.isEditable }
+}
+
+@MainActor
+private func visibleReadOnlyView(_ harness: SearchPresentationHarness, in scroll: NSScrollView) -> MarkdownTextView? {
+    let visible = scroll.convert(scroll.bounds, to: nil)
+    return readOnlyViews(harness).first { visible.contains($0.convert($0.bounds, to: nil)) }
+}
+
+@MainActor
+private func timelineColors(_ harness: SearchPresentationHarness, card view: MarkdownTextView) throws -> TimelineColors {
+    let image = try #require(WindowImage(harness.window))
+    let frame = view.convert(view.bounds, to: nil)
+    // Section cards pad their Markdown by 14 points; the timeline pads cards by 24.
+    let card = try #require(image.color(at: NSPoint(x: frame.minX - 7, y: frame.midY)))
+    let detail = try #require(image.color(at: NSPoint(x: frame.minX - 14 - 10, y: frame.midY)))
+    let storage = try #require(view.textStorage)
+    func foreground(_ text: String) throws -> NSColor {
+        let range = (view.string as NSString).range(of: text)
+        try #require(range.location != NSNotFound)
+        return try #require(storage.attribute(.foregroundColor, at: range.location, effectiveRange: nil) as? NSColor)
+    }
+    let roles: [(String, NSColor)] = [
+        ("text", try foreground("Body")), ("link", try foreground("site")),
+        ("Wiki-link", try foreground("Alfa")), ("Tag", try foreground("projekt")),
+        ("quotation", try foreground("A quotation")), ("completed Task", try foreground("Done task")),
+    ]
+    return TimelineColors(detail: detail, card: card, text: roles[0].1, roles: roles)
 }
 
 struct SearchColors {
