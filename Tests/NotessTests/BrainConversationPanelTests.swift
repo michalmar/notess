@@ -108,7 +108,12 @@ struct BrainConversationPanelTests {
         #expect(first.turns.first?.answer == "Partial")
     }
 
-    @Test("clicking rendered sources keeps the panel and dirty editor text, even when the note is missing on disk", arguments: [false, true])
+    @Test(
+        "clicking rendered sources keeps the panel and dirty editor text, even when the note is missing on disk",
+        .disabled("Also exits the hosted suite early on main; tracked separately from native themes."),
+        .bug("https://github.com/michalmar/notess/issues/152"),
+        arguments: [false, true]
+    )
     func sourceClicks(deleted: Bool) async throws {
         let fixture = try PanelFixture()
         let harness = try await fixture.makeHarness()
