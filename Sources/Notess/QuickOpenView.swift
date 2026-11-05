@@ -10,6 +10,7 @@ struct QuickOpenView: View {
     @State private var isLoading = true
     @State private var loadToken = UUID()
     @FocusState private var isSearchFocused: Bool
+    @Environment(\.themePalette) private var palette
 
     private var queryBinding: Binding<String> {
         Binding(
@@ -29,7 +30,7 @@ struct QuickOpenView: View {
         VStack(spacing: 0) {
             HStack(spacing: 10) {
                 Image(systemName: "magnifyingglass")
-                    .foregroundStyle(.secondary)
+                    .themedForeground(\.secondaryText, native: .secondary)
                 TextField("Otevřít soubor…", text: queryBinding)
                     .textFieldStyle(.plain)
                     .focused($isSearchFocused)
@@ -51,12 +52,18 @@ struct QuickOpenView: View {
                             .tag(file)
                     }
                     .listStyle(.plain)
+                    .scrollContentBackground(.hidden)
+                    .themedBackground(\.background, native: Color(nsColor: .controlBackgroundColor))
+                    .themedListSelection()
                 }
             }
             .frame(height: 320)
         }
         .frame(width: 580)
-        .background(.regularMaterial, in: .rect(cornerRadius: 12))
+        .background(
+            palette.map { AnyShapeStyle(Color(nsColor: $0.background)) } ?? AnyShapeStyle(.regularMaterial),
+            in: .rect(cornerRadius: 12)
+        )
         .shadow(radius: 16)
         .onAppear {
             isSearchFocused = true
@@ -106,21 +113,22 @@ private struct QuickOpenRow: View {
     var body: some View {
         HStack {
             Image(systemName: file.isReadOnly ? "brain" : "doc.text")
-                .foregroundStyle(.secondary)
+                .themedForeground(\.secondaryText, native: .secondary)
             VStack(alignment: .leading, spacing: 2) {
                 Text(file.name)
                 Text(file.relativePath)
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .themedForeground(\.secondaryText, native: .secondary)
             }
             Spacer()
             if file.isReadOnly {
                 Image(systemName: "lock.fill")
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .themedForeground(\.secondaryText, native: .secondary)
                     .accessibilityLabel("Pouze pro čtení")
             }
         }
+        .themedForeground(\.text, native: .primary)
         .contentShape(.rect)
     }
 }

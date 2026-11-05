@@ -296,11 +296,20 @@ public final class MarkdownTextView: NSTextView {
     /// whose host cannot run that tracking loop.
     var tagDragSelectionOverride: ((_ mouseDown: NSEvent, _ drag: NSEvent) -> Void)?
 
-    /// Fonts and colours; setting a different style restyles the whole note.
+    /// Fonts and colours; setting a different style restyles the whole note,
+    /// unless only the surface colours (background, selection, caret) change.
     public var markdownStyle: MarkdownEditorStyle {
         get { highlighter.style }
         set {
+            if newValue.withoutSurfaceColors == highlighter.style.withoutSurfaceColors {
+                // Restyling would invalidate TextKit 2 layout and re-estimate
+                // the document height for a change that needs only a redraw.
+                applySurfaceColors(newValue.colors)
+                highlighter.style = newValue
+                return
+            }
             let anchor = readingAnchor()
+            applySurfaceColors(newValue.colors)
             font = newValue.font
             if let textStorage {
                 highlighter.setStyle(newValue, for: textStorage)
@@ -308,6 +317,26 @@ public final class MarkdownTextView: NSTextView {
             typingAttributes = highlighter.baseAttributes
             restore(anchor)
         }
+    }
+
+    /// AppKit's own selection and caret colours, kept while a style overrides them.
+    private var nativeSurfaceColors: (selection: [NSAttributedString.Key: Any], caret: NSColor?)?
+
+    private func applySurfaceColors(_ colors: MarkdownEditorStyle.Colors) {
+        backgroundColor = colors.background
+        if colors.selection == nil, colors.insertionPoint == nil {
+            guard let native = nativeSurfaceColors else { return }
+            selectedTextAttributes = native.selection
+            insertionPointColor = native.caret
+            nativeSurfaceColors = nil
+            return
+        }
+        let native = nativeSurfaceColors ?? (selection: selectedTextAttributes, caret: insertionPointColor)
+        nativeSurfaceColors = native
+        var selection = native.selection
+        if let color = colors.selection { selection[.backgroundColor] = color }
+        selectedTextAttributes = selection
+        insertionPointColor = colors.insertionPoint ?? native.caret
     }
 
     /// Called with the incremental magnification of a trackpad pinch over the

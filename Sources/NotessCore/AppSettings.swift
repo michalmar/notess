@@ -13,10 +13,13 @@ public struct EditorFont: Equatable, Sendable {
     }
 }
 
-/// The app deliberately follows macOS's light/dark appearance rather than
-/// maintaining a separate appearance preference.
-public enum AppTheme: String, Sendable {
+/// A local application-wide color preference, independent of the Vault.
+public enum AppTheme: String, CaseIterable, Sendable {
     case system
+    case light
+    case dark
+    /// A fixed light, cream-and-orange palette.
+    case noirEssence
 }
 
 /// Observable, user-persistent settings that application features can consume.
@@ -27,6 +30,7 @@ public final class AppSettings {
         static let editorFontSize = "editorFontSize"
         static let copilotCLIPath = "copilotCLIPath"
         static let textZoom = "textZoom"
+        static let theme = "theme"
     }
 
     /// The zoom multiplier limits; 1 is 100%, the configured editor font size.
@@ -47,7 +51,9 @@ public final class AppSettings {
         }
     }
     private var storedTextZoom: Double
-    public var theme: AppTheme = .system
+    public var theme: AppTheme {
+        didSet { defaults.set(theme.rawValue, forKey: Key.theme) }
+    }
     /// A user-selected executable path. `nil` means use autodetection.
     public var copilotCLIPath: String? {
         didSet { defaults.set(copilotCLIPath, forKey: Key.copilotCLIPath) }
@@ -57,6 +63,7 @@ public final class AppSettings {
 
     public init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
+        self.theme = defaults.string(forKey: Key.theme).flatMap(AppTheme.init(rawValue:)) ?? .system
         let fontName = defaults.string(forKey: Key.editorFontName) ?? EditorFont.default.name
         let storedSize = defaults.double(forKey: Key.editorFontSize)
         self.editorFont = EditorFont(

@@ -102,7 +102,7 @@ public struct MarkdownEditor: NSViewRepresentable {
     ///   - onMagnify: Receives the incremental magnification of a trackpad pinch over the editor.
     ///   - tagSuggestionSource: Saved Tags offered while typing a Tag; nil turns Tag completion off.
     ///   - onTagSuggestionFailure: Told when looking up Tag suggestions fails (once until one succeeds).
-    ///   - colors: Formatting colours; the defaults follow light/dark mode.
+    ///   - colors: Formatting and surface colours; the defaults follow light/dark mode. Changing only the surface colours (background, selection, caret) redraws without restyling.
     public init(
         documentID: AnyHashable,
         initialText: @escaping () -> String,

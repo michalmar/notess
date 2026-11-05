@@ -263,6 +263,64 @@ struct MarkdownTextViewStylingTests {
         #expect((harness.textView.typingAttributes[.font] as? NSFont)?.pointSize == 20)
     }
 
+    @Test("style colours paint the editor surface, selection and caret; default colours restore native ones")
+    func surfaceColors() throws {
+        let harness = Harness("Text [[Acme]]")
+        let native = (
+            background: harness.textView.backgroundColor,
+            selection: harness.textView.selectedTextAttributes[.backgroundColor] as? NSColor,
+            caret: harness.textView.insertionPointColor
+        )
+        #expect(native.background == .textBackgroundColor)
+        let cream = NSColor(srgbRed: 0.97, green: 0.95, blue: 0.92, alpha: 1)
+        let highlight = NSColor(srgbRed: 0.9, green: 0.6, blue: 0.4, alpha: 0.35)
+        let caret = NSColor(srgbRed: 0.8, green: 0.4, blue: 0.1, alpha: 1)
+        var themed = MarkdownEditorStyle.standard
+        themed.colors.background = cream
+        themed.colors.selection = highlight
+        themed.colors.insertionPoint = caret
+
+        harness.textView.markdownStyle = themed
+
+        #expect(harness.textView.backgroundColor == cream)
+        #expect(harness.textView.selectedTextAttributes[.backgroundColor] as? NSColor == highlight)
+        #expect(harness.textView.insertionPointColor == caret)
+        #expect(harness.textView.string == "Text [[Acme]]")
+
+        harness.textView.markdownStyle = .standard
+
+        #expect(harness.textView.backgroundColor == native.background)
+        #expect(harness.textView.selectedTextAttributes[.backgroundColor] as? NSColor == native.selection)
+        #expect(harness.textView.insertionPointColor == native.caret)
+    }
+
+    @Test("changing only surface colours keeps the styled text and its layout")
+    func surfaceColorsWithoutRestyle() throws {
+        let harness = Harness("# Title\nText [[Acme]] #tag")
+        let storage = try #require(harness.textView.textStorage)
+        var edits = 0
+        let observer = NotificationCenter.default.addObserver(
+            forName: NSTextStorage.didProcessEditingNotification, object: storage, queue: nil
+        ) { _ in edits += 1 }
+        defer { NotificationCenter.default.removeObserver(observer) }
+        var themed = MarkdownEditorStyle.standard
+        themed.colors.background = .white
+        themed.colors.selection = .orange
+        themed.colors.insertionPoint = .brown
+
+        harness.textView.markdownStyle = themed
+        harness.textView.markdownStyle = .standard
+
+        #expect(edits == 0)
+        #expect(harness.textView.backgroundColor == MarkdownEditorStyle.standard.colors.background)
+
+        themed.colors.text = .brown
+        harness.textView.markdownStyle = themed
+
+        #expect(edits > 0)
+        #expect(harness.textView.markdownStyle == themed)
+    }
+
     @Test("the style is built from the Settings font, falling back to the system font")
     func styleFromSettings() {
         let menlo = MarkdownEditorStyle(fontName: "Menlo-Regular", fontSize: 18)

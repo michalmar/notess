@@ -66,7 +66,7 @@ public struct ReadOnlyMarkdownView: NSViewRepresentable {
     ///   - onOpenWebLink: Called with a clicked HTTP(S) link. Both link types
     ///     accept ordinary clicks and Command-clicks when their callback is supplied.
     ///   - fontName: The body font's PostScript name, or `"System"`.
-    ///   - colors: Formatting colours; the defaults follow light/dark mode.
+    ///   - colors: Formatting and surface colours; the defaults follow light/dark mode. Changing only the surface colours (background, selection, caret) redraws without restyling.
     public init(
         markdown: String,
         fontName: String = "System",
