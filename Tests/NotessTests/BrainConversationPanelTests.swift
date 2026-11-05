@@ -9,6 +9,190 @@ import Testing
 @MainActor
 @Suite("Brain Conversation panel", .serialized, .tags(.hostedUI), .enabled(if: ProcessInfo.processInfo.environment["NOTESS_HOSTED_UI"] == "1"))
 struct BrainConversationPanelTests {
+    @Test("conversation inline Markdown uses shared code and link roles while native themes remove custom colors")
+    func themedAnswerMarkdown() async throws {
+        let fixture = try PanelFixture()
+        let harness = try await fixture.makeHarness()
+        let previousAppearance = NSApp.appearance
+        defer { NSApp.appearance = previousAppearance }
+        harness.model.isBrainConversationPresented = true
+        try await harness.waitUntil { harness.input != nil }
+        let settingsWindow = harness.makeSettingsWindow()
+        defer { settingsWindow.close() }
+        await harness.settle()
+        try harness.selectTheme("Noir Essence", in: settingsWindow)
+        await harness.settle()
+        try harness.capture("brain-empty")
+        harness.model.askBrainConversation("How?")
+        try await harness.waitUntil { harness.connections.made.first?.isPrompting == true }
+        let answer = "Body **bold**, *italic*, `inline code`, [[_brain/Alice]] and [site](https://example.com)."
+        harness.connections.last.send(.event(.answerChunk(answer)))
+        harness.connections.last.send(.finish(.endTurn))
+        try await harness.waitUntil { !harness.model.isAgentOperationActive }
+        for theme in ["Noir Essence", "Light", "Noir Essence", "Dark", "Podle systému"] {
+            try harness.selectTheme(theme, in: settingsWindow)
+            await harness.settle()
+            let count = try harness.panelPixelCount(hex: 0xEBE3D3)
+            #expect(theme == "Noir Essence" ? count > 100 : count == 0, "only the custom theme gives rendered inline code its shared surface")
+            #expect(harness.model.brainConversation.conversation.turns.last?.answer == answer)
+            try harness.capture("brain-answer-\(harness.model.settings.theme.rawValue)")
+        }
+    }
+
+    @Test("Noir Essence renders incomplete and failed answers with readable semantic status colors", arguments: [false, true])
+    func themedStatusColors(incomplete: Bool) async throws {
+        let fixture = try PanelFixture()
+        let harness = try await fixture.makeHarness()
+        let previousAppearance = NSApp.appearance
+        defer {
+            NSApp.appearance = previousAppearance
+            ThemePalette.increasedContrastOverride = nil
+        }
+        harness.model.isBrainConversationPresented = true
+        try await harness.waitUntil { harness.input != nil }
+        harness.model.askBrainConversation("Explain the evidence")
+        try await harness.waitUntil { harness.connections.made.first?.isPrompting == true }
+        if incomplete {
+            harness.connections.last.send(.event(.answerChunk("Partial evidence from [[_brain/Alice]].")))
+            harness.connections.last.send(.finish(.maxTokens))
+        } else {
+            harness.connections.last.send(.fail(.agent("Evidence could not be read.")))
+        }
+        try await harness.waitUntil { !harness.model.isAgentOperationActive }
+        let settingsWindow = harness.makeSettingsWindow()
+        defer { settingsWindow.close() }
+        await harness.settle()
+        try harness.selectTheme("Noir Essence", in: settingsWindow)
+        await harness.settle()
+        for increased in [false, true] {
+            ThemePalette.increasedContrastOverride = increased
+            try harness.selectTheme("Light", in: settingsWindow)
+            await harness.settle()
+            try harness.selectTheme("Noir Essence", in: settingsWindow)
+            await harness.settle()
+            let expected: UInt32 = incomplete
+                ? (increased ? 0x694500 : 0x8F5F0A)
+                : (increased ? 0x8E2A25 : 0xB8423C)
+            #expect(try harness.panelPixelCount(hex: expected) > 10, "the rendered status uses the readable \(incomplete ? "warning" : "error") role")
+        }
+        #expect(!harness.model.hasUnsavedChanges)
+    }
+
+    @Test("Settings recolors an open Brain Note and active conversation without changing drafts, sources or Agent work")
+    func themeSwitchDuringConversation() async throws {
+        let brainMarkdown = """
+            # Alice
+
+            Body **bold** and *italic*, [site](https://example.com), [[Plan]] and #project.
+
+            - [ ] Open task
+            - [x] Done task
+
+            > A quotation
+
+            Inline `code`.
+
+            | Name | Value |
+            | --- | --- |
+            | a | b |
+
+            """ + String(repeating: "\nMore supporting facts.\n", count: 100)
+        let fixture = try PanelFixture(brainMarkdown: brainMarkdown)
+        let harness = try await fixture.makeHarness()
+        let previousAppearance = NSApp.appearance
+        defer { NSApp.appearance = previousAppearance }
+        _ = harness.model.openExistingNote(relativePath: "_brain/Alice.md")
+        harness.model.isBrainConversationPresented = true
+        try await harness.waitUntil { harness.focusedInput != nil }
+        harness.model.askBrainConversation("What does Alice know?")
+        try await harness.waitUntil { harness.connections.made.first?.isPrompting == true }
+        let answer = "A fact from [[_brain/Alice]] and [the web](https://example.com).\n"
+            + String(repeating: "A paragraph of supporting detail.\n\n", count: 40)
+        harness.connections.last.send(.event(.answerChunk(answer)))
+        let source = BrainConversationEvidence.noteURL(target: "_brain/Alice", section: nil)
+        let web = try #require(URL(string: "https://example.com"))
+        try await harness.waitUntil { harness.sourceButton(source) != nil && harness.sourceButton(web) != nil }
+        harness.type("Unsent follow-up")
+        await harness.settle()
+        let input = try #require(harness.input)
+        let editor = try #require(harness.editor)
+        let document = try #require(harness.model.document)
+        let text = editor.string
+        let formatted = NSAttributedString(attributedString: try #require(editor.textStorage))
+        editor.setSelectedRange(NSRange(location: 200, length: 8))
+        let noteScroll = try #require(editor.enclosingScrollView)
+        noteScroll.contentView.scroll(to: NSPoint(x: 0, y: 180))
+        noteScroll.reflectScrolledClipView(noteScroll.contentView)
+        await harness.settle()
+        let noteOrigin = noteScroll.contentView.bounds.origin
+        let noteSelection = editor.selectedRange()
+        let layout = try #require(editor.textLayoutManager).usageBoundsForTextContainer
+        #expect(noteOrigin.y > 0)
+        let selected = harness.model.brainConversation.conversation.id
+        let baseline = harness.model.lastSuccessfulBrainRun
+        let connection = harness.connections.last
+        let sourceButton = try #require(harness.sourceButton(source))
+        let transcript = try #require(harness.scrollViews.first { $0 !== editor.enclosingScrollView && $0.documentView?.bounds.height ?? 0 > 700 })
+        transcript.contentView.scroll(to: NSPoint(x: 0, y: 120))
+        transcript.reflectScrolledClipView(transcript.contentView)
+        await harness.settle()
+        let scroll = transcript.contentView.bounds.origin
+        #expect(scroll.y > 0)
+        let settingsWindow = harness.makeSettingsWindow()
+        defer { settingsWindow.close() }
+        await harness.settle()
+
+        for theme in ["Noir Essence", "Dark", "Light", "Noir Essence", "Podle systému"] {
+            try harness.selectTheme(theme, in: settingsWindow)
+            await harness.settle()
+            #expect(harness.model.document === document)
+            #expect(harness.editor === editor)
+            #expect(!editor.isEditable && document.isReadOnly)
+            #expect(editor.string == text && document.text == text)
+            #expect(editor.textStorage?.isEqual(to: formatted) == true, "read-only text is redrawn, not restyled")
+            #expect(editor.selectedRange() == noteSelection)
+            #expect(noteScroll.contentView.bounds.origin == noteOrigin)
+            #expect(editor.textLayoutManager?.usageBoundsForTextContainer == layout)
+            #expect(!document.hasUnsavedChanges)
+            #expect(harness.input === input && input.stringValue == "Unsent follow-up")
+            #expect(harness.model.brainConversation.conversation.id == selected)
+            #expect(harness.model.brainConversation.conversation.turns.last?.answer == answer)
+            #expect(transcript.contentView.bounds.origin == scroll)
+            #expect(harness.sourceButton(source) === sourceButton)
+            #expect(harness.model.isAgentOperationActive)
+            #expect(harness.control(draft: input.stringValue) == .stop(isEnabled: true))
+            #expect(harness.connections.made.count == 1 && connection.prompts.count == 1)
+            #expect(connection.cancelCount == 0 && connection.closeCount == 0)
+            #expect(harness.model.lastSuccessfulBrainRun == baseline)
+
+            if theme == "Noir Essence" {
+                let color = try #require(harness.renderedColor(
+                    at: NSPoint(x: -6, y: input.bounds.midY), in: input
+                ))
+                #expect(abs(color.redComponent - 247.0 / 255) < 0.02
+                    && abs(color.greenComponent - 243.0 / 255) < 0.02
+                    && abs(color.blueComponent - 234.0 / 255) < 0.02, "the rendered source panel uses the cream surface, not native white")
+                let noteTint = try #require(sourceButton.contentTintColor?.usingColorSpace(.sRGB))
+                let webTint = try #require(harness.sourceButton(web)?.contentTintColor?.usingColorSpace(.sRGB))
+                #expect(noteTint.redComponent > noteTint.blueComponent, "note evidence uses the shared Wiki-link role")
+                #expect(webTint.blueComponent > webTint.redComponent, "web evidence uses the shared link role")
+                try harness.capture("brain-active")
+                let newWindow = PanelHarness(model: harness.model, connections: harness.connections)
+                await newWindow.settle()
+                let newEditor = try #require(newWindow.editor)
+                #expect(!newEditor.isEditable)
+                #expect(newEditor.backgroundColor == editor.backgroundColor, "new Brain views use the current theme")
+                #expect(newWindow.sourceButton(source)?.contentTintColor == sourceButton.contentTintColor)
+                newWindow.window.close()
+            } else {
+                #expect(sourceButton.contentTintColor == .linkColor, "native themes restore native link controls")
+            }
+        }
+        #expect(try String(contentsOf: document.fileURL, encoding: .utf8) == text)
+        connection.send(.finish(.endTurn))
+        try await harness.waitUntil { !harness.model.isAgentOperationActive }
+    }
+
     @Test("identical or truncated first-question labels keep one selectable item per conversation", arguments: [false, true])
     func duplicateConversationTitles(truncated: Bool) async throws {
         let fixture = try PanelFixture()
@@ -335,6 +519,85 @@ private final class PanelHarness {
             .first { $0.identifier?.rawValue == "brain-conversation-picker" }
     }
 
+    var scrollViews: [NSScrollView] {
+        subviews(of: hostingView).compactMap { $0 as? NSScrollView }
+    }
+
+    func makeSettingsWindow() -> NSWindow {
+        let settings = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 540, height: 650),
+            styleMask: [.titled, .resizable], backing: .buffered, defer: true
+        )
+        settings.isReleasedWhenClosed = false
+        settings.contentView = NSHostingView(rootView: SettingsView(model: model))
+        settings.makeKeyAndOrderFront(nil)
+        return settings
+    }
+
+    func selectTheme(_ title: String, in settings: NSWindow) throws {
+        let content = try #require(settings.contentView)
+        let picker = try #require(subviews(of: content).compactMap { $0 as? NSPopUpButton }
+            .first { $0.accessibilityLabel() == "Téma" })
+        picker.selectItem(withTitle: title)
+        try #require(picker.sendAction(picker.action, to: picker.target))
+    }
+
+    func renderedColor(at point: NSPoint, in view: NSView) -> NSColor? {
+        hostingView.layoutSubtreeIfNeeded()
+        guard let rep = hostingView.bitmapImageRepForCachingDisplay(in: hostingView.bounds) else { return nil }
+        hostingView.cacheDisplay(in: hostingView.bounds, to: rep)
+        let local = hostingView.convert(point, from: view)
+        let scale = CGFloat(rep.pixelsWide) / hostingView.bounds.width
+        let y = hostingView.isFlipped ? local.y : hostingView.bounds.height - local.y
+        return pixel(in: rep, x: Int(local.x * scale), y: Int(y * scale))
+    }
+
+    func panelPixelCount(hex: UInt32) throws -> Int {
+        hostingView.layoutSubtreeIfNeeded()
+        hostingView.display()
+        let rep = try #require(hostingView.bitmapImageRepForCachingDisplay(in: hostingView.bounds))
+        hostingView.cacheDisplay(in: hostingView.bounds, to: rep)
+        if let directory = ProcessInfo.processInfo.environment["NOTESS_THEME_CAPTURE_DIR"] {
+            let png = try #require(rep.representation(using: .png, properties: [:]))
+            try png.write(to: URL(fileURLWithPath: directory).appending(path: "brain-\(String(hex, radix: 16)).png"))
+        }
+        let input = try #require(input)
+        let left = hostingView.convert(NSPoint(x: -10, y: 0), from: input).x
+        let scale = CGFloat(rep.pixelsWide) / hostingView.bounds.width
+        let expected = [CGFloat((hex >> 16) & 255), CGFloat((hex >> 8) & 255), CGFloat(hex & 255)].map { $0 / 255 }
+        var count = 0
+        for x in Int(left * scale)..<rep.pixelsWide {
+            for y in 0..<rep.pixelsHigh {
+                guard let color = pixel(in: rep, x: x, y: y) else { continue }
+                if abs(color.redComponent - expected[0]) < 0.004
+                    && abs(color.greenComponent - expected[1]) < 0.004
+                    && abs(color.blueComponent - expected[2]) < 0.004 {
+                    count += 1
+                }
+            }
+        }
+        return count
+    }
+
+    func capture(_ name: String) throws {
+        guard let directory = ProcessInfo.processInfo.environment["NOTESS_THEME_CAPTURE_DIR"] else { return }
+        hostingView.layoutSubtreeIfNeeded()
+        let rep = try #require(hostingView.bitmapImageRepForCachingDisplay(in: hostingView.bounds))
+        hostingView.cacheDisplay(in: hostingView.bounds, to: rep)
+        let png = try #require(rep.representation(using: .png, properties: [:]))
+        try png.write(to: URL(fileURLWithPath: directory).appending(path: "\(name).png"))
+    }
+
+    private func pixel(in rep: NSBitmapImageRep, x: Int, y: Int) -> NSColor? {
+        guard let raw = rep.colorAt(x: x, y: y) else { return nil }
+        // colorAt labels components as calibrated RGB even for a Display P3 bitmap.
+        return NSColor(
+            colorSpace: rep.colorSpace,
+            components: [raw.redComponent, raw.greenComponent, raw.blueComponent, raw.alphaComponent],
+            count: 4
+        ).usingColorSpace(.sRGB)
+    }
+
     /// The question field, when it holds keyboard focus.
     var focusedInput: NSTextField? {
         guard let fieldEditor = window.firstResponder as? NSTextView, fieldEditor.isFieldEditor,
@@ -412,12 +675,12 @@ private final class PanelFixture {
     private let defaultsSuiteName = "NotessConversationPanelTests-\(UUID().uuidString)"
     private let defaults: UserDefaults
 
-    init() throws {
+    init(brainMarkdown: String = "# Alice\n\nKeeper.\n") throws {
         rootURL = FileManager.default.temporaryDirectory
             .appending(path: "NotessConversationPanelTests-\(UUID().uuidString)", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: rootURL.appending(path: "_brain"), withIntermediateDirectories: true)
         try "# Plan\n\nShip it.\n".write(to: rootURL.appending(path: "Plan.md"), atomically: true, encoding: .utf8)
-        try "# Alice\n\nKeeper.\n".write(to: rootURL.appending(path: "_brain/Alice.md"), atomically: true, encoding: .utf8)
+        try brainMarkdown.write(to: rootURL.appending(path: "_brain/Alice.md"), atomically: true, encoding: .utf8)
         defaults = try #require(UserDefaults(suiteName: defaultsSuiteName))
     }
 

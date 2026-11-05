@@ -3,11 +3,24 @@ import NotessCore
 import SwiftUI
 
 enum BrainConversationAnswer {
-    static func attributedText(_ answer: String) -> AttributedString {
-        (try? AttributedString(
+    static func attributedText(_ answer: String, palette: ThemePalette? = nil) -> AttributedString {
+        var text = (try? AttributedString(
             markdown: BrainConversationEvidence.markdown(answer),
             options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace, failurePolicy: .returnPartiallyParsedIfPossible)
         )) ?? AttributedString(answer)
+        guard let palette else { return text }
+        text.foregroundColor = Color(nsColor: palette.text)
+        for run in text.runs {
+            if let url = run.link {
+                text[run.range].foregroundColor = Color(nsColor:
+                    BrainConversationEvidence.noteLink(from: url) == nil ? palette.link : palette.wikiLink
+                )
+            }
+            if run.inlinePresentationIntent?.contains(.code) == true {
+                text[run.range].backgroundColor = Color(nsColor: palette.codeBackground)
+            }
+        }
+        return text
     }
 }
 
@@ -37,7 +50,7 @@ private struct BrainConversationSourceRow: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Text(categoryLabel).font(.caption).foregroundStyle(.secondary)
+            Text(categoryLabel).font(.caption).themedForeground(\.secondaryText, native: .secondary)
             BrainConversationSourceButton(source: source, onOpen: onOpen)
                 .frame(height: 22)
         }
@@ -51,6 +64,7 @@ private struct BrainConversationSourceRow: View {
 private struct BrainConversationSourceButton: NSViewRepresentable {
     let source: BrainConversationEvidence.Source
     let onOpen: (URL) -> Void
+    @Environment(\.themePalette) private var palette
 
     final class Coordinator: NSObject {
         var action: () -> Void
@@ -75,6 +89,9 @@ private struct BrainConversationSourceButton: NSViewRepresentable {
 
     func updateNSView(_ button: NSButton, context: Context) {
         button.title = source.label
+        button.contentTintColor = palette.map {
+            BrainConversationEvidence.noteLink(from: source.url) == nil ? $0.link : $0.wikiLink
+        } ?? .linkColor
         button.toolTip = source.url.absoluteString
         button.identifier = NSUserInterfaceItemIdentifier("brain-source:\(source.url.absoluteString)")
         button.setAccessibilityLabel("Otevřít zdroj \(source.label)")
