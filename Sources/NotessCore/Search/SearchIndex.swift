@@ -23,7 +23,8 @@ public actor SearchIndex {
     /// - 4: Tag Timeline spans follow heading hierarchy at every level.
     /// - 5: FTS5 prefix indexes for 1–3 characters keep short queries fast.
     /// - 6: Task occurrences of Daily Entries and Free Notes (`MarkdownTask`).
-    static let schemaVersion = 6
+    /// - 7: Tasks keep their heading path, enclosing Tasks and duplicate rank.
+    static let schemaVersion = 7
     private static let batchSize = 50
 
     public let vault: Vault
@@ -170,11 +171,17 @@ public actor SearchIndex {
         try Self.removeSections(of: file.relativePath, in: db)
         if file.kind != .brainNote {
             // Offsets refer to the note as written, so its open text can be matched against them.
-            for task in MarkdownTask.tasks(in: raw) {
+            let tasks = MarkdownTask.tasks(in: raw)
+            for (task, twin) in zip(tasks, MarkdownTask.twinRanks(of: tasks)) {
                 try db.query(
-                    "INSERT INTO tasks (path, ordinal, location, completed, text) VALUES (?, ?, ?, ?, ?)",
+                    """
+                    INSERT INTO tasks (path, ordinal, location, completed, text, heading_path, enclosing,
+                                       twin_index, twin_count)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
                     [.text(file.relativePath), .int(Int64(task.ordinal)), .int(Int64(task.boxRange.location)),
-                     .int(task.isCompleted ? 1 : 0), .text(task.text)]
+                     .int(task.isCompleted ? 1 : 0), .text(task.text), .text(Self.encodeTexts(task.headingPath)),
+                     .text(Self.encodeTexts(task.enclosingTasks)), .int(Int64(twin.index)), .int(Int64(twin.count))]
                 )
             }
         }
@@ -428,7 +435,11 @@ public actor SearchIndex {
         case .completed: 1
         }
         let rows = try db.query(
-            "SELECT path, ordinal, location, completed, text FROM tasks WHERE completed = ?",
+            """
+            SELECT path, ordinal, location, completed, text, heading_path, enclosing,
+                   twin_index, twin_count
+            FROM tasks WHERE completed = ?
+            """,
             [.int(completed)]
         )
         return rows.compactMap { row -> TaskOccurrence? in
@@ -436,10 +447,23 @@ public actor SearchIndex {
                   let ordinal = row[1].int, let location = row[2].int else { return nil }
             return TaskOccurrence(
                 relativePath: path, source: source, ordinal: ordinal,
-                text: row[4].text ?? "", isCompleted: row[3].int == 1, boxLocation: location
+                text: row[4].text ?? "", isCompleted: row[3].int == 1, boxLocation: location,
+                headingPath: Self.decodeTexts(row[5].text), enclosingTasks: Self.decodeTexts(row[6].text),
+                twinIndex: row[7].int ?? 0, twinCount: row[8].int ?? 1
             )
         }
         .sorted(by: TaskOccurrence.sourceOrder)
+    }
+
+    /// A list of texts in one column (a JSON array).
+    private static func encodeTexts(_ texts: [String]) -> String {
+        guard !texts.isEmpty, let data = try? JSONEncoder().encode(texts) else { return "[]" }
+        return String(decoding: data, as: UTF8.self)
+    }
+
+    private static func decodeTexts(_ column: String?) -> [String] {
+        guard let column, let texts = try? JSONDecoder().decode([String].self, from: Data(column.utf8)) else { return [] }
+        return texts
     }
 
     // MARK: - Database
@@ -480,7 +504,8 @@ public actor SearchIndex {
             CREATE INDEX IF NOT EXISTS timeline_by_path ON timeline_sections (path);
             CREATE TABLE IF NOT EXISTS tasks (
                 path TEXT NOT NULL, ordinal INTEGER NOT NULL, location INTEGER NOT NULL,
-                completed INTEGER NOT NULL, text TEXT NOT NULL);
+                completed INTEGER NOT NULL, text TEXT NOT NULL, heading_path TEXT NOT NULL,
+                enclosing TEXT NOT NULL, twin_index INTEGER NOT NULL, twin_count INTEGER NOT NULL);
             CREATE INDEX IF NOT EXISTS tasks_by_path ON tasks (path);
             CREATE VIRTUAL TABLE IF NOT EXISTS sections_fts USING fts5 (
                 title, body, tokenize = 'unicode61 remove_diacritics 2', prefix = '1 2 3');

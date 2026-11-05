@@ -92,8 +92,8 @@ struct TaskOverviewView: View {
     }
 }
 
-/// One Task: its status, text and source note. The status is shown, not
-/// changed here.
+/// One Task: its status, text, the Tasks it is nested in, and its source note
+/// with the headings it lies under. The status is shown, not changed here.
 private struct TaskRow: View {
     let task: TaskOccurrence
     let open: (TaskOccurrence) -> Void
@@ -107,9 +107,20 @@ private struct TaskRow: View {
                 Text(task.text.isEmpty ? " " : task.text)
                     .strikethrough(task.isCompleted)
                     .foregroundStyle(task.isCompleted ? .secondary : .primary)
-                Text(task.source.label)
+                if let enclosing = task.enclosingLabel {
+                    Label(enclosing, systemImage: "arrow.turn.down.right")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .help(enclosing)
+                }
+                Text(task.locationLabel)
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .help(task.locationLabel)
             }
             Spacer()
             Button {
@@ -122,7 +133,7 @@ private struct TaskRow: View {
         }
         .padding(.vertical, 2)
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(task.isCompleted ? "Splněný" : "Nesplněný") úkol: \(task.text), \(task.source.label)")
+        .accessibilityLabel(task.accessibilityLabel)
         .accessibilityHint("Otevře poznámku s úkolem")
         .accessibilityAction { open(task) }
     }
@@ -155,6 +166,26 @@ extension TaskFilter {
         case .open: "Uložené záznamy v Journalu ani poznámky nemají žádný nesplněný úkol."
         case .completed: "Uložené záznamy v Journalu ani poznámky nemají žádný splněný úkol."
         }
+    }
+}
+
+extension TaskOccurrence {
+    /// The Tasks this one is nested in, outermost first; nil for a top-level Task.
+    var enclosingLabel: String? {
+        enclosingTasks.isEmpty ? nil : enclosingTasks.joined(separator: " › ")
+    }
+
+    /// The source note, then the headings the Task lies under, outermost first;
+    /// only the note for a Task before the first heading.
+    var locationLabel: String {
+        ([source.label] + [headingPath.joined(separator: " › ")].filter { !$0.isEmpty }).joined(separator: " · ")
+    }
+
+    var accessibilityLabel: String {
+        var parts = ["\(isCompleted ? "Splněný" : "Nesplněný") úkol: \(text)"]
+        if let enclosingLabel { parts.append("v úkolu \(enclosingLabel)") }
+        parts.append(locationLabel)
+        return parts.joined(separator: ", ")
     }
 }
 
