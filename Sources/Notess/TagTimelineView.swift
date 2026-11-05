@@ -416,7 +416,7 @@ private struct SectionCard: View {
                 } label: {
                     Label("Otevřít v Journalu", systemImage: "arrow.up.forward.square")
                 }
-                .buttonStyle(.link)
+                .themedLinkButtonStyle()
                 .help("Otevře záznam k úpravám a ukáže tuto Sekci")
             }
         }

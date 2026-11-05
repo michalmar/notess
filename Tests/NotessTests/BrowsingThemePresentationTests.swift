@@ -145,6 +145,7 @@ struct BrowsingThemePresentationTests {
                 #expect(!isCream(colors.detail) && !isCream(colors.card), "\(theme) is native: \(colors.detail)")
                 #expect(colorDistance(srgb(colors.text, in: shown.effectiveAppearance), srgb(.textColor, in: shown.effectiveAppearance)) < 0.01,
                         "\(theme) read-only text is native")
+                #expect(colors.blue > 20, "\(theme) keeps the native link colour")
             }
         }
 
@@ -158,6 +159,103 @@ struct BrowsingThemePresentationTests {
 
         try select("Podle systému", in: picker)
         await harness.settle()
+    }
+
+    @Test("the open Task Overview recolours without losing its filter, selected Task or scroll")
+    func taskOverview() async throws {
+        let fixture = try SearchPresentationFixture()
+        let overdue = (1...30).map { String(format: "- [ ] Úkol %02d 📅 2026-11-01", $0) }
+        let saved = "# Plán\n\n" + overdue.joined(separator: "\n") + "\n- [ ] Dnešní 📅 2026-11-06\n- [ ] Bez termínu\n"
+        try fixture.write(saved, to: "Notes/Plán.md")
+        let now = ISO8601DateFormatter().date(from: "2026-11-06T12:00:00Z")!
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        let harness = try await fixture.makeHarness(now: { now }, calendar: { calendar })
+        let previousAppearance = NSApp.appearance
+        defer { NSApp.appearance = previousAppearance }
+        let settingsWindow = makeSettingsWindow(model: harness.model)
+        defer { settingsWindow.close() }
+        await harness.settle()
+        let picker = try themePicker(in: settingsWindow)
+        harness.window.makeKeyAndOrderFront(nil)
+
+        let browser = harness.model.taskOverview
+        harness.model.sidebarMode = .tasks
+        try await harness.waitUntil { taskTable(harness, rows: 32) != nil }
+        await harness.settle()
+        let table = try #require(taskTable(harness, rows: 32))
+        harness.window.makeFirstResponder(table)
+        for _ in 0..<20 { pressDown(harness) }
+        await harness.settle()
+        guard case .loaded(let tasks) = browser.tasks else { Issue.record("not loaded"); return }
+        let target = try #require(tasks.first { $0.text.hasPrefix("Úkol 20") })
+        try await harness.waitUntil { browser.selectedTaskID == target.id }
+        let scroll = try #require(table.enclosingScrollView)
+        scroll.contentView.scroll(to: NSPoint(x: 0, y: table.rect(ofRow: table.selectedRow).minY - 120))
+        scroll.reflectScrolledClipView(scroll.contentView)
+        await harness.settle()
+        let viewport = table.visibleRect
+        #expect(viewport.minY > 0)
+
+        for theme in ["Noir Essence", "Dark", "Light", "Podle systému", "Noir Essence"] {
+            try select(theme, in: picker)
+            harness.window.makeKeyAndOrderFront(nil)
+            harness.window.makeFirstResponder(table)
+            await harness.settle()
+
+            #expect(harness.model.sidebarMode == .tasks && browser.filter == .open, "\(theme) keeps the filter")
+            #expect(browser.selectedTaskID == target.id, "\(theme) keeps the selected Task")
+            #expect(harness.tables.contains { $0 === table }, "the Task list stays mounted")
+            #expect(abs(table.visibleRect.minY - viewport.minY) <= 1, "\(theme) keeps the Task list's scroll")
+            #expect(try String(contentsOf: fixture.rootURL.appending(path: "Notes/Plán.md"), encoding: .utf8) == saved)
+
+            let colors = try taskColors(harness, table: table)
+            switch theme {
+            case "Noir Essence":
+                expectNoirEssenceTasks(colors)
+            default:
+                // The native list background as it rendered before themes existed.
+                let isDark = table.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+                let native = NSColor(white: isDark ? 0.157 : 1, alpha: 1)
+                #expect(colorDistance(colors.list, native) < 0.01, "\(theme) keeps the native list background: \(colors.list)")
+                #expect(colors.blue > 20, "\(theme) keeps the native link colour")
+                let overdue = try #require(colors.overdue)
+                #expect(colorDistance(overdue, srgb(.systemRed, in: table.effectiveAppearance)) < colorDistance(overdue, ThemePalette.noirEssence.error),
+                        "\(theme) keeps the native overdue red: \(overdue)")
+            }
+        }
+
+        harness.model.sidebarMode = .journal
+        await harness.settle()
+        harness.model.sidebarMode = .tasks
+        try await harness.waitUntil { taskTable(harness, rows: 32) != nil }
+        await harness.settle()
+        let returned = try #require(taskTable(harness, rows: 32))
+        harness.window.makeFirstResponder(returned)
+        await harness.settle()
+        expectNoirEssenceTasks(try taskColors(harness, table: returned))
+
+        try select("Podle systému", in: picker)
+        await harness.settle()
+    }
+
+    private func expectNoirEssenceTasks(_ colors: TaskColors, sourceLocation: SourceLocation = #_sourceLocation) {
+        #expect(isCream(colors.list), "the Task list uses the palette: \(colors.list)", sourceLocation: sourceLocation)
+        #expect(colors.selection.redComponent > colors.selection.blueComponent + 0.06,
+                "the selected Task is marked with the orange accent: \(colors.selection)", sourceLocation: sourceLocation)
+        let appearance = NSAppearance(named: .aqua)!
+        #expect(contrast(ThemePalette.noirEssence.text, on: colors.selection, in: appearance) >= 4.5,
+                "the selected Task stays readable", sourceLocation: sourceLocation)
+        #expect(colors.blue == 0, "no system-accent blue remains in a Task row", sourceLocation: sourceLocation)
+        if let overdue = colors.overdue {
+            // Thin caption strokes never reach their full colour; compare which colour they are drawn in.
+            let error = srgb(ThemePalette.noirEssence.error, in: appearance)
+            #expect(colorDistance(overdue, error) < colorDistance(overdue, srgb(.systemRed, in: appearance)),
+                    "overdue dates use the palette's error colour: \(overdue)", sourceLocation: sourceLocation)
+            #expect(contrast(error, on: colors.list, in: appearance) >= 4.5, "overdue dates are readable", sourceLocation: sourceLocation)
+        } else {
+            Issue.record("no overdue date is drawn", sourceLocation: sourceLocation)
+        }
     }
 
     private func expectNoirEssenceTimeline(_ colors: TimelineColors, in view: MarkdownTextView, sourceLocation: SourceLocation = #_sourceLocation) throws {
@@ -176,6 +274,7 @@ struct BrowsingThemePresentationTests {
         let text = srgb(colors.text, in: appearance)
         let reference = srgb(ThemePalette.noirEssence.text, in: appearance)
         #expect(colorDistance(text, reference) < 0.01, "read-only text follows the palette", sourceLocation: sourceLocation)
+        #expect(colors.blue == 0, "the card's link uses the palette, not the system blue", sourceLocation: sourceLocation)
         let tag = srgb(try #require(colors.roles.first { $0.0 == "Tag" }?.1), in: appearance)
         #expect(tag.redComponent > tag.blueComponent + 0.2, "Tags keep their warm palette colour: \(tag)", sourceLocation: sourceLocation)
     }
@@ -201,6 +300,8 @@ struct TimelineColors {
     let text: NSColor
     /// Markdown roles drawn in the card, by name.
     let roles: [(String, NSColor)]
+    /// System-blue pixels in the card's actions below its Markdown.
+    let blue: Int
 }
 
 /// The read-only Markdown views shown, such as Tag Timeline Sections.
@@ -233,7 +334,65 @@ private func timelineColors(_ harness: SearchPresentationHarness, card view: Mar
         ("Wiki-link", try foreground("Alfa")), ("Tag", try foreground("projekt")),
         ("quotation", try foreground("A quotation")), ("completed Task", try foreground("Done task")),
     ]
-    return TimelineColors(detail: detail, card: card, text: roles[0].1, roles: roles)
+    let actions = NSRect(x: frame.minX, y: frame.minY - 36, width: frame.width, height: 36)
+    let blue = image.colors(in: actions).filter { $0.blueComponent - $0.redComponent > 0.4 }.count
+    return TimelineColors(detail: detail, card: card, text: roles[0].1, roles: roles, blue: blue)
+}
+
+struct TaskColors {
+    let list: NSColor
+    let selection: NSColor
+    /// The strongest red drawn in an unselected overdue row: its date.
+    let overdue: NSColor?
+    /// System-blue pixels in an unselected row.
+    let blue: Int
+}
+
+@MainActor
+private func taskTable(_ harness: SearchPresentationHarness, rows: Int) -> NSTableView? {
+    harness.tables.first { table in
+        (0..<table.numberOfRows).filter { table.rowView(atRow: $0, makeIfNecessary: true)?.isGroupRowStyle != true }.count == rows
+    }
+}
+
+@MainActor
+private func pressDown(_ harness: SearchPresentationHarness) {
+    let characters = String(Character(UnicodeScalar(UInt16(NSDownArrowFunctionKey))!))
+    let event = NSEvent.keyEvent(
+        with: .keyDown, location: .zero, modifierFlags: [.numericPad, .function], timestamp: 0,
+        windowNumber: harness.window.windowNumber, context: nil,
+        characters: characters, charactersIgnoringModifiers: characters, isARepeat: false, keyCode: 125
+    )
+    if let event { harness.window.sendEvent(event) }
+}
+
+/// The most frequent colour, after rounding, of a set of pixels.
+private func dominant(_ colors: [NSColor]) -> NSColor? {
+    let key = { (c: NSColor) in [c.redComponent, c.greenComponent, c.blueComponent].map { Int(($0 * 50).rounded()) } }
+    let groups = Dictionary(grouping: colors, by: key)
+    return groups.max { $0.value.count < $1.value.count }?.value.first
+}
+
+@MainActor
+private func taskColors(_ harness: SearchPresentationHarness, table: NSTableView) throws -> TaskColors {
+    let scroll = try #require(table.enclosingScrollView)
+    let window = try #require(WindowImage(harness.window))
+    let image = try #require(WindowImage(view: scroll, over: window))
+    let selected = table.selectedRow
+    try #require(selected >= 0)
+    func windowRect(ofRow row: Int) -> NSRect { table.convert(table.rect(ofRow: row), to: nil) }
+    let selection = try #require(dominant(image.colors(in: windowRect(ofRow: selected).insetBy(dx: 4, dy: 3))))
+    let other = try #require((0..<table.numberOfRows).first { row in
+        abs(row - selected) > 1 && table.rowView(atRow: row, makeIfNecessary: true)?.isGroupRowStyle != true
+            && table.visibleRect.contains(table.rect(ofRow: row))
+    })
+    let pixels = image.colors(in: windowRect(ofRow: other))
+    let list = try #require(dominant(pixels))
+    let reds = pixels.filter { $0.redComponent - $0.greenComponent > 0.2 && $0.redComponent - $0.blueComponent > 0.2 }
+    let overdue = reds.max { $0.redComponent - $0.greenComponent < $1.redComponent - $1.greenComponent }
+    // The system link and accent blues; the palette's muted link blue is never this saturated.
+    let blue = pixels.filter { $0.blueComponent - $0.redComponent > 0.4 }.count
+    return TaskColors(list: list, selection: selection, overdue: overdue, blue: blue)
 }
 
 struct SearchColors {
@@ -288,9 +447,16 @@ struct WindowImage {
     private let rep: NSBitmapImageRep
     private let view: NSView
     private let scale: CGFloat
+    private var backdrop: [WindowImage] = []
 
     init?(_ window: NSWindow) {
         guard let view = window.contentView else { return nil }
+        self.init(view: view)
+    }
+
+    /// Renders only one view: a window rendering can omit text that
+    /// SwiftUI lists draw in their own layers.
+    init?(view: NSView) {
         view.layoutSubtreeIfNeeded()
         guard let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { return nil }
         view.cacheDisplay(in: view.bounds, to: rep)
@@ -299,10 +465,25 @@ struct WindowImage {
         scale = CGFloat(rep.pixelsWide) / view.bounds.width
     }
 
+    /// Renders one view composited over what the window draws behind it.
+    init?(view: NSView, over window: WindowImage) {
+        self.init(view: view)
+        backdrop = [window]
+    }
+
     func color(at point: NSPoint) -> NSColor? {
         let local = view.convert(point, from: nil)
         let y = view.isFlipped ? local.y : view.bounds.height - local.y
-        return rep.colorAt(x: Int(local.x * scale), y: Int(y * scale))?.usingColorSpace(.sRGB)
+        return pixel(x: Int(local.x * scale), y: Int(y * scale), window: point)
+    }
+
+    private func pixel(x: Int, y: Int, window point: NSPoint) -> NSColor? {
+        guard let top = rep.colorAt(x: x, y: y)?.usingColorSpace(.sRGB) else { return nil }
+        guard let under = backdrop.first, top.alphaComponent < 1, let below = under.color(at: point) else { return top }
+        let a = top.alphaComponent
+        func over(_ t: CGFloat, _ b: CGFloat) -> CGFloat { t * a + b * (1 - a) }
+        return NSColor(srgbRed: over(top.redComponent, below.redComponent), green: over(top.greenComponent, below.greenComponent),
+                       blue: over(top.blueComponent, below.blueComponent), alpha: 1)
     }
 
     /// Every pixel in a window rectangle.
@@ -312,7 +493,8 @@ struct WindowImage {
         var result: [NSColor] = []
         for y in stride(from: Int(minY * scale), to: Int((minY + local.height) * scale), by: 1) {
             for x in stride(from: Int(local.minX * scale), to: Int(local.maxX * scale), by: 1) {
-                if let color = rep.colorAt(x: x, y: y)?.usingColorSpace(.sRGB) { result.append(color) }
+                let point = view.convert(NSPoint(x: CGFloat(x) / scale, y: view.isFlipped ? CGFloat(y) / scale : view.bounds.height - CGFloat(y) / scale), to: nil)
+                if let color = pixel(x: x, y: y, window: point) { result.append(color) }
             }
         }
         return result
