@@ -40,8 +40,10 @@ final class TaskCheckboxes {
         storage.enumerateAttribute(.notessTaskCheckbox, in: range) { value, box, _ in
             guard let checked = value as? Bool, box.length == 3,
                   !textView.headingFolding.hides(box.location) else { return }
-            let rect = textView.rect(forCharacterRange: box)
-            guard !rect.isEmpty, rect.intersects(textView.visibleRect) else { return }
+            // Layout geometry, not `rect(forCharacterRange:)`: that goes through the
+            // screen and is empty while SwiftUI lays out an editor not yet in a window.
+            guard let rect = textView.segmentFrames(of: box).first,
+                  !rect.isEmpty, rect.intersects(textView.visibleRect) else { return }
             let button: TaskCheckboxButton
             if let existing = buttons[box.location] {
                 button = existing

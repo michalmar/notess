@@ -220,6 +220,37 @@ struct TaskCheckboxTests {
         #expect(editor.textView.string == "- [ ] úkol")
     }
 
+    @Test("an editor laid out before it joins a window, as SwiftUI does when a note opens, has its checkboxes without further layout")
+    func layoutBeforeWindow() throws {
+        let source = "# Plán\n\n- [ ] Připravit 📅 2026-11-01\n  - [x] Poslat\n"
+        let scrollView = MarkdownTextViewFactory.makeScrollView()
+        let textView = try #require(scrollView.documentView as? MarkdownTextView)
+        scrollView.frame = NSRect(x: 0, y: 0, width: 600, height: 300)
+        textView.string = source
+        scrollView.layoutSubtreeIfNeeded()
+        textView.layoutSubtreeIfNeeded()
+        #expect(textView.taskDueDateChips.visibleChips.count == 1, "the overlays have laid out")
+
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 600, height: 300),
+            styleMask: [.titled], backing: .buffered, defer: true
+        )
+        window.isReleasedWhenClosed = false
+        defer { window.close() }
+        window.contentView = scrollView
+        let boxes = textView.subviews.compactMap { $0 as? NSButton }
+            .filter { !$0.isHidden && $0.accessibilityRole() == .checkBox }
+            .sorted { $0.frame.minY < $1.frame.minY }
+        #expect(boxes.map(\.state) == [.off, .on])
+        let nsSource = source as NSString
+        for (box, marker) in zip(boxes, [nsSource.range(of: "[ ]"), nsSource.range(of: "[x]")]) {
+            let sourceRect = try #require(textView.segmentFrames(of: marker).first)
+            #expect(abs(box.frame.midX - sourceRect.midX) < 1 && abs(box.frame.midY - sourceRect.midY) < 1,
+                    "the checkbox \(box.frame) covers its marker \(sourceRect)")
+        }
+        #expect(textView.string == source)
+    }
+
     @Test("Task text stays outside the checkbox target and remains ordinarily editable")
     func clickingTaskText() throws {
         let editor = try CheckboxEditor("- [ ] koupit mléko")
