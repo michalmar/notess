@@ -21,7 +21,7 @@ extension AppTheme {
     }
 }
 
-private func redraw(_ view: NSView) {
+@MainActor private func redraw(_ view: NSView) {
     view.needsDisplay = true
     view.subviews.forEach(redraw)
 }

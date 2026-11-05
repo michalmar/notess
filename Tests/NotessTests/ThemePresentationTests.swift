@@ -8,6 +8,222 @@ import Testing
 @MainActor
 @Suite("Native theme presentation", .serialized, .tags(.hostedUI), .enabled(if: ProcessInfo.processInfo.environment["NOTESS_HOSTED_UI"] == "1"))
 struct ThemePresentationTests {
+    @Test("focused navigation overlays use orange even with a Task list mounted behind them", arguments: [false, true])
+    func focusedOverlaySelections(quickOpen: Bool) async throws {
+        let fixture = try SearchPresentationFixture()
+        try fixture.write("# Plan\n\n- [ ] Plan work\n", to: "Notes/Plan.md")
+        try fixture.write("# Plan two\n\nPlan details.\n", to: "Notes/Other.md")
+        let harness = try await fixture.makeHarness(opening: "Notes/Plan.md")
+        let previousAppearance = NSApp.appearance
+        defer { NSApp.appearance = previousAppearance }
+        let settingsWindow = makeSettingsWindow(model: harness.model)
+        defer { settingsWindow.close() }
+        await harness.settle()
+        let picker = try themePicker(in: settingsWindow)
+        harness.model.sidebarMode = .tasks
+        try await harness.waitUntil { harness.tables.count == 2 }
+        harness.model.sidebarMode = .journal
+        await harness.settle()
+        let existingTables = Set(harness.tables.map(ObjectIdentifier.init))
+        if quickOpen {
+            harness.model.isQuickOpenPresented = true
+        } else {
+            harness.model.presentSearch()
+        }
+        harness.window.makeKeyAndOrderFront(nil)
+        await harness.settle()
+        harness.type("Plan")
+        try await harness.waitUntil {
+            harness.tables.contains { !existingTables.contains(ObjectIdentifier($0)) && $0.numberOfRows >= 2 }
+        }
+        let table = try #require(harness.tables.first { !existingTables.contains(ObjectIdentifier($0)) })
+        var nativeSelection: NSColor?
+        for title in ["Light", "Noir Essence", "Light", "Noir Essence"] {
+            try select(title, in: picker)
+            harness.window.makeKeyAndOrderFront(nil)
+            harness.window.makeFirstResponder(table)
+            await harness.settle()
+            let row = try #require(table.rowView(atRow: table.selectedRow, makeIfNecessary: true))
+            row.isEmphasized = true
+            row.needsDisplay = true
+            let image = try #require(WindowImage(harness.window))
+            let rect = row.convert(row.bounds, to: nil)
+            let color = try #require(image.color(at: NSPoint(x: rect.maxX - 24, y: rect.midY)))
+            if title == "Noir Essence" {
+                #expect(color.redComponent > color.blueComponent + 0.06, "the focused overlay selection is orange: \(color)")
+            } else if let nativeSelection {
+                #expect(colorDistance(color, nativeSelection) < 0.02, "Light restores the native selection")
+            } else {
+                nativeSelection = color
+            }
+        }
+        try select("Podle systému", in: picker)
+        await harness.settle()
+    }
+
+    @Test("native sidebar backgrounds match an unmodified native sidebar after leaving Noir")
+    func nativeSidebarBackground() async throws {
+        let fixture = try SearchPresentationFixture()
+        for index in 1...40 {
+            try fixture.write("# Plan\n", to: String(format: "Plan %02d.md", index))
+        }
+        let harness = try await fixture.makeHarness(opening: "Plan 01.md")
+        let previousAppearance = NSApp.appearance
+        defer { NSApp.appearance = previousAppearance }
+        let settingsWindow = makeSettingsWindow(model: harness.model)
+        defer { settingsWindow.close() }
+        await harness.settle()
+        let picker = try themePicker(in: settingsWindow)
+        let reference = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 1_000, height: 700),
+            styleMask: [.titled, .resizable], backing: .buffered, defer: true
+        )
+        reference.isReleasedWhenClosed = false
+        reference.contentView = NSHostingView(rootView: NavigationSplitView {
+            List { Text("Native sidebar") }
+                .listStyle(.sidebar)
+                .navigationSplitViewColumnWidth(min: 200, ideal: 240, max: 400)
+        } detail: {
+            Color.clear
+        })
+        reference.orderFront(nil)
+        defer { reference.close() }
+        let sidebar = try #require(harness.tables.first)
+        let scroll = try #require(sidebar.enclosingScrollView)
+        scroll.contentView.scroll(to: NSPoint(x: 0, y: 120))
+        scroll.reflectScrolledClipView(scroll.contentView)
+        await harness.settle()
+        let viewport = sidebar.visibleRect
+        #expect(viewport.minY > 0)
+        for title in ["Light", "Noir Essence", "Dark", "Noir Essence", "Light", "Podle systému"] {
+            try select(title, in: picker)
+            await harness.settle()
+            let table = try #require(harness.tables.first)
+            #expect(table === sidebar)
+            #expect(abs(table.visibleRect.minY - viewport.minY) <= 1, "\(title) keeps the sidebar viewport")
+            let actual = try #require(sample(belowContentOf: table, in: harness))
+            if title == "Noir Essence" {
+                #expect(isCream(actual))
+            } else {
+                let referenceContent = try #require(reference.contentView)
+                let referenceScroll = try #require(descendants(of: referenceContent).compactMap { $0 as? NSTableView }.first?.enclosingScrollView)
+                let frame = referenceScroll.convert(referenceScroll.bounds, to: nil)
+                let expected = try #require(renderedColor(at: NSPoint(x: frame.midX, y: frame.minY + 12), in: reference))
+                #expect(colorDistance(actual, expected) < 0.02, "\(title) keeps the native sidebar: \(actual), expected \(expected)")
+            }
+        }
+    }
+
+    @Test("focused Task and sidebar selections use Noir orange and restore the native accent")
+    func focusedSelections() async throws {
+        let fixture = try SearchPresentationFixture()
+        try fixture.write("# Plan\n\n- [ ] First\n- [ ] Second\n", to: "Notes/Plan.md")
+        let harness = try await fixture.makeHarness(opening: "Notes/Plan.md")
+        let previousAppearance = NSApp.appearance
+        defer { NSApp.appearance = previousAppearance }
+        let settingsWindow = makeSettingsWindow(model: harness.model)
+        defer { settingsWindow.close() }
+        await harness.settle()
+        let picker = try themePicker(in: settingsWindow)
+        harness.model.sidebarMode = .tasks
+        try await harness.waitUntil { harness.tables.count == 2 }
+        var nativeSelections: [String: [ObjectIdentifier: NSColor]] = [:]
+        for title in ["Light", "Dark", "Noir Essence", "Light", "Noir Essence", "Dark"] {
+            try select(title, in: picker)
+            harness.window.makeKeyAndOrderFront(nil)
+            await harness.settle()
+            for table in harness.tables {
+                let index = try #require((0..<table.numberOfRows).first {
+                    table.rowView(atRow: $0, makeIfNecessary: true)?.isGroupRowStyle == false
+                })
+                table.selectRowIndexes(IndexSet(integer: index), byExtendingSelection: false)
+                harness.window.makeFirstResponder(table)
+                await harness.settle()
+                let row = try #require(table.rowView(atRow: index, makeIfNecessary: true))
+                // Hosted runners need not be the active application. Exercise
+                // the active-window drawing state as well as native focus.
+                row.isEmphasized = true
+                row.needsDisplay = true
+                let image = try #require(WindowImage(harness.window))
+                let rect = row.convert(row.bounds, to: nil)
+                let color = try #require(image.color(at: NSPoint(x: rect.maxX - 24, y: rect.midY)))
+                if title == "Noir Essence" {
+                    #expect(color.redComponent > color.blueComponent + 0.06, "focused selection uses orange: \(color)")
+                    #expect(contrast(ThemePalette.noirEssence.text, on: color, in: table.effectiveAppearance) >= 4.5)
+                } else if let native = nativeSelections[title]?[ObjectIdentifier(table)] {
+                    // Native selection is composited over the list material,
+                    // which can vary slightly after appearance transitions.
+                    #expect(colorDistance(color, native) < 0.08, "\(title) restores the native accent: \(color), expected \(native)")
+                } else {
+                    nativeSelections[title, default: [:]][ObjectIdentifier(table)] = color
+                }
+            }
+        }
+        try select("Podle systému", in: picker)
+        await harness.settle()
+    }
+
+    @Test("Quick Open recolours without losing its query, selection or viewport")
+    func quickOpen() async throws {
+        let fixture = try SearchPresentationFixture()
+        for index in 1...40 {
+            try fixture.write("# Plan\n\n- [ ] Task\n", to: String(format: "Notes/Plan %02d.md", index))
+        }
+        let harness = try await fixture.makeHarness(opening: "Notes/Plan 01.md")
+        let previousAppearance = NSApp.appearance
+        defer { NSApp.appearance = previousAppearance }
+        let settingsWindow = makeSettingsWindow(model: harness.model)
+        defer { settingsWindow.close() }
+        await harness.settle()
+        let picker = try themePicker(in: settingsWindow)
+        // Task Overview remains mounted behind journal navigation. The
+        // overlay must theme its own table, not a previously visited one.
+        harness.model.sidebarMode = .tasks
+        try await harness.waitUntil { harness.tables.count == 2 }
+        harness.model.sidebarMode = .journal
+        await harness.settle()
+        let existingTables = Set(harness.tables.map(ObjectIdentifier.init))
+        harness.model.isQuickOpenPresented = true
+        try await harness.waitUntil { harness.tables.contains { !existingTables.contains(ObjectIdentifier($0)) } }
+        harness.window.makeKeyAndOrderFront(nil)
+        await harness.settle()
+        harness.type("Plan")
+        await harness.settle()
+        let table = try #require(harness.tables.first { !existingTables.contains(ObjectIdentifier($0)) })
+        let field = try #require(descendants(of: harness.hostingView).compactMap { $0 as? NSTextField }
+            .first { $0.placeholderString == "Otevřít soubor…" })
+        #expect(field.stringValue == "Plan")
+        let scroll = try #require(table.enclosingScrollView)
+        scroll.contentView.scroll(to: NSPoint(x: 0, y: 120))
+        scroll.reflectScrolledClipView(scroll.contentView)
+        await harness.settle()
+        let viewport = table.visibleRect
+        let selection = table.selectedRow
+        #expect(viewport.minY > 0)
+        for title in ["Noir Essence", "Dark", "Light", "Podle systému", "Noir Essence"] {
+            try select(title, in: picker)
+            harness.window.makeKeyAndOrderFront(nil)
+            await harness.settle()
+            #expect(harness.tables.contains { $0 === table })
+            #expect(field.stringValue == "Plan")
+            #expect(table.selectedRow == selection)
+            #expect(abs(table.visibleRect.minY - viewport.minY) <= 1)
+            let image = try #require(WindowImage(harness.window))
+            let fieldFrame = field.convert(field.bounds, to: nil)
+            let panel = try #require(image.color(at: NSPoint(x: fieldFrame.maxX + 6, y: fieldFrame.midY)))
+            let listFrame = scroll.convert(scroll.bounds, to: nil)
+            let results = try #require(image.color(at: NSPoint(x: listFrame.maxX - 24, y: listFrame.minY + 6)))
+            if title == "Noir Essence" {
+                #expect(isCream(panel), "Quick Open uses the cream palette: \(panel)")
+                #expect(isCream(results), "Quick Open results use the cream palette: \(results)")
+            } else {
+                #expect(!isCream(panel) && !isCream(results), "\(title) restores native surfaces")
+            }
+        }
+        try select("Podle systému", in: picker)
+        await harness.settle()
+    }
+
     @Test("the Settings selector applies native Light, Dark and System to existing and new windows")
     func settingsSelection() async throws {
         let fixture = try SearchPresentationFixture()

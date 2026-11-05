@@ -33,7 +33,6 @@ struct TaskOverviewView: View {
     let isIndexing: Bool
     let indexFailure: String?
     let open: (TaskOccurrence) -> Void
-    @Environment(\.themePalette) private var palette
 
     var body: some View {
         content
@@ -85,6 +84,7 @@ struct TaskOverviewView: View {
         // value already replaces AppKit's own background.
         .scrollContentBackground(.hidden)
         .themedBackground(\.background, native: Color(nsColor: .controlBackgroundColor))
+        .themedListSelection()
         .contextMenu(forSelectionType: TaskOccurrence.ID.self) { ids in
             if let task = ids.first.flatMap(browser.listed) {
                 Button("Otevřít poznámku") { open(task) }
@@ -97,17 +97,9 @@ struct TaskOverviewView: View {
     private func rows(_ tasks: [TaskOccurrence]) -> some View {
         ForEach(tasks) { task in
             TaskRow(task: task, today: browser.today, open: open)
-                .listRowBackground(rowBackground(isSelected: browser.selectedTaskID == task.id))
                 .tag(task.id)
                 .id(task.id)
         }
-    }
-
-    /// Under a custom palette the selected Task is also marked with its accent;
-    /// native themes keep the system selection alone.
-    private func rowBackground(isSelected: Bool) -> Color? {
-        guard let palette, isSelected else { return nil }
-        return Color(nsColor: palette.accent).opacity(0.24)
     }
 }
 

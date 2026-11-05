@@ -98,7 +98,6 @@ struct SearchView: View {
                                         .tag(result.id)
                                         .id(result.id)
                                         .onTapGesture { open(result) }
-                                        .listRowBackground(rowBackground(isSelected: search.selection == result.id))
                                 }
                             }
                         }
@@ -108,6 +107,7 @@ struct SearchView: View {
                     // explicit scrollContentBackground replaces AppKit's own.
                     .scrollContentBackground(.hidden)
                     .themedBackground(\.background, native: Color(nsColor: .controlBackgroundColor))
+                    .themedListSelection()
                     .onChange(of: search.selection) { _, selected in
                         guard let selected else { return }
                         proxy.scrollTo(selected)
@@ -129,13 +129,6 @@ struct SearchView: View {
     /// The floating panel: the palette's writing surface, or the native material.
     private var panelBackground: AnyShapeStyle {
         palette.map { AnyShapeStyle(Color(nsColor: $0.background)) } ?? AnyShapeStyle(.regularMaterial)
-    }
-
-    /// A custom palette marks the selected result with its accent, like the
-    /// active tab; native themes keep the system selection alone.
-    private func rowBackground(isSelected: Bool) -> Color? {
-        guard let palette else { return nil }
-        return isSelected ? Color(nsColor: palette.accent).opacity(0.24) : Color.clear
     }
 
     private func moveSelection(_ direction: MoveCommandDirection) {

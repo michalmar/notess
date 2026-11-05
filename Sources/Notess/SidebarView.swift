@@ -33,7 +33,8 @@ struct SidebarView: View {
                 TaskFilterList(model: model)
             }
         }
-        // A custom palette replaces the sidebar material; native themes keep it.
+        .themedListSelection()
+        // Native sidebar material is preserved in the split-view container.
         .scrollContentBackground(palette == nil ? .automatic : .hidden)
         .themedBackground(\.surface, native: Color.clear)
         .onChange(of: model.document?.id) { _, _ in
