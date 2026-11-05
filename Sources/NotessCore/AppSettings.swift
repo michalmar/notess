@@ -18,6 +18,8 @@ public enum AppTheme: String, CaseIterable, Sendable {
     case system
     case light
     case dark
+    /// A fixed light, cream-and-orange palette.
+    case noirEssence
 }
 
 /// Observable, user-persistent settings that application features can consume.

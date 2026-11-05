@@ -37,6 +37,7 @@ struct NoteEditorScreen: View {
                 initialText: { document.text },
                 fontName: settings.editorFont.name,
                 fontSize: CGFloat(settings.effectiveEditorFontSize),
+                colors: settings.theme.markdownColors,
                 reveal: reveal.flatMap { reveal in
                     reveal.documentID == AnyHashable(document.id)
                         ? EditorReveal(id: reveal.id, documentID: contentID, range: reveal.range)
@@ -205,7 +206,7 @@ private struct BacklinksBar: View {
                 }
             }
         }
-        .background(.bar)
+        .themedBackground(\.surface, native: .bar)
     }
 }
 

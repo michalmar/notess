@@ -239,6 +239,7 @@ struct RootView: View {
                 )
             }
         }
+        .themedBackground(\.background, native: Color.clear)
     }
 }
 

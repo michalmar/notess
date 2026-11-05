@@ -4,9 +4,12 @@ import AppKit
 ///
 /// Built by `MarkdownEditor` from the Settings font and size; changing the
 /// style restyles the whole note. The default colours
-/// are dynamic system colours, so they follow the light/dark appearance.
+/// are dynamic system colours, so they follow the light/dark appearance; a
+/// theme replaces them without touching fonts or geometry.
 public struct MarkdownEditorStyle: Equatable {
     public struct Colors: Equatable {
+        /// The editor's surface behind the text.
+        public var background: NSColor
         public var text: NSColor
         /// Markdown markup characters: visible but dimmed.
         public var syntaxMarker: NSColor
@@ -20,8 +23,13 @@ public struct MarkdownEditorStyle: Equatable {
         /// The grid lines of a table.
         public var tableBorder: NSColor
         public var tableHeaderBackground: NSColor
+        /// The selected-text highlight; nil keeps AppKit's native one.
+        public var selection: NSColor?
+        /// The caret; nil keeps AppKit's native one.
+        public var insertionPoint: NSColor?
 
         public init(
+            background: NSColor = .textBackgroundColor,
             text: NSColor = .textColor,
             syntaxMarker: NSColor = .tertiaryLabelColor,
             link: NSColor = .linkColor,
@@ -32,8 +40,11 @@ public struct MarkdownEditorStyle: Equatable {
             completedTask: NSColor = .secondaryLabelColor,
             codeBackground: NSColor = .quaternarySystemFill,
             tableBorder: NSColor = .separatorColor,
-            tableHeaderBackground: NSColor = .quaternarySystemFill
+            tableHeaderBackground: NSColor = .quaternarySystemFill,
+            selection: NSColor? = nil,
+            insertionPoint: NSColor? = nil
         ) {
+            self.background = background
             self.text = text
             self.syntaxMarker = syntaxMarker
             self.link = link
@@ -45,7 +56,19 @@ public struct MarkdownEditorStyle: Equatable {
             self.codeBackground = codeBackground
             self.tableBorder = tableBorder
             self.tableHeaderBackground = tableHeaderBackground
+            self.selection = selection
+            self.insertionPoint = insertionPoint
         }
+    }
+
+    /// The style with the native surface colours: what the styled text depends on.
+    var withoutSurfaceColors: MarkdownEditorStyle {
+        var style = self
+        let native = Colors()
+        style.colors.background = native.background
+        style.colors.selection = native.selection
+        style.colors.insertionPoint = native.insertionPoint
+        return style
     }
 
     /// The body font; headings and code are derived from its size.

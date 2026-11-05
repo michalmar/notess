@@ -11,7 +11,7 @@ struct AppSettingsTests {
         return defaults
     }
 
-    @Test("each application theme persists without changing font or zoom", arguments: ["system", "light", "dark"])
+    @Test("each application theme persists without changing font or zoom", arguments: ["system", "light", "dark", "noirEssence"])
     func themePersists(rawValue: String) throws {
         let defaults = try isolatedDefaults()
         let settings = AppSettings(defaults: defaults)

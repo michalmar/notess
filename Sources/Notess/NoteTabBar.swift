@@ -22,7 +22,7 @@ struct NoteTabBar: View {
             .padding(.vertical, 6)
         }
         .scrollIndicators(.hidden)
-        .background(.bar)
+        .themedBackground(\.surface, native: .bar)
     }
 }
 
@@ -31,6 +31,7 @@ private struct NoteTab: View {
     let isActive: Bool
     let onSelect: () -> Void
     let onClose: () -> Void
+    @Environment(\.themePalette) private var palette
 
     var body: some View {
         HStack(spacing: 6) {
@@ -39,7 +40,7 @@ private struct NoteTab: View {
                     if document.externalChange != nil {
                         Image(systemName: "exclamationmark.triangle.fill")
                             .font(.system(size: 9))
-                            .foregroundStyle(.yellow)
+                            .themedForeground(\.warning, native: .yellow)
                             .accessibilityHidden(true)
                     } else {
                         Image(systemName: "circle.fill")
@@ -69,9 +70,13 @@ private struct NoteTab: View {
         .padding(.vertical, 5)
         .background(
             RoundedRectangle(cornerRadius: 6)
-                .fill(isActive ? Color.accentColor.opacity(0.16) : Color.clear)
+                .fill(isActive ? activeTabFill : Color.clear)
         )
         .help(helpText)
+    }
+
+    private var activeTabFill: Color {
+        palette.map { Color(nsColor: $0.accent).opacity(0.24) } ?? Color.accentColor.opacity(0.16)
     }
 
     private var accessibilityLabel: String {

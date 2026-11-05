@@ -60,7 +60,7 @@ struct SettingsView: View {
                     ThemePicker(selection: $settings.theme)
                         .fixedSize()
                 }
-                Text("Podle systému sleduje vzhled macOS. Light a Dark platí pro celou aplikaci.")
+                Text("Podle systému sleduje vzhled macOS. Light, Dark a vždy světlé Noir Essence platí pro celou aplikaci a mění jen barvy.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -86,8 +86,10 @@ struct SettingsView: View {
             }
         }
         .formStyle(.grouped)
+        .scrollContentBackground(model.settings.theme.palette == nil ? .automatic : .hidden)
         .padding()
         .frame(width: 500)
+        .themedBackground(\.surface, native: Color.clear)
         .modifier(ApplicationTheme(theme: model.settings.theme))
         .task {
             autodetectedCLIPath = await Task.detached(priority: .utility) {
@@ -125,16 +127,16 @@ struct SettingsView: View {
                 exists ? "Nastavená cesta je dostupná" : "Copilot CLI na zadané cestě nebyl nalezen",
                 systemImage: exists ? "checkmark.circle.fill" : "exclamationmark.triangle.fill"
             )
-            .foregroundStyle(exists ? .green : .red)
+            .themedForeground(exists ? \.success : \.error, native: exists ? Color.green : Color.red)
         } else if let autodetectedCLIPath {
             Label(
                 "Nalezeno: \(autodetectedCLIPath.path(percentEncoded: false))",
                 systemImage: "checkmark.circle.fill"
             )
-            .foregroundStyle(.green)
+            .themedForeground(\.success, native: .green)
         } else {
             Label("Copilot CLI nebyl nalezen", systemImage: "exclamationmark.triangle.fill")
-                .foregroundStyle(.red)
+                .themedForeground(\.error, native: .red)
         }
     }
 
