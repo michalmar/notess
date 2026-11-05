@@ -34,8 +34,8 @@ public final class TaskOverviewBrowser {
             return members.isEmpty ? nil : Group(filter: filter, tasks: members)
         }
     }
-    /// The selected Task row, kept while the reader opens its note and comes
-    /// back, so the list returns to it; a new filter starts at the top.
+    /// The selected Task row, kept independently of the presentation's scroll
+    /// position while the reader opens its note; a new filter clears selection.
     public var selectedTaskID: TaskOccurrence.ID?
 
     @ObservationIgnored private var index: SearchIndex?

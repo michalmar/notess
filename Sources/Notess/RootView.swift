@@ -15,35 +15,49 @@ struct RootView: View {
                         .navigationSplitViewColumnWidth(min: 200, ideal: 240, max: 400)
                 } detail: {
                     HStack(spacing: 0) {
-                        switch model.sidebarMode {
-                        case .journal:
-                            journalDetail
-                        case .tags:
-                            TagTimelineView(
-                                browser: model.tagTimeline,
-                                settings: model.settings,
-                                isIndexing: model.isIndexing,
-                                indexFailure: model.searchIndexFailure,
-                                noteURL: model.noteURL(for:),
-                                openImagePreview: model.presentImagePreview,
-                                open: model.openTimelineSection,
-                                openTag: model.openTagTimeline,
-                                openWikiLink: { link, section in
-                                    model.openWikiLink(link, sourceRelativePath: section.relativePath)
-                                },
-                                openWebLink: { url in
-                                    if !SystemWebLinkOpener.open(url) {
-                                        model.errorMessage = "Odkaz se nepodařilo otevřít v prohlížeči."
+                        ZStack {
+                            // Keep the native list mounted so returning preserves its
+                            // viewport, independently of which Task was selected.
+                            if model.sidebarMode == .tasks || model.taskOverview.tasks != .loading {
+                                TaskOverviewView(
+                                    browser: model.taskOverview,
+                                    isIndexing: model.isIndexing,
+                                    indexFailure: model.searchIndexFailure,
+                                    open: model.openTask
+                                )
+                                .opacity(model.sidebarMode == .tasks ? 1 : 0)
+                                .allowsHitTesting(model.sidebarMode == .tasks)
+                                .disabled(model.sidebarMode != .tasks)
+                                .accessibilityHidden(model.sidebarMode != .tasks)
+                            }
+                            switch model.sidebarMode {
+                            case .journal:
+                                journalDetail
+                            case .tags:
+                                TagTimelineView(
+                                    browser: model.tagTimeline,
+                                    settings: model.settings,
+                                    isIndexing: model.isIndexing,
+                                    indexFailure: model.searchIndexFailure,
+                                    noteURL: model.noteURL(for:),
+                                    openImagePreview: model.presentImagePreview,
+                                    open: model.openTimelineSection,
+                                    openTag: model.openTagTimeline,
+                                    openWikiLink: { link, section in
+                                        model.openWikiLink(link, sourceRelativePath: section.relativePath)
+                                    },
+                                    openWebLink: { url in
+                                        if !SystemWebLinkOpener.open(url) {
+                                            model.errorMessage = "Odkaz se nepodařilo otevřít v prohlížeči."
+                                        }
                                     }
-                                }
-                            )
-                        case .tasks:
-                            TaskOverviewView(
-                                browser: model.taskOverview,
-                                isIndexing: model.isIndexing,
-                                indexFailure: model.searchIndexFailure,
-                                open: model.openTask
-                            )
+                                )
+                            case .tasks:
+                                Color.clear
+                                    .allowsHitTesting(false)
+                                    .navigationTitle(model.taskOverview.filter.title)
+                                    .navigationSubtitle("")
+                            }
                         }
                         if model.isBrainConversationPresented {
                             Divider()

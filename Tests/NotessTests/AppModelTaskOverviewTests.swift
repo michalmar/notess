@@ -229,13 +229,16 @@ struct AppModelTaskOverviewTests {
         #expect(document.text == "Úvod\n" + saved)
     }
 
-    @Test("when unsaved edits added an identical Task the note opens with a warning and nothing is revealed")
-    func ambiguousTarget() async throws {
+    @Test("changed duplicate groups open with a warning and no reveal, even when the count is unchanged", arguments: [
+        "# Porada\n\n- [ ] Zavolat\n- [ ] Zavolat\n- [ ] Zavolat\n",
+        "# Porada\n\n- [ ] Zavolat\n  Druhý klient\n- [ ] Zavolat\n  Nový klient\n",
+    ])
+    func ambiguousTarget(edited: String) async throws {
         let fixture = try TagGroupFixture()
-        try fixture.write("# Porada\n\n- [ ] Zavolat\n- [ ] Zavolat\n", to: Self.plan)
+        let saved = "# Porada\n\n- [ ] Zavolat\n  První klient\n- [ ] Zavolat\n  Druhý klient\n"
+        try fixture.write(saved, to: Self.plan)
         let model = try await makeModelShowingTasks(fixture)
         let document = try #require(model.openNote(at: url(fixture, Self.plan)))
-        let edited = "# Porada\n\n- [ ] Zavolat\n- [ ] Zavolat\n- [ ] Zavolat\n"
         document.text = edited
         model.reveal = EditorReveal(documentID: document.id, range: NSRange(location: 0, length: 1))
         model.sidebarMode = .tasks
@@ -249,6 +252,7 @@ struct AppModelTaskOverviewTests {
         #expect(model.errorMessage?.contains("víckrát") == true, "says why the Task cannot be told apart")
         #expect(document.text == edited)
         #expect(document.hasUnsavedChanges)
+        #expect(try fixture.read(Self.plan) == saved)
     }
 
     @Test("when unsaved edits changed or removed the Task the note opens for inspection with a warning")

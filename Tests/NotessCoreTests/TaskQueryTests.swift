@@ -321,6 +321,43 @@ final class TaskQueryTests {
         return try await index.tasks(.open) + index.tasks(.completed)
     }
 
+    @Test("a nested Task retains its enclosing Task across fenced code in the parent's list item")
+    func enclosingTasksAcrossCode() async throws {
+        let saved = """
+            - [x] Parent
+              ```
+              - [ ] Example, not a Task
+              ```
+              - [ ] Child
+            - [ ] Sibling
+            """
+        let tasks = try await savedTasks(saved)
+        #expect(tasks.map(\.text) == ["Child", "Sibling", "Parent"])
+        #expect(tasks.map(\.enclosingTasks) == [["Parent"], [], []])
+    }
+
+    @Test("quoted nested Tasks retain enclosing context without leaking it to other lists")
+    func enclosingQuotedTasks() async throws {
+        let saved = """
+            > - [x] Parent
+            >   - [ ] Child
+            >     - [ ] Grandchild
+            >
+            > - [ ] Other parent
+            >   - [ ] Child
+
+            - [ ] Outside
+            """
+        let tasks = try await savedTasks(saved)
+        #expect(tasks.map(\.text) == ["Child", "Grandchild", "Other parent", "Child", "Outside", "Parent"])
+        #expect(tasks.map(\.enclosingTasks) == [["Parent"], ["Parent", "Child"], [], ["Other parent"], [], []])
+        for task in tasks {
+            #expect(task.locate(in: "Introduction\n\n" + saved) == .found(NSRange(
+                location: task.boxLocation + ("Introduction\n\n" as NSString).length, length: 3
+            )))
+        }
+    }
+
     @Test("an unchanged note locates the Task at its saved box; unsaved text before it moves it with the text")
     func locatingAfterInsertedAndRemovedText() async throws {
         let saved = "# Úkoly\n\nÚvod, který zmizí.\n\n- [ ] První\n- [ ] Druhý\n"
@@ -394,6 +431,30 @@ final class TaskQueryTests {
         #expect(first.locate(in: saved + "- [ ] Zavolat\n") == .ambiguous)
         // A completed or reopened box is still the same Task.
         #expect(boxRange(only.locate(in: saved.replacingOccurrences(of: "[ ] Jediný", with: "[x] Jediný"))) != nil)
+    }
+
+    @Test("unchanged duplicate counts do not prove identity after reordering or replacing Tasks")
+    func locatingReorderedDuplicates() async throws {
+        let saved = "# Calls\n\n- [ ] Call\n  First client\n- [x] Call\n  Second client\n"
+        let tasks = try await savedTasks(saved)
+        let open = try #require(tasks.first { !$0.isCompleted })
+        let completed = try #require(tasks.first { $0.isCompleted })
+        let reordered = "# Calls\n\n- [x] Call\n  Second client\n- [ ] Call\n  First client\n"
+        let replaced = "# Calls\n\n- [x] Call\n  Second client\n- [ ] Call\n  New client\n"
+
+        for current in [reordered, replaced] {
+            #expect(open.locate(in: current) == .ambiguous)
+            #expect(completed.locate(in: current) == .ambiguous)
+        }
+        #expect(open.locate(in: saved) == .found(NSRange(location: open.boxLocation, length: 3)))
+        #expect(completed.locate(in: saved) == .found(NSRange(location: completed.boxLocation, length: 3)))
+        let reopened = makeIndex()
+        try await reopened.synchronize()
+        let cached = try #require(try await reopened.tasks(.open).first)
+        #expect(cached == open)
+        #expect(cached.locate(in: replaced) == .ambiguous)
+        try await reopened.rebuild()
+        #expect(try await reopened.tasks(.open).first == open)
     }
 
     private func boxRange(_ location: TaskOccurrence.Location) -> NSRange? {

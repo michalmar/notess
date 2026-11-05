@@ -50,12 +50,14 @@ public struct TaskOccurrence: Hashable, Sendable, Identifiable {
     /// heading path and enclosing Tasks, and how many there were.
     let twinIndex: Int
     let twinCount: Int
+    let twinFingerprint: String?
 
     public var id: String { "\(relativePath)#\(ordinal)" }
 
     public init(
         relativePath: String, source: TaskSource, ordinal: Int, text: String, isCompleted: Bool, boxLocation: Int,
-        headingPath: [String] = [], enclosingTasks: [String] = [], twinIndex: Int = 0, twinCount: Int = 1
+        headingPath: [String] = [], enclosingTasks: [String] = [], twinIndex: Int = 0, twinCount: Int = 1,
+        twinFingerprint: String? = nil
     ) {
         self.relativePath = relativePath
         self.source = source
@@ -68,6 +70,7 @@ public struct TaskOccurrence: Hashable, Sendable, Identifiable {
         self.enclosingTasks = enclosingTasks
         self.twinIndex = twinIndex
         self.twinCount = twinCount
+        self.twinFingerprint = twinFingerprint
     }
 
     /// Completed Tasks never acquire an open urgency category.
@@ -95,19 +98,26 @@ public struct TaskOccurrence: Hashable, Sendable, Identifiable {
         case found(NSRange)
         /// No Task with this text under the same headings and enclosing Tasks.
         case missing
-        /// Identical Tasks were added or removed, so which one this is cannot be told.
+        /// Identical Tasks or their surrounding source changed, so identity is uncertain.
         case ambiguous
     }
 
     /// Finds this saved Task in `currentText` by its text, heading path and
     /// enclosing Tasks, never by a saved offset or the first matching text.
     /// Among identical Tasks, its saved position counts only while their
-    /// number is unchanged. A changed checkbox state is still the same Task.
+    /// count and source span are unchanged. Unique Tasks can change checkbox state.
     public func locate(in currentText: String) -> Location {
         let twins = MarkdownTask.Twins(text: text, headingPath: headingPath, enclosingTasks: enclosingTasks)
-        let candidates = MarkdownTask.tasks(in: currentText).filter { $0.twins == twins }
+        let current = MarkdownTask.tasks(in: currentText)
+        let candidates = current.filter { $0.twins == twins }
         if candidates.isEmpty { return .missing }
         guard candidates.count == twinCount, twinIndex < candidates.count else { return .ambiguous }
+        if twinCount > 1 {
+            let ranks = MarkdownTask.twinRanks(of: current, in: currentText as NSString)
+            guard let twinFingerprint, ranks[candidates[twinIndex].ordinal].fingerprint == twinFingerprint else {
+                return .ambiguous
+            }
+        }
         return .found(candidates[twinIndex].boxRange)
     }
 

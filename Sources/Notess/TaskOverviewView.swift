@@ -37,8 +37,6 @@ struct TaskOverviewView: View {
     var body: some View {
         content
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .navigationTitle(browser.filter.title)
-            .navigationSubtitle("")
     }
 
     @ViewBuilder
@@ -69,30 +67,23 @@ struct TaskOverviewView: View {
     }
 
     private var taskList: some View {
-        ScrollViewReader { proxy in
-            List(selection: $browser.selectedTaskID) {
-                ForEach(browser.groups) { group in
-                    if browser.filter == .open {
-                        Section(group.filter.title) {
-                            rows(group.tasks)
-                        }
-                    } else {
+        List(selection: $browser.selectedTaskID) {
+            ForEach(browser.groups) { group in
+                if browser.filter == .open {
+                    Section(group.filter.title) {
                         rows(group.tasks)
                     }
+                } else {
+                    rows(group.tasks)
                 }
             }
-            .contextMenu(forSelectionType: TaskOccurrence.ID.self) { ids in
-                if let task = ids.first.flatMap(browser.listed) {
-                    Button("Otevřít poznámku") { open(task) }
-                }
-            } primaryAction: { ids in
-                if let task = ids.first.flatMap(browser.listed) { open(task) }
+        }
+        .contextMenu(forSelectionType: TaskOccurrence.ID.self) { ids in
+            if let task = ids.first.flatMap(browser.listed) {
+                Button("Otevřít poznámku") { open(task) }
             }
-            .task {
-                // Back from the opened note: show the row the reader left from.
-                await Task.yield()
-                if let id = browser.selectedTaskID { proxy.scrollTo(id, anchor: .center) }
-            }
+        } primaryAction: { ids in
+            if let task = ids.first.flatMap(browser.listed) { open(task) }
         }
     }
 

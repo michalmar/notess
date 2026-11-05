@@ -88,6 +88,36 @@ struct TaskOverviewPresentationTests {
         #expect(returned.selectedRow == targetRow, "the opened Task's row is still selected")
     }
 
+    @Test("returning restores the exact viewport rather than centering the selected Task")
+    func preservesViewportOffset() async throws {
+        let fixture = try SearchPresentationFixture()
+        let saved = (1...Self.count).map { String(format: "- [ ] Task %02d", $0) }.joined(separator: "\n")
+        try fixture.write(saved, to: Self.plan)
+        let harness = try await fixture.makeHarness(opening: Self.plan)
+        let table = try await showTasks(harness, rows: Self.count)
+        harness.window.makeFirstResponder(table)
+        for _ in 0...30 { pressArrow(harness, down: true) }
+        await harness.settle()
+        let selectedRow = table.selectedRow
+        let scroll = try #require(table.enclosingScrollView)
+        scroll.contentView.scroll(to: NSPoint(x: 0, y: table.rect(ofRow: selectedRow).minY + 7))
+        scroll.reflectScrolledClipView(scroll.contentView)
+        await harness.settle()
+        let before = table.visibleRect
+        #expect(before.minY > 0)
+        harness.pressReturn()
+        try await harness.waitUntil { harness.model.sidebarMode == .journal && harness.editor != nil }
+        await harness.settle()
+        #expect(harness.window.firstResponder === harness.editor, "the inactive list does not retain keyboard focus")
+
+        let returned = try await showTasks(harness, rows: Self.count)
+
+        #expect(returned.selectedRow == selectedRow)
+        #expect(abs(returned.visibleRect.minY - before.minY) <= 1,
+                "viewport before \(before), after \(returned.visibleRect)")
+        #expect(try String(contentsOf: fixture.rootURL.appending(path: Self.plan), encoding: .utf8) == saved)
+    }
+
     @Test("date groups and errors are displayed read-only; the sidebar filters and calendar notifications reclassify saved Tasks")
     func datesAndRollover() async throws {
         let fixture = try SearchPresentationFixture()
