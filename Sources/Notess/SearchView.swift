@@ -104,7 +104,10 @@ struct SearchView: View {
                         }
                     }
                     .listStyle(.plain)
-                    .scrollContentBackground(palette == nil ? .automatic : .hidden)
+                    // Draw the list's background here for every theme: an
+                    // explicit scrollContentBackground replaces AppKit's own.
+                    .scrollContentBackground(.hidden)
+                    .themedBackground(\.background, native: Color(nsColor: .controlBackgroundColor))
                     .onChange(of: search.selection) { _, selected in
                         guard let selected else { return }
                         proxy.scrollTo(selected)

@@ -63,11 +63,14 @@ struct BrowsingThemePresentationTests {
             switch theme {
             case "Noir Essence":
                 try expectNoirEssenceSearch(colors)
-            case "Dark":
-                #expect(colors.panel.luminance < 0.3, "dark panel: \(colors.panel)")
-                #expect(colors.listBackground.luminance < 0.3, "dark results: \(colors.listBackground)")
             default:
-                #expect(!isCream(colors.panel) && !isCream(colors.listBackground), "\(theme) is native: \(colors.panel)")
+                // Native rendering as it was before themes existed.
+                let isDark = list.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+                let (panel, results, header) = isDark ? (0.183, 0.157, 0.178) : (0.956, 1.0, 0.931)
+                #expect(colorDistance(colors.panel, NSColor(white: panel, alpha: 1)) < 0.01, "\(theme) keeps the native panel: \(colors.panel)")
+                #expect(colorDistance(colors.listBackground, NSColor(white: results, alpha: 1)) < 0.01,
+                        "\(theme) keeps the native results background: \(colors.listBackground)")
+                #expect(colorDistance(colors.header, NSColor(white: header, alpha: 1)) < 0.01, "\(theme) keeps native group headers: \(colors.header)")
                 #expect(colors.highlightPixels.orange == 0, "\(theme) highlights matches with the system accent")
             }
         }
