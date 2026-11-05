@@ -22,7 +22,8 @@ public actor SearchIndex {
     /// - 3: Sections keep their complete Markdown for the Tag Timeline.
     /// - 4: Tag Timeline spans follow heading hierarchy at every level.
     /// - 5: FTS5 prefix indexes for 1–3 characters keep short queries fast.
-    static let schemaVersion = 5
+    /// - 6: Task occurrences of Daily Entries and Free Notes (`MarkdownTask`).
+    static let schemaVersion = 6
     private static let batchSize = 50
 
     public let vault: Vault
@@ -167,6 +168,16 @@ public actor SearchIndex {
 
     private static func index(_ file: NoteFile, text raw: String, in db: SQLiteDatabase) throws {
         try Self.removeSections(of: file.relativePath, in: db)
+        if file.kind != .brainNote {
+            // Offsets refer to the note as written, so its open text can be matched against them.
+            for task in MarkdownTask.tasks(in: raw) {
+                try db.query(
+                    "INSERT INTO tasks (path, ordinal, location, completed, text) VALUES (?, ?, ?, ?, ?)",
+                    [.text(file.relativePath), .int(Int64(task.ordinal)), .int(Int64(task.boxRange.location)),
+                     .int(task.isCompleted ? 1 : 0), .text(task.text)]
+                )
+            }
+        }
         let text = raw.precomposedStringWithCanonicalMapping
         for section in SearchSection.split(text) {
             let markdown = (text as NSString).substring(with: section.range).trimmingCharacters(in: .newlines)
@@ -218,6 +229,7 @@ public actor SearchIndex {
         try db.query("DELETE FROM section_tags WHERE section_id IN (\(ids))", [.text(path)])
         try db.query("DELETE FROM sections WHERE path = ?", [.text(path)])
         try db.query("DELETE FROM timeline_sections WHERE path = ?", [.text(path)])
+        try db.query("DELETE FROM tasks WHERE path = ?", [.text(path)])
         try db.query("DELETE FROM files WHERE path = ?", [.text(path)])
     }
 
@@ -404,6 +416,32 @@ public actor SearchIndex {
         }
     }
 
+    // MARK: - Tasks
+
+    /// The Task occurrences of the indexed (saved) Daily Entries and Free
+    /// Notes that `filter` selects, one per checkbox, in source order
+    /// (`TaskOccurrence.sourceOrder`). Brain Notes hold no Tasks here.
+    public func tasks(_ filter: TaskFilter) throws -> [TaskOccurrence] {
+        let db = try openDatabase()
+        let completed: Int64 = switch filter {
+        case .open: 0
+        case .completed: 1
+        }
+        let rows = try db.query(
+            "SELECT path, ordinal, location, completed, text FROM tasks WHERE completed = ?",
+            [.int(completed)]
+        )
+        return rows.compactMap { row -> TaskOccurrence? in
+            guard let path = row[0].text, let source = TaskSource(relativePath: path),
+                  let ordinal = row[1].int, let location = row[2].int else { return nil }
+            return TaskOccurrence(
+                relativePath: path, source: source, ordinal: ordinal,
+                text: row[4].text ?? "", isCompleted: row[3].int == 1, boxLocation: location
+            )
+        }
+        .sorted(by: TaskOccurrence.sourceOrder)
+    }
+
     // MARK: - Database
 
     private func openDatabase() throws -> SQLiteDatabase {
@@ -440,6 +478,10 @@ public actor SearchIndex {
                 markdown TEXT NOT NULL, tag TEXT NOT NULL);
             CREATE INDEX IF NOT EXISTS timeline_by_tag ON timeline_sections (tag);
             CREATE INDEX IF NOT EXISTS timeline_by_path ON timeline_sections (path);
+            CREATE TABLE IF NOT EXISTS tasks (
+                path TEXT NOT NULL, ordinal INTEGER NOT NULL, location INTEGER NOT NULL,
+                completed INTEGER NOT NULL, text TEXT NOT NULL);
+            CREATE INDEX IF NOT EXISTS tasks_by_path ON tasks (path);
             CREATE VIRTUAL TABLE IF NOT EXISTS sections_fts USING fts5 (
                 title, body, tokenize = 'unicode61 remove_diacritics 2', prefix = '1 2 3');
             PRAGMA user_version = \(schemaVersion);
