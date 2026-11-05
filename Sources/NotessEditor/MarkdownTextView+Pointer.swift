@@ -3,7 +3,7 @@ import NotessCore
 
 /// The standard pointing-hand cursor over the editor's interactive targets.
 ///
-/// One mechanism serves every target: links, Tags, and heading disclosure buttons
+/// One mechanism serves every target: links, Tags, Task checkboxes and heading disclosure buttons
 /// over each button's existing frame. `NSTextView` owns a `.cursorUpdate`
 /// tracking area and re-applies the text cursor through it, which overrides
 /// cursor rects, so the text view answers `cursorUpdate` and `mouseMoved`
@@ -43,7 +43,8 @@ extension MarkdownTextView {
 
     /// The visible areas, in view coordinates, that show the pointing hand.
     func pointingHandRects() -> [NSRect] {
-        (isSelectable ? headingFolding.visibleButtonFrames : []) + linkPointingHandRects()
+        (isSelectable ? headingFolding.visibleButtonFrames : [])
+            + taskCheckboxes.hitRects + linkPointingHandRects()
     }
 
     /// The activation areas of links and Tags that are interactive right now:

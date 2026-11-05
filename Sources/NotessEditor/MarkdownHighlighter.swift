@@ -15,7 +15,8 @@ extension NSAttributedString.Key {
 /// (ADR 0001: typing must stay instant even in long notes). Markup stays
 /// visible and is only dimmed, except in tables, which are drawn as a grid
 /// (see `TableLayout`), and list markers, which become bullets and numbers
-/// with a hanging indent (see `ListLayout`).
+/// with a hanging indent (see `ListLayout`). Task markers stay in the text
+/// under native controls (see `TaskCheckboxes`).
 @MainActor
 final class MarkdownHighlighter: NSObject, NSTextStorageDelegate, NSTextLayoutManagerDelegate {
     let lexer = MarkdownLexer()
@@ -220,8 +221,11 @@ final class MarkdownHighlighter: NSObject, NSTextStorageDelegate, NSTextLayoutMa
             storage.addAttribute(.foregroundColor, value: colors.wikiLink, range: range)
         case .tag:
             storage.addAttribute(.foregroundColor, value: colors.tag, range: range)
-        case .task:
-            storage.addAttributes([.foregroundColor: colors.task, .cursor: NSCursor.pointingHand], range: range)
+        case .task(let checked):
+            storage.addAttributes(
+                [.font: style.codeFont, .foregroundColor: NSColor.clear, .notessTaskCheckbox: checked],
+                range: range
+            )
         }
     }
 
