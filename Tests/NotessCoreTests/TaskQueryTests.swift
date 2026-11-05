@@ -26,6 +26,74 @@ final class TaskQueryTests {
         tasks.map(\.text)
     }
 
+    @Test("saved Due Dates select only Open Tasks, ordered by deadline then source, with invalid input retained")
+    func dueDateFilters() async throws {
+        try vault.write("""
+            - [ ] Budoucí 📅 2040-01-01
+            - [ ] Dnes 📅 2026-11-06
+            - [ ] Včera 📅 2026-11-05
+            - [ ] Bez data
+            - [ ] Nemožné 📅 2026-02-31
+            - [ ] Konflikt 📅 2026-11-05 📅 2026-11-06
+            - [x] Hotovo 📅 2020-01-01
+            """, to: "Zeta.md")
+        try vault.write("- [ ] Shoda 📅 2026-11-05\n", to: "Alfa.md")
+        try vault.write("- [ ] Shoda 📅 2026-11-05\n", to: "Journal/2026/11/2026-11-04.md")
+        let index = makeIndex()
+        try await index.synchronize()
+        let today = Day(year: 2026, month: 11, day: 6)
+
+        let open = try await index.tasks(.open, on: today)
+        #expect(open.map(\.relativePath) == [
+            "Journal/2026/11/2026-11-04.md", "Alfa.md", "Zeta.md", "Zeta.md", "Zeta.md", "Zeta.md", "Zeta.md", "Zeta.md",
+        ])
+        #expect(open.map(\.ordinal) == [0, 0, 2, 1, 0, 3, 4, 5])
+        #expect(Set(open.map(\.id)).count == 8)
+        #expect(texts(try await index.tasks(.overdue, on: today)) == [
+            "Shoda 📅 2026-11-05", "Shoda 📅 2026-11-05", "Včera 📅 2026-11-05",
+        ])
+        #expect(texts(try await index.tasks(.today, on: today)) == ["Dnes 📅 2026-11-06"])
+        #expect(texts(try await index.tasks(.upcoming, on: today)) == ["Budoucí 📅 2040-01-01"])
+        let undated = try await index.tasks(.undated, on: today)
+        #expect(undated.map(\.dueDate.state) == [.missing, .invalid, .invalid])
+        #expect(texts(try await index.tasks(.completed, on: today)) == ["Hotovo 📅 2020-01-01"])
+    }
+
+    @Test("external date edits, removal, reopening and rebuilding retain exactly the saved interpretation")
+    func dueDateCacheLifecycle() async throws {
+        let today = Day(year: 2026, month: 11, day: 6)
+        try vault.write("- [ ] Poslat\n", to: "Plán.md")
+        let index = makeIndex()
+        try await index.synchronize()
+        #expect(try await index.tasks(.undated, on: today).first?.dueDate.state == .missing)
+
+        try vault.write("- [ ] Poslat 📅 2026-11-06\n", to: "Plán.md")
+        try await index.update(relativePaths: ["Plán.md"])
+        let dated = try await index.tasks(.today, on: today)
+        #expect(dated.first?.dueDate.state == .valid(today))
+        let reopened = makeIndex()
+        try await reopened.synchronize()
+        #expect(try await reopened.tasks(.today, on: today) == dated)
+        try await reopened.rebuild()
+        #expect(try await reopened.tasks(.today, on: today) == dated)
+
+        let invalid = "- [ ] Poslat 📅 2026-11-06 📅 2026-11-07\n"
+        try vault.write(invalid, to: "Plán.md")
+        try await reopened.update(relativePaths: ["Plán.md"])
+        #expect(try await reopened.tasks(.today, on: today).isEmpty)
+        #expect(try await reopened.tasks(.undated, on: today).first?.dueDate.state == .invalid)
+        try await reopened.rebuild()
+        #expect(try await reopened.tasks(.undated, on: today).first?.dueDate.state == .invalid)
+        #expect(try vault.read("Plán.md") == invalid)
+
+        try vault.write("- [ ] Poslat\n", to: "Plán.md")
+        try await reopened.update(relativePaths: ["Plán.md"])
+        #expect(try await reopened.tasks(.undated, on: today).first?.dueDate.state == .missing)
+        try FileManager.default.removeItem(at: vault.vault.rootURL.appendingPathComponent("Plán.md"))
+        try await reopened.update(relativePaths: ["Plán.md"])
+        #expect(try await reopened.tasks(.open, on: today).isEmpty)
+    }
+
     @Test("open Tasks come from saved Daily Entries newest first, then Free Notes in any folder by name, never Brain Notes")
     func openTasksAcrossTheVault() async throws {
         try vault.write("# 2026-11-03\n\n- [ ] Starší\n", to: "Journal/2026/11/2026-11-03.md")

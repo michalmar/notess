@@ -68,6 +68,13 @@ struct RootView: View {
                 .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
                     model.reconcileWithDisk()
                     model.synchronizeSearchIndex()
+                    model.refreshTaskOverview()
+                }
+                .onReceive(NotificationCenter.default.publisher(for: .NSCalendarDayChanged)) { _ in
+                    model.refreshTaskOverview()
+                }
+                .onReceive(NotificationCenter.default.publisher(for: .NSSystemTimeZoneDidChange)) { _ in
+                    model.refreshTaskOverview()
                 }
                 .toolbar {
                     ToolbarItemGroup(placement: .primaryAction) {
