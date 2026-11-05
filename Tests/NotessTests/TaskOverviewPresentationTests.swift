@@ -249,6 +249,91 @@ struct TaskOverviewPresentationTests {
         #expect(returned.selectedRow == row)
         #expect(returned.rows(in: returned.visibleRect).contains(row), "the opened Task's row is in view again")
     }
+
+    @Test("a rendered Due Date edited in the source editor reaches the overview only after Cmd+S")
+    func editRenderedDueDateThenSave() async throws {
+        let fixture = try SearchPresentationFixture()
+        let saved = "# Plán\n\n- [ ] Poslat nabídku 📅 2026-11-06\n"
+        try fixture.write(saved, to: Self.plan)
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        let harness = try await fixture.makeHarness(
+            opening: Self.plan,
+            now: { ISO8601DateFormatter().date(from: "2026-11-06T12:00:00Z")! },
+            calendar: { calendar }
+        )
+        let model = harness.model
+        let url = fixture.rootURL.appending(path: Self.plan)
+        func overviewTask() -> TaskOccurrence? {
+            guard case .loaded(let tasks) = model.taskOverview.tasks else { return nil }
+            return tasks.first
+        }
+        model.sidebarMode = .tasks
+        try await harness.waitUntil { overviewTask()?.category(on: model.taskOverview.today) == .today }
+        model.sidebarMode = .journal
+        try await harness.waitUntil { harness.editor != nil }
+        await harness.settle()
+
+        let editor = try #require(harness.editor)
+        harness.window.makeFirstResponder(editor)
+        editor.setSelectedRange(NSRange(location: 0, length: 0))
+        try await harness.waitUntil { editor.taskDueDateChips.visibleChips.count == 1 }
+        let chip = try #require(editor.taskDueDateChips.visibleChips.first)
+        #expect(chip.range == (saved as NSString).range(of: "📅 2026-11-06"))
+
+        // The chip is on top at its date, and a click there lands in the Markdown date.
+        let content = try #require(harness.window.contentView)
+        let frameView = try #require(content.superview)
+        let center = NSPoint(x: chip.frame.midX, y: chip.frame.midY)
+        let hit = try #require(content.hitTest(frameView.convert(editor.convert(center, to: nil), from: nil)))
+        #expect(hit !== editor && hit.isDescendant(of: editor))
+        let index = editor.characterIndexForInsertion(at: center)
+        #expect(NSLocationInRange(index, chip.range) || index == chip.range.upperBound)
+        editor.setSelectedRange(NSRange(location: index, length: 0))
+        try await harness.waitUntil { editor.taskDueDateChips.visibleChips.isEmpty }
+        #expect(model.document?.hasUnsavedChanges == false, "showing the Markdown changes nothing")
+
+        let day = NSRange(location: chip.range.upperBound - 2, length: 2)
+        editor.setSelectedRange(day)
+        harness.type("05")
+        let edited = "# Plán\n\n- [ ] Poslat nabídku 📅 2026-11-05\n"
+        #expect(editor.string == edited)
+        #expect(model.document?.hasUnsavedChanges == true)
+        editor.setSelectedRange(NSRange(location: 0, length: 0))
+        try await harness.waitUntil { editor.taskDueDateChips.visibleChips.first?.label == Day(year: 2026, month: 11, day: 5).dueDateLabel }
+        #expect(try String(contentsOf: url, encoding: .utf8) == saved, "nothing is written before Cmd+S")
+
+        model.sidebarMode = .tasks
+        await harness.settle()
+        try await harness.waitUntil { overviewTask() != nil }
+        #expect(overviewTask()?.dueDate.day == Day(year: 2026, month: 11, day: 6), "the overview shows saved content only")
+        model.sidebarMode = .journal
+        try await harness.waitUntil { harness.editor != nil }
+
+        #expect(model.save())
+        #expect(try String(contentsOf: url, encoding: .utf8) == edited)
+        model.sidebarMode = .tasks
+        try await harness.waitUntil { overviewTask()?.dueDate.day == Day(year: 2026, month: 11, day: 5) }
+        #expect(overviewTask()?.category(on: model.taskOverview.today) == .overdue)
+        let table = try #require(tasksTable(harness, rows: 1))
+        await harness.settle()
+        let text = try renderedLabels(table.enclosingScrollView ?? table).map(\.text)
+        #expect(text.contains(folded(TaskFilter.overdue.title)), "rendered text: \(text)")
+
+        // Removing the date and saving leaves the Task undated.
+        model.sidebarMode = .journal
+        try await harness.waitUntil { harness.editor != nil }
+        let shown = try #require(harness.editor)
+        let marker = (shown.string as NSString).range(of: " 📅 2026-11-05")
+        shown.setSelectedRange(marker)
+        shown.insertText("", replacementRange: marker)
+        #expect(shown.string == "# Plán\n\n- [ ] Poslat nabídku\n")
+        #expect(try String(contentsOf: url, encoding: .utf8) == edited)
+        #expect(model.save())
+        model.sidebarMode = .tasks
+        try await harness.waitUntil { overviewTask()?.dueDate.state == .missing }
+        #expect(overviewTask()?.category(on: model.taskOverview.today) == .undated)
+    }
 }
 
 @MainActor
