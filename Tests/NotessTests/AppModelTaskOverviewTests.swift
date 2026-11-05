@@ -176,22 +176,115 @@ struct AppModelTaskOverviewTests {
         #expect(model.reveal?.range.location == ranni.boxLocation)
     }
 
-    @Test("when unsaved edits moved or changed the Task, the note opens with a warning and nothing unrelated is revealed")
-    func unsafeLocation() async throws {
+    private func revealedLine(_ model: AppModel, in document: NoteDocument) -> String? {
+        guard let reveal = model.reveal, reveal.documentID == AnyHashable(document.id) else { return nil }
+        let string = document.text as NSString
+        guard string.substring(with: reveal.range) == "[ ]" || string.substring(with: reveal.range) == "[x]" else { return nil }
+        return string.substring(with: string.lineRange(for: reveal.range)).trimmingCharacters(in: .newlines)
+    }
+
+    @Test("unsaved text inserted and removed around the Task moves the reveal with it; the dirty tab is reused untouched")
+    func relocatesInDirtyTab() async throws {
         let fixture = try makeFixture()
         let model = try await makeModelShowingTasks(fixture)
+        let saved = try fixture.read(Self.plan)
         let document = try #require(model.openNote(at: url(fixture, Self.plan)))
-        document.text = "# Plán\n\nÚvod navíc\n- [ ] První\n- [ ] Druhý\n"
+        let edited = "# Plán\n\n🧑‍💻 Úvod navíc s Cafe\u{301}\n- [ ] Vložený\n- [ ] Druhý\n"
+        document.text = edited
+        let tabs = model.tabSession.documents.map(\.id)
         model.sidebarMode = .tasks
-        try await waitForTasks(model) { $0.contains("Druhý") }
         let second = try #require(listed(model)?.first { $0.text == "Druhý" })
 
         model.openTask(second)
 
         #expect(model.document?.id == document.id)
+        #expect(model.tabSession.documents.map(\.id) == tabs)
+        #expect(revealedLine(model, in: document) == "- [ ] Druhý")
+        #expect(model.reveal?.range.location != second.boxLocation)
+        #expect(model.errorMessage == nil)
+        #expect(document.text == edited)
+        #expect(document.hasUnsavedChanges)
+        #expect(try fixture.read(Self.plan) == saved)
+    }
+
+    @Test("repeated identical Tasks open their own occurrence, also after unsaved edits before them")
+    func repeatedTasks() async throws {
+        let fixture = try TagGroupFixture()
+        let saved = "# Porada\n\n- [ ] Zavolat\n- [ ] Zavolat\n\n## Jindy\n\n- [ ] Zavolat\n"
+        try fixture.write(saved, to: Self.plan)
+        let model = try await makeModelShowingTasks(fixture)
+        let calls = try #require(listed(model)).filter { $0.text == "Zavolat" }
+        #expect(calls.count == 3)
+        #expect(calls.map(\.headingPath) == [["Porada"], ["Porada"], ["Porada", "Jindy"]])
+
+        let document = try #require(model.openNote(at: url(fixture, Self.plan)))
+        document.text = "Úvod\n" + saved
+        let shift = ("Úvod\n" as NSString).length
+        for call in calls {
+            model.sidebarMode = .tasks
+            model.openTask(call)
+            #expect(model.reveal?.range == NSRange(location: call.boxLocation + shift, length: 3))
+            #expect(model.errorMessage == nil)
+        }
+        #expect(document.text == "Úvod\n" + saved)
+    }
+
+    @Test("when unsaved edits added an identical Task the note opens with a warning and nothing is revealed")
+    func ambiguousTarget() async throws {
+        let fixture = try TagGroupFixture()
+        try fixture.write("# Porada\n\n- [ ] Zavolat\n- [ ] Zavolat\n", to: Self.plan)
+        let model = try await makeModelShowingTasks(fixture)
+        let document = try #require(model.openNote(at: url(fixture, Self.plan)))
+        let edited = "# Porada\n\n- [ ] Zavolat\n- [ ] Zavolat\n- [ ] Zavolat\n"
+        document.text = edited
+        model.reveal = EditorReveal(documentID: document.id, range: NSRange(location: 0, length: 1))
+        model.sidebarMode = .tasks
+        let first = try #require(listed(model)?.first)
+
+        model.openTask(first)
+
+        #expect(model.document?.id == document.id)
+        #expect(model.reveal == nil)
+        #expect(model.errorMessage?.contains("Zavolat") == true)
+        #expect(model.errorMessage?.contains("víckrát") == true, "says why the Task cannot be told apart")
+        #expect(document.text == edited)
+        #expect(document.hasUnsavedChanges)
+    }
+
+    @Test("when unsaved edits changed or removed the Task the note opens for inspection with a warning")
+    func changedTarget() async throws {
+        let fixture = try makeFixture()
+        let model = try await makeModelShowingTasks(fixture)
+        let document = try #require(model.openNote(at: url(fixture, Self.plan)))
+        let edited = "# Plán\n\n- [ ] První\n- [ ] Druhý, přepsaný\n"
+        document.text = edited
+        model.sidebarMode = .tasks
+        let second = try #require(listed(model)?.first { $0.text == "Druhý" })
+
+        model.openTask(second)
+
+        #expect(model.document?.id == document.id)
+        #expect(model.sidebarMode == .journal)
         #expect(model.reveal == nil)
         #expect(model.errorMessage?.contains("Druhý") == true)
-        #expect(document.hasUnsavedChanges)
+        #expect(document.text == edited)
+    }
+
+    @Test("same-named Free Notes in different folders open their own source")
+    func sameNamedNotes() async throws {
+        let fixture = try TagGroupFixture()
+        try fixture.write("# Plán\n\n- [ ] Zavolat\n", to: "Plán.md")
+        try fixture.write("# Plán\n\n- [ ] Zavolat\n", to: Self.plan)
+        let model = try await makeModelShowingTasks(fixture)
+        let tasks = try #require(listed(model))
+        #expect(tasks.map(\.source) == [.freeNote(name: "Plán", folder: ""), .freeNote(name: "Plán", folder: "Projekty")])
+
+        for (task, path) in zip(tasks, ["Plán.md", Self.plan]) {
+            model.sidebarMode = .tasks
+            model.openTask(task)
+            #expect(model.document?.fileURL.standardizedFileURL == url(fixture, path).standardizedFileURL)
+            #expect(model.reveal?.range.location == task.boxLocation)
+        }
     }
 
     @Test("a Task whose note was deleted creates no note and says so")

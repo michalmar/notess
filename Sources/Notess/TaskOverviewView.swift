@@ -81,7 +81,6 @@ struct TaskOverviewView: View {
                     }
                 }
             }
-
             .contextMenu(forSelectionType: TaskOccurrence.ID.self) { ids in
                 if let task = ids.first.flatMap(browser.listed) {
                     Button("Otevřít poznámku") { open(task) }
@@ -106,8 +105,8 @@ struct TaskOverviewView: View {
     }
 }
 
-/// One Task: its status, text and source note. The status is shown, not
-/// changed here.
+/// One Task: its status, text, the Tasks it is nested in, and its source note
+/// with the headings it lies under. The status is shown, not changed here.
 private struct TaskRow: View {
     let task: TaskOccurrence
     let today: Day
@@ -120,14 +119,6 @@ private struct TaskRow: View {
         return (text as String).trimmingCharacters(in: .whitespaces)
     }
 
-    private var dateAccessibilityLabel: String {
-        switch task.dueDate.state {
-        case .missing: ""
-        case .valid(let day): "Termín: \(day.isoString)"
-        case .invalid: "Neplatný termín"
-        }
-    }
-
     @ViewBuilder
     private var dateLabel: some View {
         switch task.dueDate.state {
@@ -137,7 +128,7 @@ private struct TaskRow: View {
             Label(day.taskDateLabel, systemImage: "calendar")
                 .foregroundStyle(task.category(on: today) == .overdue ? .red : .secondary)
                 .help("📅 \(day.isoString)")
-                .accessibilityLabel(dateAccessibilityLabel)
+                .accessibilityLabel(task.dateAccessibilityLabel)
         case .invalid:
             Label("Neplatný termín", systemImage: "exclamationmark.triangle")
                 .foregroundStyle(.red)
@@ -153,9 +144,21 @@ private struct TaskRow: View {
                 Text(displayText.isEmpty ? " " : displayText)
                     .strikethrough(task.isCompleted)
                     .foregroundStyle(task.isCompleted ? .secondary : .primary)
+                if let enclosing = task.enclosingLabel {
+                    Label(enclosing, systemImage: "arrow.turn.down.right")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .help(enclosing)
+                }
                 HStack(spacing: 8) {
-                    Text(task.source.label)
+                    Text(task.locationLabel)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .help(task.locationLabel)
                     dateLabel
+                        .fixedSize()
                 }
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -171,7 +174,7 @@ private struct TaskRow: View {
         }
         .padding(.vertical, 2)
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(task.isCompleted ? "Splněný" : "Nesplněný") úkol: \(task.text), \(task.source.label), \(dateAccessibilityLabel)")
+        .accessibilityLabel(task.accessibilityLabel)
         .accessibilityHint("Otevře poznámku s úkolem")
         .accessibilityAction { open(task) }
     }
@@ -230,6 +233,35 @@ extension TaskFilter {
         case .upcoming: "Žádný uložený nesplněný úkol nemá budoucí termín."
         case .undated: "Každý uložený nesplněný úkol má platný termín."
         case .completed: "Uložené záznamy v Journalu ani poznámky nemají žádný splněný úkol."
+        }
+    }
+}
+
+extension TaskOccurrence {
+    /// The Tasks this one is nested in, outermost first; nil for a top-level Task.
+    var enclosingLabel: String? {
+        enclosingTasks.isEmpty ? nil : enclosingTasks.joined(separator: " › ")
+    }
+
+    /// The source note, then the headings the Task lies under, outermost first;
+    /// only the note for a Task before the first heading.
+    var locationLabel: String {
+        ([source.label] + [headingPath.joined(separator: " › ")].filter { !$0.isEmpty }).joined(separator: " · ")
+    }
+
+    var accessibilityLabel: String {
+        var parts = ["\(isCompleted ? "Splněný" : "Nesplněný") úkol: \(text)"]
+        if let enclosingLabel { parts.append("v úkolu \(enclosingLabel)") }
+        parts.append(locationLabel)
+        if !dateAccessibilityLabel.isEmpty { parts.append(dateAccessibilityLabel) }
+        return parts.joined(separator: ", ")
+    }
+
+    var dateAccessibilityLabel: String {
+        switch dueDate.state {
+        case .missing: ""
+        case .valid(let day): "Termín: \(day.isoString)"
+        case .invalid: "Neplatný termín"
         }
     }
 }
