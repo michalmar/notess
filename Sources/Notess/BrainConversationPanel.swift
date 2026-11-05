@@ -19,6 +19,7 @@ struct BrainConversationPanel: View {
     var onCreate: () -> Void = {}
     var onSelect: (UUID) -> Void = { _ in }
 
+    @Environment(\.themePalette) private var palette
     @State private var drafts: [UUID: String] = [:]
     @FocusState private var isInputFocused: Bool
 
@@ -27,9 +28,9 @@ struct BrainConversationPanel: View {
     var body: some View {
         VStack(spacing: 0) {
             header
-            Divider()
+            divider
             conversationSelector
-            Divider()
+            divider
             historyBanners
             if let active = state.activeConversation, active.id != state.conversation.id,
                let turn = active.activeTurn {
@@ -42,19 +43,26 @@ struct BrainConversationPanel: View {
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(12)
-                Divider()
+                divider
             }
             BrainConversationTranscript(
                 conversation: state.conversation, onOpenSource: onOpenSource, sourceCategory: sourceCategory
             )
             .id(state.conversation.id)
-            Divider()
+            divider
             input
         }
         .frame(maxHeight: .infinity)
-        .background(.background)
+        .themedForeground(\.text, native: .primary)
+        .themedBackground(\.background, native: .background)
         .onAppear { isInputFocused = true }
         .onChange(of: state.conversation.id) { isInputFocused = true }
+    }
+
+    private var divider: some View {
+        Divider().overlay {
+            if let palette { Color(nsColor: palette.separator) }
+        }
     }
 
     private var conversationSelector: some View {
@@ -88,15 +96,15 @@ struct BrainConversationPanel: View {
     private var historyBanners: some View {
         if let failure = state.historyFailure {
             banner(failure, symbol: "exclamationmark.triangle", actionTitle: "Začít novou konverzaci", action: onStartNew)
-            Divider()
+            divider
         }
         if let failure = state.persistenceFailure {
             banner(failure, symbol: "externaldrive.badge.exclamationmark")
-            Divider()
+            divider
         }
         if let failure = state.resumeFailure {
             banner(failure, symbol: "arrow.triangle.2.circlepath", actionTitle: "Pokračovat bez kontextu", action: onContinueWithoutContext)
-            Divider()
+            divider
         }
     }
 
@@ -104,7 +112,7 @@ struct BrainConversationPanel: View {
         VStack(alignment: .leading, spacing: 6) {
             Label(text, systemImage: symbol)
                 .font(.caption)
-                .foregroundStyle(.orange)
+                .themedForeground(\.strongWarning, native: .orange)
                 .fixedSize(horizontal: false, vertical: true)
             if let actionTitle {
                 Button(actionTitle, action: action)
@@ -122,12 +130,12 @@ struct BrainConversationPanel: View {
             if let refusal = state.refusal {
                 Label(refusal, systemImage: "exclamationmark.circle")
                     .font(.caption)
-                    .foregroundStyle(.orange)
+                    .themedForeground(\.strongWarning, native: .orange)
             }
             if hasUnsavedChanges {
                 Label("Agent vidí jen uložené soubory; neuložené změny nezná.", systemImage: "square.and.arrow.down")
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .themedForeground(\.secondaryText, native: .secondary)
             }
             HStack(alignment: .bottom, spacing: 8) {
                 TextField(Self.inputPlaceholder, text: Binding(
@@ -160,12 +168,12 @@ struct BrainConversationPanel: View {
                 if state.isConnectionClosing {
                     Text("Agent dokončuje předchozí práci; odeslání bude dostupné po jejím ukončení.")
                         .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .themedForeground(\.secondaryText, native: .secondary)
                 }
             }
             Text("Agent čte uložené soubory Vaultu a do Vaultu nemůže zapisovat. Mimo Vault (síť, jiné soubory) omezen není.")
                 .font(.caption2)
-                .foregroundStyle(.tertiary)
+                .themedForeground(\.secondaryText, native: .tertiary)
                 .fixedSize(horizontal: false, vertical: true)
         }
         .padding(12)
@@ -290,6 +298,7 @@ private struct BrainConversationTranscript: View {
     let conversation: BrainConversation
     let onOpenSource: (URL) -> Void
     let sourceCategory: (URL) -> String
+    @Environment(\.themePalette) private var palette
 
     var body: some View {
         ScrollViewReader { proxy in
@@ -300,6 +309,7 @@ private struct BrainConversationTranscript: View {
                             "Zeptejte se na své poznámky",
                             systemImage: "brain",
                             description: Text("Agent vychází z Brain Notes v _brain/ a podle potřeby čte uložené původní poznámky.")
+                                .foregroundStyle(palette.map { Color(nsColor: $0.secondaryText) } ?? .secondary)
                         )
                         .padding(.top, 40)
                     }
@@ -321,6 +331,7 @@ private struct BrainConversationTurnView: View {
     let turn: BrainConversation.Turn
     let onOpenSource: (URL) -> Void
     let sourceCategory: (URL) -> String
+    @Environment(\.themePalette) private var palette
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -329,7 +340,10 @@ private struct BrainConversationTurnView: View {
                 .textSelection(.enabled)
                 .padding(8)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 8))
+                .background(
+                    palette.map { AnyShapeStyle(Color(nsColor: $0.surface)) } ?? AnyShapeStyle(.quaternary.opacity(0.5)),
+                    in: RoundedRectangle(cornerRadius: 8)
+                )
             if !turn.activity.isEmpty {
                 DisclosureGroup("Činnost Agenta (\(turn.activity.count))") {
                     VStack(alignment: .leading, spacing: 4) {
@@ -340,10 +354,10 @@ private struct BrainConversationTurnView: View {
                     .padding(.top, 4)
                 }
                 .font(.caption)
-                .foregroundStyle(.secondary)
+                .themedForeground(\.secondaryText, native: .secondary)
             }
             if !turn.answer.isEmpty {
-                Text(BrainConversationAnswer.attributedText(turn.answer))
+                Text(BrainConversationAnswer.attributedText(turn.answer, palette: palette))
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .environment(\.openURL, OpenURLAction { url in
@@ -360,6 +374,7 @@ private struct BrainConversationTurnView: View {
 
 private struct BrainConversationActivityRow: View {
     let activity: BrainConversation.Activity
+    @Environment(\.themePalette) private var palette
 
     var body: some View {
         DisclosureGroup {
@@ -371,7 +386,8 @@ private struct BrainConversationActivityRow: View {
                 if let locations = activity.details.locations { detail("Soubory", .array(locations)) }
                 if let content = activity.details.content { detail("Obsah", .array(content)) }
                 if activity.details == ACPToolCallDetails() {
-                    Text("Další podrobnosti ACP neposkytlo.").foregroundStyle(.secondary)
+                    Text("Další podrobnosti ACP neposkytlo.")
+                        .themedForeground(\.secondaryText, native: .secondary)
                 }
             }
             .padding(.vertical, 4)
@@ -431,9 +447,9 @@ private struct BrainConversationActivityRow: View {
     }
 
     private var tint: Color {
-        if case .tool(_, .failed) = activity.kind { return .red }
-        if case .permission = activity.kind { return .orange }
-        return .secondary
+        if case .tool(_, .failed) = activity.kind { return palette.map { Color(nsColor: $0.error) } ?? .red }
+        if case .permission = activity.kind { return palette.map { Color(nsColor: $0.strongWarning) } ?? .orange }
+        return palette.map { Color(nsColor: $0.secondaryText) } ?? .secondary
     }
 }
 
@@ -441,6 +457,7 @@ private struct BrainConversationActivityRow: View {
 /// answers never look like completed ones.
 struct BrainConversationTurnStatus: View {
     let turn: BrainConversation.Turn
+    @Environment(\.themePalette) private var palette
 
     enum Presentation: Equatable {
         case working(String)
@@ -483,23 +500,26 @@ struct BrainConversationTurnStatus: View {
                 Text(text).monospacedDigit()
             }
             .font(.caption)
-            .foregroundStyle(.secondary)
+            .themedForeground(\.secondaryText, native: .secondary)
         case .completed(let text):
             Text(text)
                 .font(.caption)
-                .foregroundStyle(.tertiary)
+                .themedForeground(\.secondaryText, native: .tertiary)
         case .incomplete(let text):
             Label(text, systemImage: "exclamationmark.triangle")
                 .font(.caption)
-                .foregroundStyle(.orange)
+                .themedForeground(\.strongWarning, native: .orange)
         case .failed(let message):
             Label(message, systemImage: "xmark.octagon.fill")
                 .font(.callout)
-                .foregroundStyle(.red)
+                .themedForeground(\.error, native: .red)
                 .textSelection(.enabled)
                 .padding(8)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .background(.red.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
+                .background(
+                    (palette.map { Color(nsColor: $0.error) } ?? .red).opacity(palette == nil ? 0.08 : 0.04),
+                    in: RoundedRectangle(cornerRadius: 8)
+                )
         }
     }
 
