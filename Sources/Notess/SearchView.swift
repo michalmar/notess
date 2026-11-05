@@ -13,6 +13,7 @@ struct SearchView: View {
     let dismiss: () -> Void
 
     @FocusState private var isSearchFocused: Bool
+    @Environment(\.themePalette) private var palette
 
     var body: some View {
         VStack(spacing: 0) {
@@ -52,7 +53,7 @@ struct SearchView: View {
                 .frame(height: 380)
         }
         .frame(width: 640)
-        .background(.regularMaterial, in: .rect(cornerRadius: 12))
+        .background(panelBackground, in: .rect(cornerRadius: 12))
         .shadow(radius: 16)
         // Deferred one turn: focusing during the overlay's first appearance is
         // dropped while the editor still holds first responder.
@@ -97,11 +98,13 @@ struct SearchView: View {
                                         .tag(result.id)
                                         .id(result.id)
                                         .onTapGesture { open(result) }
+                                        .listRowBackground(rowBackground(isSelected: search.selection == result.id))
                                 }
                             }
                         }
                     }
                     .listStyle(.plain)
+                    .scrollContentBackground(palette == nil ? .automatic : .hidden)
                     .onChange(of: search.selection) { _, selected in
                         guard let selected else { return }
                         proxy.scrollTo(selected)
@@ -114,10 +117,22 @@ struct SearchView: View {
                         .font(.caption)
                         .padding(8)
                         .frame(maxWidth: .infinity)
-                        .background(.bar)
+                        .themedBackground(\.surface, native: .bar)
                 }
             }
         }
+    }
+
+    /// The floating panel: the palette's writing surface, or the native material.
+    private var panelBackground: AnyShapeStyle {
+        palette.map { AnyShapeStyle(Color(nsColor: $0.background)) } ?? AnyShapeStyle(.regularMaterial)
+    }
+
+    /// A custom palette marks the selected result with its accent, like the
+    /// active tab; native themes keep the system selection alone.
+    private func rowBackground(isSelected: Bool) -> Color? {
+        guard let palette else { return nil }
+        return isSelected ? Color(nsColor: palette.accent).opacity(0.24) : Color.clear
     }
 
     private func moveSelection(_ direction: MoveCommandDirection) {
@@ -138,6 +153,7 @@ struct SearchView: View {
 /// and a preview of the match.
 private struct SearchResultRow: View {
     let result: SearchResult
+    @Environment(\.themePalette) private var palette
 
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 10) {
@@ -155,12 +171,12 @@ private struct SearchResultRow: View {
                         .truncationMode(.head)
                 }
                 if result.title != nil, result.title != result.noteName || result.highlightedTitle.parts.contains(where: \.isMatch) {
-                    Text(Self.attributed(result.highlightedTitle))
+                    Text(Self.attributed(result.highlightedTitle, palette: palette))
                         .font(.callout)
                         .lineLimit(1)
                 }
                 if !result.snippet.parts.isEmpty {
-                    Text(Self.attributed(result.snippet))
+                    Text(Self.attributed(result.snippet, palette: palette))
                         .font(.callout)
                         .foregroundStyle(.secondary)
                         .lineLimit(2)
@@ -171,13 +187,14 @@ private struct SearchResultRow: View {
         .contentShape(.rect)
     }
 
-    static func attributed(_ snippet: SearchSnippet) -> AttributedString {
+    /// Matches are emphasised on the accent: the palette's, or the system's.
+    static func attributed(_ snippet: SearchSnippet, palette: ThemePalette?) -> AttributedString {
         snippet.parts.reduce(into: AttributedString()) { result, part in
             var text = AttributedString(part.text)
             if part.isMatch {
                 text.inlinePresentationIntent = .stronglyEmphasized
-                text.foregroundColor = .primary
-                text.backgroundColor = Color.accentColor.opacity(0.25)
+                text.foregroundColor = palette.map { Color(nsColor: $0.text) } ?? .primary
+                text.backgroundColor = palette.map { Color(nsColor: $0.accent).opacity(0.3) } ?? Color.accentColor.opacity(0.25)
             }
             result += text
         }
