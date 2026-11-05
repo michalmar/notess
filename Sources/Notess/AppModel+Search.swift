@@ -69,6 +69,8 @@ extension AppModel {
         searchIndexFailure = nil
         tagTimeline.connect(index)
         refreshTagTimeline()
+        taskOverview.connect(index)
+        refreshTaskOverview()
         runIndexing(index, errorPrefix: "Index hledání se nepodařilo aktualizovat") {
             try await index.synchronize()
         }

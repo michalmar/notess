@@ -67,12 +67,12 @@ struct NoteCommands: Commands {
                 .disabled(model.vault == nil || isPreviewPresented)
             Button("Najít v poznámce…") { SearchCommand.findInNote.perform(on: model) }
                 .keyboardShortcut(SearchCommand.findInNote.key, modifiers: SearchCommand.findInNote.modifiers)
-            .disabled(model.document == nil || model.sidebarMode == .tags || isPreviewPresented)
+            .disabled(model.document == nil || model.sidebarMode != .journal || isPreviewPresented)
             Button("Přegenerovat index hledání") { model.rebuildSearchIndex() }
                 .disabled(model.vault == nil || model.isIndexing || isPreviewPresented)
             Button("Zavřít tab", action: onCloseActiveTab)
                 .keyboardShortcut("w", modifiers: .command)
-                .disabled(model.document == nil || model.sidebarMode == .tags || isPreviewPresented)
+                .disabled(model.document == nil || model.sidebarMode != .journal || isPreviewPresented)
         }
         CommandGroup(after: .toolbar) {
             Divider()
@@ -106,7 +106,7 @@ struct NoteCommands: Commands {
                     .disabled(
                         model.document == nil
                             || model.document?.isReadOnly == true
-                            || model.sidebarMode == .tags
+                            || model.sidebarMode != .journal
                             || isPreviewPresented
                     )
                 }
