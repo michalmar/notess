@@ -12,14 +12,17 @@ public struct TagTimelineSection: Hashable, Sendable, Identifiable {
     public let title: String?
     /// The whole Section as saved, heading, deeper headings and image Markdown included.
     public let markdown: String
+    /// Ancestor headings outside this Section, outermost first.
+    public let enclosingHeadings: [String]
 
     public var id: String { "\(relativePath)#\(ordinal)" }
 
-    public init(relativePath: String, ordinal: Int, title: String?, markdown: String) {
+    public init(relativePath: String, ordinal: Int, title: String?, markdown: String, enclosingHeadings: [String] = []) {
         self.relativePath = relativePath
         self.ordinal = ordinal
         self.title = title
         self.markdown = markdown
+        self.enclosingHeadings = enclosingHeadings
     }
 }
 

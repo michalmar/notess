@@ -34,7 +34,8 @@ public struct ImageGallery: Equatable, Sendable {
     ///
     /// Each occurrence's headings follow the same lexer: a heading ends the
     /// preceding headings of the same or a deeper level.
-    public init(markdown: String) {
+    /// `enclosingHeadings` supplies ancestors outside a displayed heading subtree.
+    public init(markdown: String, enclosingHeadings: [String] = []) {
         let text = markdown as NSString
         let tokens = MarkdownLexer().reset(text: text)
             .filter {
@@ -55,7 +56,7 @@ public struct ImageGallery: Equatable, Sendable {
             case .image(let source):
                 occurrences.append(Occurrence(
                     source: source, range: token.range,
-                    headings: enclosing.map(\.title).filter { !$0.isEmpty }
+                    headings: enclosingHeadings + enclosing.map(\.title).filter { !$0.isEmpty }
                 ))
             default:
                 break

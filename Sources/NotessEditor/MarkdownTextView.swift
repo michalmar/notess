@@ -136,6 +136,7 @@ public final class MarkdownTextView: NSTextView {
     public var onPasteImage: ((Data, String) -> String?)?
     public var inlineImageData: ((String) -> Data?)?
     public var onOpenImagePreview: ((ImagePreviewContent) -> Void)?
+    var imageGalleryEnclosingHeadings: [String] = []
     public var onImageLoadFailure: ((String) -> Void)?
     /// Called after inline images changed the height the text needs.
     var onInlineImagesLaidOut: (() -> Void)?
@@ -1084,7 +1085,7 @@ public final class MarkdownTextView: NSTextView {
     /// Opens the preview on the note's Image Gallery, built from the current
     /// text so unsaved, folded and offscreen images are all included.
     private func open(_ preview: InlineImagePreview) {
-        let gallery = ImageGallery(markdown: string)
+        let gallery = ImageGallery(markdown: string, enclosingHeadings: imageGalleryEnclosingHeadings)
         guard let index = gallery.index(containing: preview.range.location) else {
             onOpenImagePreview?(ImagePreviewContent(source: preview.source, image: preview.image))
             return

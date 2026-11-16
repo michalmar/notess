@@ -1,4 +1,5 @@
 import AppKit
+import NotessCore
 import SwiftUI
 import Testing
 @testable import NotessEditor
@@ -330,6 +331,73 @@ struct ImageGalleryTests {
         #expect(harness.breadcrumb() == "After → Inner")
     }
 
+    @Test("Tag Timeline images retain ancestors outside the displayed Section")
+    func timelineBreadcrumbsIncludeNoteAncestors() async throws {
+        let harness = try GalleryHarness(note: """
+        # Earlier
+
+        ## Not the parent
+
+        # Project
+
+        ### Detail
+
+        ![](attachments/red.png)
+
+        ## Results
+        #gallery
+
+        ![](attachments/red.png)
+
+        #### Close-up
+
+        ![](attachments/missing.png)
+
+        ![](attachments/green.png)
+        """, notePath: "Journal/2026/11/2026-11-16.md")
+        try await harness.showTimeline(for: "gallery")
+
+        try harness.clickImage("![](attachments/red.png)")
+        #expect(harness.breadcrumb() == "Project → Results")
+        harness.press(.right)
+        #expect(harness.errorFrame() != nil)
+        #expect(harness.breadcrumb() == "Project → Results → Close-up")
+        try harness.clickButton(GalleryHarness.next)
+        #expect(harness.displayedImage() == "green")
+        #expect(harness.breadcrumb() == "Project → Results → Close-up")
+        try harness.clickButton(GalleryHarness.previous)
+        harness.press(.left)
+        #expect(harness.breadcrumb() == "Project → Results")
+        harness.pressEscape()
+        await flushMainQueue()
+        #expect(harness.savedText == harness.note)
+        #expect(harness.textChanges == 0)
+    }
+
+    @Test("Tag Timeline setext ancestors survive reopening the saved index")
+    func timelineSetextAncestorsFromCachedNote() async throws {
+        let harness = try GalleryHarness(note: """
+        Project
+        =======
+
+        Results
+        -------
+
+        ### Detail
+        #gallery
+
+        ![](attachments/blue.png)
+
+        End of the Section.
+        """, notePath: "Journal/2026/11/2026-11-16.md")
+        try await harness.showTimeline(for: "gallery")
+
+        try harness.clickImage("![](attachments/blue.png)")
+        #expect(harness.breadcrumb() == "Project → Results → Detail")
+        #expect(try harness.button(GalleryHarness.previous).isEnabled == false)
+        #expect(try harness.button(GalleryHarness.next).isEnabled == false)
+    }
+
     @Test("folded, offscreen and unsaved images keep their heading context")
     func foldedOffscreenAndUnsavedBreadcrumbs() async throws {
         let filler = (1...60).map { "Line \($0) of a long note." }.joined(separator: "\n\n")
@@ -351,9 +419,7 @@ struct ImageGalleryTests {
             height: 400
         )
         let textView = try harness.textView
-        let fold = try #require(textView.subviews.compactMap { $0 as? NSButton }.first)
-        fold.performClick(nil)
-        harness.settle()
+        try harness.foldHeading("## Folded")
         #expect(textView.visibleInlineImageFrames.map(\.range).count == 1)
         let end = (textView.string as NSString).length
         textView.setSelectedRange(NSRange(location: end, length: 0))
@@ -417,9 +483,7 @@ struct ImageGalleryTests {
         ![](attachments/blue.png)
         """, height: 400)
         let textView = try harness.textView
-        let fold = try #require(textView.subviews.compactMap { $0 as? NSButton }.first)
-        fold.performClick(nil)
-        harness.settle()
+        try harness.foldHeading("## Folded")
         #expect(textView.visibleInlineImageFrames.map(\.range).count == 1)
 
         try harness.clickImage("![](attachments/red.png)")
@@ -639,7 +703,8 @@ private final class GalleryHarness {
     let hostingView: NSHostingView<GalleryHarnessView>
     let state: GalleryHarnessState
     let directory: URL
-    var noteURL: URL { directory.appending(path: "note.md") }
+    let note: String
+    let noteURL: URL
     var savedText: String? { try? String(contentsOf: noteURL, encoding: .utf8) }
     var textChanges: Int { state.textChanges }
 
@@ -655,11 +720,14 @@ private final class GalleryHarness {
     init(
         note: String,
         staged: [String: String] = [:],
-        height: CGFloat = 600
+        height: CGFloat = 600,
+        notePath: String = "note.md"
     ) throws {
+        self.note = note
         directory = FileManager.default.temporaryDirectory
             .appending(path: "image-gallery-\(UUID().uuidString)", directoryHint: .isDirectory)
-        let attachments = directory.appending(path: "attachments", directoryHint: .isDirectory)
+        noteURL = directory.appending(path: notePath)
+        let attachments = noteURL.deletingLastPathComponent().appending(path: "attachments", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: attachments, withIntermediateDirectories: true)
         for (name, size) in Self.images {
             try #require(Self.png(size)).write(to: attachments.appending(path: "\(name).png"))
@@ -680,7 +748,7 @@ private final class GalleryHarness {
         hostingView = NSHostingView(
             rootView: GalleryHarnessView(
                 note: note,
-                noteURL: directory.appending(path: "note.md"),
+                noteURL: noteURL,
                 staged: stagedData,
                 state: state
             )
@@ -703,6 +771,33 @@ private final class GalleryHarness {
     func settle() {
         hostingView.layoutSubtreeIfNeeded()
         RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.15))
+    }
+
+    func showTimeline(for tag: String) async throws {
+        try note.write(to: noteURL, atomically: true, encoding: .utf8)
+        let databaseURL = directory.appending(path: "index.sqlite")
+        let index = SearchIndex(vault: Vault(rootURL: directory), databaseURL: databaseURL)
+        try await index.synchronize()
+        let reopened = SearchIndex(vault: Vault(rootURL: directory), databaseURL: databaseURL)
+        state.timelineSection = try #require(try await reopened.tagTimeline(for: tag).first?.sections.first)
+        await flushMainQueue()
+        settle()
+        window.makeFirstResponder(try textView)
+    }
+
+    /// Selects the editor's actual context-menu folding command, avoiding
+    /// NSButtonCell's nested click-animation run loop.
+    func foldHeading(_ heading: String) throws {
+        let textView = try textView
+        let range = (textView.string as NSString).range(of: heading)
+        try #require(range.location != NSNotFound)
+        let rect = textView.rect(forCharacterRange: range)
+        let point = textView.convert(NSPoint(x: rect.midX, y: rect.midY), to: nil)
+        let menu = try #require(textView.menu(for: mouseEvent(.rightMouseDown, at: point)))
+        let index = menu.indexOfItem(withTitle: "Sbalit nebo rozbalit nadpis")
+        try #require(index >= 0)
+        menu.performActionForItem(at: index)
+        settle()
     }
 
     /// Clicks the inline image drawn for the `occurrence`-th (0-based) match of
@@ -731,7 +826,8 @@ private final class GalleryHarness {
         // AppKit would swallow a first click on the editor; deliver it to
         // the view the window hit-tests, as a click in the key window would.
         let content = try #require(window.contentView)
-        let hit = try #require(content.hitTest(content.convert(point, from: nil)))
+        let frameView = try #require(content.superview)
+        let hit = try #require(content.hitTest(frameView.convert(point, from: nil)))
         hit.mouseDown(with: mouseEvent(.leftMouseDown, at: point))
         hit.mouseUp(with: mouseEvent(.leftMouseUp, at: point))
         settle()
@@ -897,6 +993,7 @@ private final class GalleryHarness {
 @MainActor
 private final class GalleryHarnessState: ObservableObject {
     @Published var content: ImagePreviewContent?
+    @Published var timelineSection: TagTimelineSection?
     var textChanges = 0
 }
 
@@ -909,15 +1006,26 @@ private struct GalleryHarnessView: View {
 
     var body: some View {
         ZStack {
-            MarkdownEditor(
-                documentID: "image-gallery-test",
-                initialText: { note },
-                isInteractionEnabled: state.content == nil,
-                noteURL: noteURL,
-                inlineImageData: { staged[$0] },
-                onOpenImagePreview: { state.content = $0 },
-                onTextChange: { _ in state.textChanges += 1 }
-            )
+            if let section = state.timelineSection {
+                ScrollView {
+                    ReadOnlyMarkdownView(
+                        markdown: section.markdown,
+                        noteURL: noteURL,
+                        enclosingHeadings: section.enclosingHeadings,
+                        onOpenImagePreview: { state.content = $0 }
+                    )
+                }
+            } else {
+                MarkdownEditor(
+                    documentID: "image-gallery-test",
+                    initialText: { note },
+                    isInteractionEnabled: state.content == nil,
+                    noteURL: noteURL,
+                    inlineImageData: { staged[$0] },
+                    onOpenImagePreview: { state.content = $0 },
+                    onTextChange: { _ in state.textChanges += 1 }
+                )
+            }
 
             if let content = state.content {
                 ImagePreviewOverlay(content: content) {
