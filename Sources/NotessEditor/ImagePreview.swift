@@ -135,9 +135,17 @@ public struct ImagePreviewOverlay: View {
                 Color.black.opacity(0.82)
                     .ignoresSafeArea()
 
-                PreviewImageView(image: image)
-                    .frame(width: fittedSize.width, height: fittedSize.height)
-                    .position(x: geometry.size.width / 2, y: geometry.size.height / 2)
+                Group {
+                    if let image {
+                        PreviewImageView(image: image)
+                            .frame(width: fittedSize.width, height: fittedSize.height)
+                    } else {
+                        PreviewErrorView()
+                            .fixedSize(horizontal: false, vertical: true)
+                            .frame(maxWidth: availableSize.width)
+                    }
+                }
+                .position(x: geometry.size.width / 2, y: geometry.size.height / 2)
 
                 HStack {
                     GalleryButton(
@@ -187,6 +195,18 @@ private struct PreviewImageView: NSViewRepresentable {
     func updateNSView(_ view: NSImageView, context: Context) {
         view.image = image
     }
+}
+
+private struct PreviewErrorView: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSTextField {
+        let label = NSTextField(wrappingLabelWithString: "Obrázek nelze načíst")
+        label.font = .preferredFont(forTextStyle: .headline)
+        label.textColor = .white
+        label.alignment = .center
+        return label
+    }
+
+    func updateNSView(_ view: NSTextField, context: Context) {}
 }
 
 /// A previous or next button of the gallery, also triggered by its arrow key.

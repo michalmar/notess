@@ -5,7 +5,7 @@ import Testing
 
 /// The Image Gallery, exercised only through the enlarged preview: clicking an
 /// inline image in a real editor, then arrow keys and the visible buttons
-/// (issue #155).
+/// (issues #155 and #156).
 @MainActor
 @Suite("Image Gallery")
 struct ImageGalleryTests {
@@ -264,6 +264,115 @@ struct ImageGalleryTests {
         #expect(textView.string == original)
         #expect(harness.textChanges == 0)
     }
+
+    @Test("failed local images show an error and remain reachable with keys and buttons",
+          arguments: ["missing.png", "corrupt.png"])
+    func failedOccurrencesStayNavigable(filename: String) async throws {
+        let harness = try GalleryHarness(note: """
+        ![](attachments/red.png)
+
+        ![](attachments/\(filename))
+
+        ![](attachments/blue.png)
+        """)
+        if filename == "corrupt.png" {
+            try Data("not an image".utf8).write(
+                to: harness.directory.appending(path: "attachments/corrupt.png")
+            )
+        }
+        let textView = try harness.textView
+        let original = textView.string
+
+        try harness.clickImage("![](attachments/red.png)")
+        #expect(harness.displayedImage() == "red")
+        #expect(harness.errorFrame() == nil)
+        harness.press(.right)
+        #expect(harness.errorFrame() != nil)
+        #expect(harness.displayedImage() == nil)
+        #expect(try harness.button(GalleryHarness.previous).isEnabled)
+        #expect(try harness.button(GalleryHarness.next).isEnabled)
+
+        harness.press(.right)
+        #expect(harness.displayedImage() == "blue")
+        #expect(harness.errorFrame() == nil)
+        harness.press(.left)
+        #expect(harness.errorFrame() != nil)
+        #expect(harness.displayedImage() == nil)
+        harness.press(.left)
+        #expect(harness.displayedImage() == "red")
+        #expect(harness.errorFrame() == nil)
+
+        try harness.clickButton(GalleryHarness.next)
+        #expect(harness.errorFrame() != nil)
+        #expect(harness.displayedImage() == nil)
+        try harness.clickButton(GalleryHarness.next)
+        #expect(harness.displayedImage() == "blue")
+        #expect(harness.errorFrame() == nil)
+        try harness.clickButton(GalleryHarness.previous)
+        #expect(harness.errorFrame() != nil)
+        #expect(harness.displayedImage() == nil)
+        try harness.clickButton(GalleryHarness.previous)
+        #expect(harness.displayedImage() == "red")
+        #expect(harness.errorFrame() == nil)
+        #expect(textView.string == original)
+        #expect(harness.textChanges == 0)
+        #expect(harness.savedText == nil)
+    }
+
+    @Test("failed endpoints do not wrap and keep the error visible through resizing and Escape")
+    func failedEndpointsResizeAndDismiss() async throws {
+        let harness = try GalleryHarness(note: """
+        ![](attachments/missing-first.png)
+
+        ![](attachments/green.png)
+
+        ![](attachments/missing-last.png)
+        """)
+        let textView = try harness.textView
+        let original = textView.string
+
+        try harness.clickImage("![](attachments/green.png)")
+        harness.press(.left)
+        #expect(harness.errorFrame() != nil)
+        #expect(harness.displayedImage() == nil)
+        #expect(try harness.button(GalleryHarness.previous).isEnabled == false)
+        #expect(try harness.button(GalleryHarness.next).isEnabled)
+        harness.press(.left)
+        harness.press(.left)
+        try harness.clickButton(GalleryHarness.previous)
+        #expect(harness.errorFrame() != nil)
+        #expect(try harness.button(GalleryHarness.previous).isEnabled == false)
+
+        harness.window.setContentSize(NSSize(width: 440, height: 300))
+        harness.settle()
+        let error = try #require(harness.errorFrame())
+        #expect(harness.window.contentLayoutRect.contains(error))
+        #expect(abs(error.midX - harness.window.contentLayoutRect.midX) < 2)
+        #expect(abs(error.midY - harness.window.contentLayoutRect.midY) < 2)
+
+        try harness.clickButton(GalleryHarness.next)
+        #expect(harness.displayedImage() == "green")
+        #expect(harness.errorFrame() == nil)
+        try harness.clickButton(GalleryHarness.next)
+        #expect(harness.errorFrame() != nil)
+        #expect(harness.displayedImage() == nil)
+        #expect(try harness.button(GalleryHarness.previous).isEnabled)
+        #expect(try harness.button(GalleryHarness.next).isEnabled == false)
+        harness.press(.right)
+        harness.press(.right)
+        try harness.clickButton(GalleryHarness.next)
+        #expect(harness.errorFrame() != nil)
+        #expect(try harness.button(GalleryHarness.next).isEnabled == false)
+
+        harness.pressEscape()
+        await flushMainQueue()
+        harness.settle()
+        #expect(harness.errorFrame() == nil)
+        #expect(harness.window.firstResponder === textView)
+        #expect(textView.string == original)
+        #expect(harness.textChanges == 0)
+        #expect(harness.savedText == nil)
+    }
 }
 
 // MARK: - Harness
@@ -456,6 +565,16 @@ private final class GalleryHarness {
         return Self.images.first {
             abs(CGFloat($0.value.width) / CGFloat($0.value.height) - ratio) < 0.05
         }?.key
+    }
+
+    /// The rendered error's frame, observed through its visible label.
+    func errorFrame() -> NSRect? {
+        guard let label = allSubviews(of: hostingView)
+            .compactMap({ $0 as? NSTextField })
+            .first(where: { $0.stringValue == "Obrázek nelze načíst" }),
+            !label.isHiddenOrHasHiddenAncestor,
+            label.visibleRect.width > 0, label.visibleRect.height > 0 else { return nil }
+        return label.convert(label.bounds, to: nil)
     }
 
     /// The preview's control labelled `label`.
