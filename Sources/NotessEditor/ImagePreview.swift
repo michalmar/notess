@@ -115,6 +115,7 @@ public struct ImagePreviewOverlay: View {
     /// Keeps the breadcrumb clear of the Close button in the top corner.
     private static let breadcrumbInset: CGFloat = 140
     private static let breadcrumbHeight: CGFloat = 18
+    private static let breadcrumbSpacing: CGFloat = 6
 
     private var canShowPrevious: Bool { index > 0 }
     private var canShowNext: Bool { index < content.gallery.occurrences.count - 1 }
@@ -154,7 +155,7 @@ public struct ImagePreviewOverlay: View {
                         )
                         .position(
                             x: geometry.size.width / 2,
-                            y: max(Self.breadcrumbHeight / 2, imageTop - 6 - Self.breadcrumbHeight / 2)
+                            y: max(Self.breadcrumbHeight / 2, imageTop - Self.breadcrumbSpacing - Self.breadcrumbHeight / 2)
                         )
                 }
 
