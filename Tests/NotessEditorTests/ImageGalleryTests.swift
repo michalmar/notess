@@ -161,6 +161,219 @@ struct ImageGalleryTests {
         #expect(try harness.button(GalleryHarness.next).isEnabled == false)
     }
 
+    @Test("the breadcrumb shows the occurrence's heading ancestry and follows browsing")
+    func breadcrumbFollowsHeadingAncestry() async throws {
+        let harness = try GalleryHarness(note: """
+        # Project
+
+        ### Detail
+
+        ![](attachments/red.png)
+
+        ## Results
+
+        ![](attachments/green.png)
+
+        # Appendix
+
+        ![](attachments/blue.png)
+        """)
+
+        try harness.clickImage("![](attachments/green.png)")
+        #expect(harness.breadcrumb() == "Project → Results")
+        harness.press(.left)
+        #expect(harness.displayedImage() == "red")
+        #expect(harness.breadcrumb() == "Project → Detail")
+        try harness.clickButton(GalleryHarness.next)
+        try harness.clickButton(GalleryHarness.next)
+        #expect(harness.displayedImage() == "blue")
+        #expect(harness.breadcrumb() == "Appendix")
+        try harness.clickButton(GalleryHarness.previous)
+        #expect(harness.breadcrumb() == "Project → Results")
+        harness.press(.right)
+        #expect(harness.breadcrumb() == "Appendix")
+    }
+
+    @Test("the breadcrumb is small, above the image and stays there when the window resizes")
+    func breadcrumbSitsAboveImage() async throws {
+        let harness = try GalleryHarness(note: """
+        # Project
+
+        ![](attachments/yellow.png)
+        """)
+
+        try harness.clickImage("![](attachments/yellow.png)")
+        #expect(harness.breadcrumb() == "Project")
+        #expect(try harness.breadcrumbFontSize() < NSFont.systemFontSize)
+        #expect(try harness.breadcrumbIsAboveImage())
+
+        harness.window.setContentSize(NSSize(width: 500, height: 320))
+        harness.settle()
+        #expect(harness.displayedImage() == "yellow")
+        #expect(harness.breadcrumb() == "Project")
+        #expect(try harness.breadcrumbIsAboveImage())
+    }
+
+    @Test("clicking the breadcrumb changes nothing and Escape still returns focus to the note")
+    func breadcrumbIsNotInteractive() async throws {
+        let harness = try GalleryHarness(note: """
+        # Project
+
+        ![](attachments/red.png)
+
+        ## Results
+
+        ![](attachments/green.png)
+        """)
+        let textView = try harness.textView
+        let original = textView.string
+
+        try harness.clickImage("![](attachments/green.png)")
+        try harness.clickBreadcrumb()
+        #expect(harness.state.content != nil)
+        #expect(harness.displayedImage() == "green")
+        #expect(harness.breadcrumb() == "Project → Results")
+
+        harness.pressEscape()
+        await flushMainQueue()
+        harness.settle()
+        #expect(harness.state.content == nil)
+        #expect(harness.breadcrumb() == nil)
+        #expect(harness.window.firstResponder === textView)
+        #expect(textView.string == original)
+        #expect(harness.textChanges == 0)
+        #expect(harness.savedText == nil)
+    }
+
+    @Test("missing heading levels are not invented and text outside headings shows no breadcrumb")
+    func breadcrumbInventsNothing() async throws {
+        let harness = try GalleryHarness(note: """
+        ![](attachments/yellow.png)
+
+        ## Only H2
+
+        ![](attachments/red.png)
+
+        ```
+        # Fenced
+        Fenced setext
+        =============
+        ```
+
+            # Indented
+
+        Inline `# code` and #notaheading text.
+
+        ![](attachments/green.png)
+        """)
+
+        try harness.clickImage("![](attachments/red.png)")
+        #expect(harness.breadcrumb() == "Only H2")
+        harness.press(.left)
+        #expect(harness.displayedImage() == "yellow")
+        #expect(harness.breadcrumb() == nil)
+        try harness.clickButton(GalleryHarness.next)
+        try harness.clickButton(GalleryHarness.next)
+        #expect(harness.displayedImage() == "green")
+        #expect(harness.breadcrumb() == "Only H2")
+    }
+
+    @Test("setext headings nest and end like ATX headings")
+    func setextHeadingsInBreadcrumb() async throws {
+        let harness = try GalleryHarness(note: """
+        Trip
+        ====
+
+        Day one
+        -------
+
+        ![](attachments/red.png)
+
+        ### Morning
+
+        ![](attachments/green.png)
+
+        Day two
+        -------
+
+        ![](attachments/blue.png)
+        """)
+
+        try harness.clickImage("![](attachments/red.png)")
+        #expect(harness.breadcrumb() == "Trip → Day one")
+        harness.press(.right)
+        #expect(harness.breadcrumb() == "Trip → Day one → Morning")
+        harness.press(.right)
+        #expect(harness.breadcrumb() == "Trip → Day two")
+    }
+
+    @Test("repeated sources under different headings keep their own breadcrumbs")
+    func repeatedSourcesKeepTheirBreadcrumbs() async throws {
+        let harness = try GalleryHarness(note: """
+        # Before
+
+        ![](attachments/red.png)
+
+        # After
+
+        ## Inner
+
+        ![](attachments/red.png)
+        """)
+
+        try harness.clickImage("![](attachments/red.png)", occurrence: 1)
+        #expect(harness.breadcrumb() == "After → Inner")
+        harness.press(.left)
+        #expect(harness.displayedImage() == "red")
+        #expect(harness.breadcrumb() == "Before")
+        try harness.clickButton(GalleryHarness.next)
+        #expect(harness.breadcrumb() == "After → Inner")
+    }
+
+    @Test("folded, offscreen and unsaved images keep their heading context")
+    func foldedOffscreenAndUnsavedBreadcrumbs() async throws {
+        let filler = (1...60).map { "Line \($0) of a long note." }.joined(separator: "\n\n")
+        let harness = try GalleryHarness(
+            note: """
+            ![](attachments/red.png)
+
+            ## Folded
+
+            ![](attachments/green.png)
+
+            # Later
+
+            \(filler)
+
+            ![](attachments/blue.png)
+            """,
+            staged: ["attachments/pasted.png": "cyan"],
+            height: 400
+        )
+        let textView = try harness.textView
+        let fold = try #require(textView.subviews.compactMap { $0 as? NSButton }.first)
+        fold.performClick(nil)
+        harness.settle()
+        #expect(textView.visibleInlineImageFrames.map(\.range).count == 1)
+        let end = (textView.string as NSString).length
+        textView.setSelectedRange(NSRange(location: end, length: 0))
+        textView.insertText("\n\n## Typed\n\n![](attachments/pasted.png)", replacementRange: NSRange(location: end, length: 0))
+        harness.settle()
+
+        try harness.clickImage("![](attachments/red.png)")
+        #expect(harness.breadcrumb() == nil)
+        harness.press(.right)
+        #expect(harness.displayedImage() == "green")
+        #expect(harness.breadcrumb() == "Folded")
+        harness.press(.right)
+        #expect(harness.displayedImage() == "blue")
+        #expect(harness.breadcrumb() == "Later")
+        harness.press(.right)
+        #expect(harness.displayedImage() == "cyan")
+        #expect(harness.breadcrumb() == "Later → Typed")
+        #expect(harness.savedText == nil)
+    }
+
     @Test("image-like text in code is not part of the gallery")
     func codeIsNotAnImage() async throws {
         let harness = try GalleryHarness(note: """
@@ -269,9 +482,17 @@ struct ImageGalleryTests {
           arguments: ["missing.png", "corrupt.png"])
     func failedOccurrencesStayNavigable(filename: String) async throws {
         let harness = try GalleryHarness(note: """
+        # Available
+
         ![](attachments/red.png)
 
+        # Broken
+
+        ## Detail
+
         ![](attachments/\(filename))
+
+        # Later
 
         ![](attachments/blue.png)
         """)
@@ -285,34 +506,44 @@ struct ImageGalleryTests {
 
         try harness.clickImage("![](attachments/red.png)")
         #expect(harness.displayedImage() == "red")
+        #expect(harness.breadcrumb() == "Available")
         #expect(harness.errorFrame() == nil)
         harness.press(.right)
         #expect(harness.errorFrame() != nil)
         #expect(harness.displayedImage() == nil)
+        #expect(harness.breadcrumb() == "Broken → Detail")
+        #expect(try harness.breadcrumbIsAboveError())
         #expect(try harness.button(GalleryHarness.previous).isEnabled)
         #expect(try harness.button(GalleryHarness.next).isEnabled)
 
         harness.press(.right)
         #expect(harness.displayedImage() == "blue")
+        #expect(harness.breadcrumb() == "Later")
         #expect(harness.errorFrame() == nil)
         harness.press(.left)
         #expect(harness.errorFrame() != nil)
+        #expect(harness.breadcrumb() == "Broken → Detail")
         #expect(harness.displayedImage() == nil)
         harness.press(.left)
         #expect(harness.displayedImage() == "red")
+        #expect(harness.breadcrumb() == "Available")
         #expect(harness.errorFrame() == nil)
 
         try harness.clickButton(GalleryHarness.next)
         #expect(harness.errorFrame() != nil)
+        #expect(harness.breadcrumb() == "Broken → Detail")
         #expect(harness.displayedImage() == nil)
         try harness.clickButton(GalleryHarness.next)
         #expect(harness.displayedImage() == "blue")
+        #expect(harness.breadcrumb() == "Later")
         #expect(harness.errorFrame() == nil)
         try harness.clickButton(GalleryHarness.previous)
         #expect(harness.errorFrame() != nil)
+        #expect(harness.breadcrumb() == "Broken → Detail")
         #expect(harness.displayedImage() == nil)
         try harness.clickButton(GalleryHarness.previous)
         #expect(harness.displayedImage() == "red")
+        #expect(harness.breadcrumb() == "Available")
         #expect(harness.errorFrame() == nil)
         #expect(textView.string == original)
         #expect(harness.textChanges == 0)
@@ -324,7 +555,11 @@ struct ImageGalleryTests {
         let harness = try GalleryHarness(note: """
         ![](attachments/missing-first.png)
 
+        # Available
+
         ![](attachments/green.png)
+
+        # Broken end
 
         ![](attachments/missing-last.png)
         """)
@@ -335,6 +570,7 @@ struct ImageGalleryTests {
         harness.press(.left)
         #expect(harness.errorFrame() != nil)
         #expect(harness.displayedImage() == nil)
+        #expect(harness.breadcrumb() == nil)
         #expect(try harness.button(GalleryHarness.previous).isEnabled == false)
         #expect(try harness.button(GalleryHarness.next).isEnabled)
         harness.press(.left)
@@ -352,10 +588,13 @@ struct ImageGalleryTests {
 
         try harness.clickButton(GalleryHarness.next)
         #expect(harness.displayedImage() == "green")
+        #expect(harness.breadcrumb() == "Available")
         #expect(harness.errorFrame() == nil)
         try harness.clickButton(GalleryHarness.next)
         #expect(harness.errorFrame() != nil)
         #expect(harness.displayedImage() == nil)
+        #expect(harness.breadcrumb() == "Broken end")
+        #expect(try harness.breadcrumbIsAboveError())
         #expect(try harness.button(GalleryHarness.previous).isEnabled)
         #expect(try harness.button(GalleryHarness.next).isEnabled == false)
         harness.press(.right)
@@ -368,6 +607,7 @@ struct ImageGalleryTests {
         await flushMainQueue()
         harness.settle()
         #expect(harness.errorFrame() == nil)
+        #expect(harness.breadcrumb() == nil)
         #expect(harness.window.firstResponder === textView)
         #expect(textView.string == original)
         #expect(harness.textChanges == 0)
@@ -591,6 +831,57 @@ private final class GalleryHarness {
     func clickButton(_ label: String) throws {
         let button = try button(label)
         click(at: button.convert(NSPoint(x: button.bounds.midX, y: button.bounds.midY), to: nil))
+    }
+
+    /// The heading breadcrumb the preview shows; nil when it shows none.
+    func breadcrumb() -> String? {
+        hostingView.layoutSubtreeIfNeeded()
+        guard let field = breadcrumbField(), !field.stringValue.isEmpty else { return nil }
+        return field.stringValue
+    }
+
+    func breadcrumbFontSize() throws -> CGFloat {
+        let field = try #require(breadcrumbField())
+        return try #require(field.font).pointSize
+    }
+
+    /// Whether the breadcrumb is drawn inside the window, entirely above the image.
+    func breadcrumbIsAboveImage() throws -> Bool {
+        hostingView.layoutSubtreeIfNeeded()
+        let field = try #require(breadcrumbField())
+        let image = try #require(previewImageView())
+        let crumb = field.convert(field.bounds, to: nil)
+        let picture = image.convert(image.bounds, to: nil)
+        return crumb.minY >= picture.maxY
+            && crumb.maxY <= hostingView.convert(hostingView.bounds, to: nil).maxY
+    }
+
+    func breadcrumbIsAboveError() throws -> Bool {
+        let field = try #require(breadcrumbField())
+        let error = try #require(errorFrame())
+        let crumb = field.convert(field.bounds, to: nil)
+        return crumb.minY >= error.maxY
+            && crumb.maxY <= hostingView.convert(hostingView.bounds, to: nil).maxY
+    }
+
+    func clickBreadcrumb() throws {
+        let field = try #require(breadcrumbField())
+        click(at: field.convert(NSPoint(x: field.bounds.midX, y: field.bounds.midY), to: nil))
+    }
+
+    private func breadcrumbField() -> NSTextField? {
+        allSubviews(of: hostingView)
+            .compactMap { $0 as? NSTextField }
+            .first {
+                $0.accessibilityLabel() == "Nadpisy obrázku" && !$0.isHiddenOrHasHiddenAncestor
+                    && $0.frame.width > 0 && $0.frame.height > 0
+            }
+    }
+
+    private func previewImageView() -> NSImageView? {
+        allSubviews(of: hostingView)
+            .compactMap { $0 as? NSImageView }
+            .first { $0.accessibilityLabel() == "Náhled obrázku" }
     }
 
     static func png(_ size: (width: Int, height: Int)) -> Data? {

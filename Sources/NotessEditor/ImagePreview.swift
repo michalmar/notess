@@ -94,7 +94,8 @@ public enum ImagePreviewLayout {
 /// A reusable image preview overlay that stays inside the current window.
 ///
 /// It browses the content's Image Gallery: Left/Right Arrow and the previous
-/// and next buttons move one occurrence at a time and stop at the ends.
+/// and next buttons move one occurrence at a time and stop at the ends. A
+/// descriptive breadcrumb above the image names the occurrence's headings.
 public struct ImagePreviewOverlay: View {
     private let content: ImagePreviewContent
     private let onDismiss: () -> Void
@@ -111,6 +112,11 @@ public struct ImagePreviewOverlay: View {
         return browsed.index
     }
 
+    /// Keeps the breadcrumb clear of the Close button in the top corner.
+    private static let breadcrumbInset: CGFloat = 140
+    private static let breadcrumbHeight: CGFloat = 18
+    private static let breadcrumbSpacing: CGFloat = 6
+
     private var canShowPrevious: Bool { index > 0 }
     private var canShowNext: Bool { index < content.gallery.occurrences.count - 1 }
 
@@ -121,6 +127,7 @@ public struct ImagePreviewOverlay: View {
 
     public var body: some View {
         let image = content.image(at: index)
+        let headings = content.gallery.occurrences[index].headings
         GeometryReader { geometry in
             let availableSize = CGSize(
                 width: max(0, geometry.size.width - 64),
@@ -146,6 +153,19 @@ public struct ImagePreviewOverlay: View {
                     }
                 }
                 .position(x: geometry.size.width / 2, y: geometry.size.height / 2)
+
+                if !headings.isEmpty {
+                    let imageTop = (geometry.size.height - fittedSize.height) / 2
+                    HeadingBreadcrumb(text: headings.joined(separator: " → "))
+                        .frame(
+                            width: max(0, geometry.size.width - 2 * Self.breadcrumbInset),
+                            height: Self.breadcrumbHeight
+                        )
+                        .position(
+                            x: geometry.size.width / 2,
+                            y: max(Self.breadcrumbHeight / 2, imageTop - Self.breadcrumbSpacing - Self.breadcrumbHeight / 2)
+                        )
+                }
 
                 HStack {
                     GalleryButton(
@@ -207,6 +227,28 @@ private struct PreviewErrorView: NSViewRepresentable {
     }
 
     func updateNSView(_ view: NSTextField, context: Context) {}
+}
+
+/// The current occurrence's headings, outermost first, as small plain text.
+/// It describes where the image is and does nothing when clicked.
+private struct HeadingBreadcrumb: NSViewRepresentable {
+    let text: String
+
+    func makeNSView(context: Context) -> NSTextField {
+        let field = NSTextField(labelWithString: text)
+        field.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+        field.textColor = NSColor.white.withAlphaComponent(0.75)
+        field.alignment = .center
+        field.lineBreakMode = .byTruncatingHead
+        field.isSelectable = false
+        field.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        field.setAccessibilityLabel("Nadpisy obrázku")
+        return field
+    }
+
+    func updateNSView(_ field: NSTextField, context: Context) {
+        field.stringValue = text
+    }
 }
 
 /// A previous or next button of the gallery, also triggered by its arrow key.
