@@ -411,13 +411,30 @@ public actor SearchIndex {
             SELECT path, ordinal, title, markdown FROM timeline_sections WHERE tag = ?
             """, [.text(Tag.normalize(tag))])
         var sectionsByDay: [Day: [TagTimelineSection]] = [:]
+        var headingsByPath: [String: [HeadingSection]] = [:]
         for row in rows {
             guard let path = row[0].text, let day = DailyEntry.day(forRelativePath: path) else { continue }
+            if headingsByPath[path] == nil {
+                // The existing search spans retain the saved note's Markdown;
+                // recover ancestry without rereading disk or new gallery metadata.
+                let spans = try db.query(
+                    "SELECT markdown FROM sections WHERE path = ? ORDER BY ordinal", [.text(path)]
+                )
+                headingsByPath[path] = HeadingSection.split(spans.compactMap { $0[0].text }.joined(separator: "\n\n"))
+            }
+            let headings = headingsByPath[path]!
+            let ordinal = row[1].int ?? 0
+            let enclosing = headings.first(where: { $0.ordinal == ordinal }).map { section in
+                headings.prefix(ordinal).filter {
+                    NSLocationInRange(section.range.location, $0.range)
+                }.compactMap(\.title).filter { !$0.isEmpty }
+            } ?? []
             sectionsByDay[day, default: []].append(TagTimelineSection(
                 relativePath: path,
-                ordinal: row[1].int ?? 0,
+                ordinal: ordinal,
                 title: row[2].text,
-                markdown: row[3].text ?? ""
+                markdown: row[3].text ?? "",
+                enclosingHeadings: enclosing
             ))
         }
         return sectionsByDay.keys.sorted(by: >).map { day in

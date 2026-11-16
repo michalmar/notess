@@ -45,6 +45,7 @@ public struct ReadOnlyMarkdownView: NSViewRepresentable {
     private let markdown: String
     private let style: MarkdownEditorStyle
     private let noteURL: URL?
+    private let enclosingHeadings: [String]
     private let onOpenImagePreview: ((ImagePreviewContent) -> Void)?
     private let onImageLoadFailure: ((String) -> Void)?
     private let onCopyAsHTMLFailure: ((Error) -> Void)?
@@ -56,6 +57,7 @@ public struct ReadOnlyMarkdownView: NSViewRepresentable {
     /// - Parameters:
     ///   - noteURL: The saved note the Markdown comes from. Relative images
     ///     resolve against its directory and are read from disk, never from staged bytes.
+    ///   - enclosingHeadings: Ancestor headings outside the displayed Section.
     ///   - onOpenImagePreview: Called with the clicked image for the shared preview.
     ///   - onImageLoadFailure: Called with a message when an image cannot be loaded.
     ///   - onCopyAsHTMLFailure: Called when Copy as HTML cannot export the
@@ -73,6 +75,7 @@ public struct ReadOnlyMarkdownView: NSViewRepresentable {
         fontSize: CGFloat = 15,
         colors: MarkdownEditorStyle.Colors = .init(),
         noteURL: URL? = nil,
+        enclosingHeadings: [String] = [],
         onOpenImagePreview: ((ImagePreviewContent) -> Void)? = nil,
         onImageLoadFailure: ((String) -> Void)? = nil,
         onCopyAsHTMLFailure: ((Error) -> Void)? = nil,
@@ -84,6 +87,7 @@ public struct ReadOnlyMarkdownView: NSViewRepresentable {
         self.onOpenWikiLink = onOpenWikiLink
         self.onOpenWebLink = onOpenWebLink
         self.noteURL = noteURL
+        self.enclosingHeadings = enclosingHeadings
         self.onOpenImagePreview = onOpenImagePreview
         self.onImageLoadFailure = onImageLoadFailure
         self.onCopyAsHTMLFailure = onCopyAsHTMLFailure
@@ -102,6 +106,7 @@ public struct ReadOnlyMarkdownView: NSViewRepresentable {
     }
 
     private func configureImages(in textView: MarkdownTextView) {
+        textView.imageGalleryEnclosingHeadings = enclosingHeadings
         textView.onOpenImagePreview = onOpenImagePreview
         textView.onImageLoadFailure = onImageLoadFailure
         textView.onCopyAsHTMLFailure = onCopyAsHTMLFailure

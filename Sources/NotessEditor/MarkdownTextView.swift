@@ -136,6 +136,7 @@ public final class MarkdownTextView: NSTextView {
     public var onPasteImage: ((Data, String) -> String?)?
     public var inlineImageData: ((String) -> Data?)?
     public var onOpenImagePreview: ((ImagePreviewContent) -> Void)?
+    var imageGalleryEnclosingHeadings: [String] = []
     public var onImageLoadFailure: ((String) -> Void)?
     /// Called after inline images changed the height the text needs.
     var onInlineImagesLaidOut: (() -> Void)?
@@ -1081,10 +1082,38 @@ public final class MarkdownTextView: NSTextView {
         return true
     }
 
+    /// Opens the preview on the note's Image Gallery, built from the current
+    /// text so unsaved, folded and offscreen images are all included.
     private func open(_ preview: InlineImagePreview) {
+        let gallery = ImageGallery(markdown: string, enclosingHeadings: imageGalleryEnclosingHeadings)
+        guard let index = gallery.index(containing: preview.range.location) else {
+            onOpenImagePreview?(ImagePreviewContent(source: preview.source, image: preview.image))
+            return
+        }
+        let noteURL = noteURL
         onOpenImagePreview?(
-            ImagePreviewContent(source: preview.source, image: preview.image)
+            ImagePreviewContent(
+                gallery: gallery,
+                startIndex: index,
+                image: preview.image,
+                loadImage: { [weak self] occurrence in
+                    self?.galleryImage(source: occurrence.source, noteURL: noteURL)
+                }
+            )
         )
+    }
+
+    /// An image for the gallery. Unlike inline loading it does not report
+    /// failures: the preview shows them itself.
+    private func galleryImage(source: String, noteURL: URL?) -> NSImage? {
+        if let cached = imageCache[source] {
+            return cached
+        }
+        let image = localImageData(source: source, noteURL: noteURL).flatMap(NSImage.init(data:))
+        if let image {
+            imageCache[source] = image
+        }
+        return image
     }
 
     private func isSafeRelativePath(_ path: String) -> Bool {

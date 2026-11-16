@@ -392,6 +392,7 @@ private struct SectionCard: View {
                 fontSize: CGFloat(settings.editorFont.size),
                 colors: settings.theme.markdownColors,
                 noteURL: noteURL,
+                enclosingHeadings: section.enclosingHeadings,
                 onOpenImagePreview: openImagePreview,
                 onImageLoadFailure: { message in
                     if !imageFailures.contains(message) { imageFailures.append(message) }

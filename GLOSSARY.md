@@ -62,6 +62,10 @@ _Avoid_: Unsorted Tags, orphan Tags
 A `[[Note]]` reference to another note by its file name, optionally to one of its headings with `[[Note#Heading]]`, or a `[[#Heading]]` reference to a heading in the note containing the link. The note is found by file name anywhere in the Vault, ignoring case; duplicate names resolve by the rule documented on `WikiLinkResolver`.
 _Avoid_: Internal link, backlink (a backlink is a wiki-link seen from its target)
 
+**Image Gallery**:
+The ordered collection of all image occurrences in one note's current text, including unsaved edits, independent of heading boundaries, folded content or what the editor shows. Each insertion is its own occurrence, even of a repeated image; image-like text in code is none. The enlarged preview opens it at the clicked occurrence and browses it without wrapping. Unlike a Section, it is not bounded by headings. The Tag Timeline is an intentional exception: its gallery contains only the displayed tagged Section, but breadcrumbs retain the enclosing headings from the saved source note.
+_Avoid_: Album, slideshow, H1 gallery
+
 ### Second brain
 
 **Brain Note**:
