@@ -63,12 +63,12 @@ extension MarkdownTextView {
         super.insertNewline(sender)
     }
 
-    /// Tab accepts a shown Tag suggestion; otherwise, in a table it selects
-    /// the next cell (Option+Tab is a tab character).
+    /// Tab accepts a shown Tag suggestion, selects the next table cell, or
+    /// nests a list item (Option+Tab is a tab character).
     public override func insertTab(_ sender: Any?) {
         if tagCompleter.acceptSelected() { return }
         guard let (table, index, text) = tableAtSelection() else {
-            super.insertTab(sender)
+            if !changeListIndent(increase: true) { super.insertTab(sender) }
             return
         }
         if let edit = table.moveToCell(from: index, forward: true, in: text) {
@@ -76,11 +76,11 @@ extension MarkdownTextView {
         }
     }
 
-    /// Shift+Tab in a table selects the previous cell.
+    /// Shift+Tab selects the previous table cell or outdents a list item.
     public override func insertBacktab(_ sender: Any?) {
         tagCompleter.dismiss()
         guard let (table, index, text) = tableAtSelection() else {
-            super.insertBacktab(sender)
+            if !changeListIndent(increase: false) { super.insertBacktab(sender) }
             return
         }
         if let edit = table.moveToCell(from: index, forward: false, in: text) {

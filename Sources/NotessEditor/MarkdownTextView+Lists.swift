@@ -1,7 +1,7 @@
 import AppKit
 import NotessCore
 
-// MARK: Continuing lists
+// MARK: Editing lists
 
 extension MarkdownTextView {
     /// Enter with the caret at the end of a list item's line starts the next
@@ -18,5 +18,13 @@ extension MarkdownTextView {
         }
         let actionName = edit.replacement.isEmpty ? "Ukončit seznam" : "Pokračovat v seznamu"
         return replace(edit.range, with: edit.replacement, selection: edit.selection, actionName: actionName)
+    }
+
+    func changeListIndent(increase: Bool) -> Bool {
+        guard isEditable, !hasMarkedText(), let textStorage, selectedRanges.count == 1,
+              let edit = highlighter.lexer.listIndent(selectedRange(), increase: increase, in: textStorage.mutableString) else { return false }
+        let actionName = increase ? "Zvětšit odsazení položky" : "Zmenšit odsazení položky"
+        replace(edit.range, with: edit.replacement, selection: edit.selection, actionName: actionName)
+        return true
     }
 }

@@ -34,6 +34,7 @@ public final class MarkdownLexer {
     private struct ListLineInfo {
         var level: Int
         var digits: Int
+        var isItemStart: Bool
         /// The `MarkdownListLine.markerDigits` the line was last reported with.
         var markerDigits: [Int]
     }
@@ -112,6 +113,61 @@ public final class MarkdownLexer {
         guard line >= 0, line < states.count else { return nil }
         guard let item = lexed(line, in: text).listLine, caret == item.range.upperBound else { return nil }
         return item.newline(in: text)
+    }
+
+    /// Nests the selected list item under its preceding sibling or moves it
+    /// up one level, together with its indented lines. Nil unless the selection
+    /// lies on the marker line and there is a sibling or parent to act on.
+    public func listIndent(_ selection: NSRange, increase: Bool, in text: NSString) -> MarkdownListLine.Edit? {
+        guard selection.location >= 0, selection.location <= text.length else { return nil }
+        let line = Self.upperBound(lineStarts, selection.location) - 1
+        guard let item = lexed(line, in: text).listLine, item.marker != nil,
+              selection.upperBound <= item.range.upperBound else { return nil }
+        let preceding = states[line].list
+        let column: Int
+        if increase {
+            guard item.level < preceding.count else { return nil }
+            // If that sibling already has children, match their indentation.
+            column = item.level + 1 < preceding.count
+                ? preceding[item.level + 1].markerColumn
+                : preceding[item.level].contentColumn
+        } else {
+            guard item.level > 0 else { return nil }
+            column = preceding[item.level - 1].markerColumn
+        }
+        let indentation = item.indentation
+        let (range, replacement) = reindentListItem(item, on: line, to: column, in: text)
+        let caretShift = column - indentation.length
+        let start = max(indentation.location, selection.location + caretShift)
+        let end = max(indentation.location, selection.upperBound + caretShift)
+        return MarkdownListLine.Edit(
+            range: range,
+            replacement: replacement,
+            selection: NSRange(location: start, length: end - start)
+        )
+    }
+
+    private func reindentListItem(
+        _ item: MarkdownListLine, on line: Int, to column: Int, in text: NSString
+    ) -> (NSRange, String) {
+        let indentation = item.indentation
+        let shift = column - MarkdownLineLexer.indentation(in: lineUnits(line, in: text)).columns
+        var replacement = String(repeating: " ", count: column)
+        var end = indentation.upperBound
+        for following in (line + 1)..<lineStarts.count {
+            let list = states[following].list
+            guard list.count > item.level else { break }
+            if let info = listLines[following], info.isItemStart, info.level <= item.level { break }
+            let units = lineUnits(following, in: text)
+            let (columns, first) = MarkdownLineLexer.indentation(in: units)
+            // Leave blank lines and lazy continuations alone.
+            guard first < units.count, columns >= list[item.level].nestingColumn else { continue }
+            let start = lineStarts[following]
+            replacement += text.substring(with: NSRange(location: end, length: start - end))
+            replacement += String(repeating: " ", count: columns + shift)
+            end = start + first
+        }
+        return (NSRange(location: indentation.location, length: end - indentation.location), replacement)
     }
 
     /// The Tag completion context for a collapsed caret at `caret`, or nil
@@ -208,7 +264,9 @@ public final class MarkdownLexer {
             let current = line
             let next = lexer.lex(state: state, isFirstLine: line == 0) { nextLineUnits(after: current, in: text) }
             tokens.append(contentsOf: lexer.tokens)
-            self.listLines[line] = lexer.listLine.map { ListLineInfo(level: $0.level, digits: $0.digits, markerDigits: []) }
+            self.listLines[line] = lexer.listLine.map {
+                ListLineInfo(level: $0.level, digits: $0.digits, isItemStart: $0.marker != nil, markerDigits: [])
+            }
             if let listLine = lexer.listLine { listLines.append(listLine) }
             if let row = lexer.tableRow {
                 Self.add(row, alignments: lexer.tableAlignments, to: &tables)

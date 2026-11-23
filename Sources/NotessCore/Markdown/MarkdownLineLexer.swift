@@ -138,7 +138,7 @@ struct MarkdownLineLexer {
             return next
         }
 
-        let (indent, first) = indentation()
+        let (indent, first) = Self.indentation(in: c)
         if first == n {
             next.followsBlankLine = true
             next.allowsIndentedCode = true
@@ -247,13 +247,13 @@ struct MarkdownLineLexer {
         tokens.append(MarkdownToken(kind: kind, range: NSRange(location: offset + start, length: end - start)))
     }
 
-    private func indentation() -> (columns: Int, first: Int) {
+    static func indentation(in units: [UInt16]) -> (columns: Int, first: Int) {
         var columns = 0
         var i = 0
-        while i < c.count {
-            if c[i] == Char.space {
+        while i < units.count {
+            if units[i] == Char.space {
                 columns += 1
-            } else if c[i] == Char.tab {
+            } else if units[i] == Char.tab {
                 columns += 4 - columns % 4
             } else {
                 break
@@ -295,7 +295,7 @@ struct MarkdownLineLexer {
     }
 
     private func isClosingFence(_ fence: MarkdownLineState.Fence) -> Bool {
-        var i = indentation().first
+        var i = Self.indentation(in: c).first
         let start = i
         while i < c.count && c[i] == fence.marker { i += 1 }
         guard i - start >= fence.length else { return false }

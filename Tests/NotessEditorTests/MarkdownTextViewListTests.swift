@@ -167,7 +167,7 @@ struct MarkdownTextViewListTests {
         }
     }
 
-    @Test("Enter in a table after a list still adds a row; Tab in an item is a tab character")
+    @Test("Enter in a table after a list still adds a row; Tab in the first item is a tab character")
     func tablesAndTab() throws {
         let editor = try Editor("- a\n\n| a | b |\n| - | - |\n| c | d‸ |")
         editor.enter()
@@ -177,6 +177,54 @@ struct MarkdownTextViewListTests {
         editor.load("- a‸")
         editor.event { editor.textView.insertTab(nil) }
         #expect(editor.marked == "- a\t‸")
+    }
+
+    @Test("Tab nests the next bullet and Enter continues at its new level")
+    func nestAndContinue() throws {
+        let editor = try Editor("- rodič‸")
+
+        editor.enter()
+        #expect(editor.marked == "- rodič\n- ‸")
+
+        let tab = try editor.tabKey()
+        let changes = editor.changes { editor.event { editor.textView.keyDown(with: tab) } }
+        #expect(editor.marked == "- rodič\n  - ‸")
+        #expect(changes == 1)
+        editor.undoManager.undo()
+        #expect(editor.textView.string == "- rodič\n- ")
+        editor.undoManager.redo()
+        #expect(editor.textView.string == "- rodič\n  - ")
+
+        editor.textView.setSelectedRange(NSRange(location: (editor.textView.string as NSString).length, length: 0))
+        editor.event { editor.textView.insertText("potomek 🐎", replacementRange: editor.textView.selectedRange()) }
+        editor.enter()
+        #expect(editor.marked == "- rodič\n  - potomek 🐎\n  - ‸")
+    }
+
+    @Test("Shift+Tab moves up one level and preserves the selected text")
+    func outdent() throws {
+        let editor = try Editor("- rodič\r\n    - potomek\r\n      - 🐎 text")
+        editor.textView.setSelectedRange((editor.textView.string as NSString).range(of: "🐎 text"))
+
+        let backtab = try editor.tabKey(shift: true)
+        editor.event { editor.textView.keyDown(with: backtab) }
+
+        #expect(editor.marked == "- rodič\r\n    - potomek\r\n    - [🐎 text]")
+        editor.undoManager.undo()
+        #expect(editor.textView.string == "- rodič\r\n    - potomek\r\n      - 🐎 text")
+    }
+
+    @Test("Changing a bullet's indentation keeps its continuation and children with it")
+    func indentWithChildren() throws {
+        let editor = try Editor("- první\n- dru‸há\n  pokračování\n  - potomek\n- třetí")
+
+        editor.event { editor.textView.insertTab(nil) }
+
+        #expect(editor.marked == "- první\n  - dru‸há\n    pokračování\n    - potomek\n- třetí")
+
+        editor.event { editor.textView.insertBacktab(nil) }
+
+        #expect(editor.marked == "- první\n- dru‸há\n  pokračování\n  - potomek\n- třetí")
     }
 
     // MARK: Layout
@@ -676,6 +724,15 @@ private final class Editor {
 
     func enter() {
         event { textView.insertNewline(nil) }
+    }
+
+    func tabKey(shift: Bool = false) throws -> NSEvent {
+        let characters = shift ? "\u{19}" : "\t"
+        return try #require(NSEvent.keyEvent(
+            with: .keyDown, location: .zero, modifierFlags: shift ? .shift : [], timestamp: 0,
+            windowNumber: window.windowNumber, context: nil, characters: characters,
+            charactersIgnoringModifiers: characters, isARepeat: false, keyCode: 48
+        ))
     }
 
     /// How many text change notifications `action` sends.
