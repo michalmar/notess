@@ -1,6 +1,7 @@
 import { createServer } from "node:http";
 import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
+import { fileURLToPath } from "node:url";
 import { createCanvas, CanvasError, joinSession } from "@github/copilot-sdk/extension";
 import { createManager } from "./manager.mjs";
 
@@ -8,6 +9,7 @@ const servers = new Map();
 const managers = new Map();
 const html = await readFile(new URL("./index.html", import.meta.url), "utf8");
 const emptyInput = { type: "object", properties: {}, additionalProperties: false };
+const defaultRepoPath = fileURLToPath(new URL("../../../", import.meta.url));
 
 async function managerFor(repoPath) {
     let manager = managers.get(repoPath);
@@ -90,7 +92,6 @@ await joinSession({
             inputSchema: {
                 type: "object",
                 properties: { repoPath: { type: "string", minLength: 1, pattern: "^/" } },
-                required: ["repoPath"],
                 additionalProperties: false,
             },
             actions: [
@@ -122,7 +123,7 @@ await joinSession({
             open: async (ctx) => {
                 let entry = servers.get(ctx.instanceId);
                 if (!entry) {
-                    entry = await startServer(await managerFor(ctx.input.repoPath));
+                    entry = await startServer(await managerFor(ctx.input?.repoPath ?? defaultRepoPath));
                     servers.set(ctx.instanceId, entry);
                 }
                 return { title: "Notess app manager", url: entry.url };

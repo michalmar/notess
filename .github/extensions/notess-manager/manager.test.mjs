@@ -4,7 +4,9 @@ import { once } from "node:events";
 import { access, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { registerHooks } from "node:module";
 import { setTimeout as delay } from "node:timers/promises";
+import { fileURLToPath } from "node:url";
 import test from "node:test";
 import { createManager, nextBuildNumber, run } from "./manager.mjs";
 
@@ -78,6 +80,46 @@ test("build numbers advance locally and invalid numbers are rejected", () => {
     assert.equal(nextBuildNumber("123.2.3"), "124");
     assert.throws(() => nextBuildNumber("preview"), /Cannot increment/);
     assert.throws(() => nextBuildNumber("0"), /Cannot increment/);
+});
+
+test("canvas opens without input and preserves an explicit repository override", async (t) => {
+    const f = await fixture(t);
+    const sdkURL = `data:text/javascript,${encodeURIComponent(`
+        export let config;
+        export const createCanvas = (canvas) => canvas;
+        export class CanvasError extends Error {}
+        export async function joinSession(value) { config = value; }
+        export async function createManager(repoPath) {
+            return { refresh: async () => ({ repoPath }) };
+        }
+    `)}`;
+    const hooks = registerHooks({
+        resolve(specifier, context, nextResolve) {
+            return specifier === "@github/copilot-sdk/extension" ||
+                (specifier === "./manager.mjs" && context.parentURL?.endsWith("/extension.mjs"))
+                ? { url: sdkURL, shortCircuit: true }
+                : nextResolve(specifier, context);
+        },
+    });
+    const previousListeners = new Set(process.listeners("SIGTERM"));
+    t.after(() => {
+        hooks.deregister();
+        for (const listener of process.listeners("SIGTERM")) {
+            if (!previousListeners.has(listener)) process.removeListener("SIGTERM", listener);
+        }
+    });
+    await import("./extension.mjs");
+    const { config } = await import(sdkURL);
+    const canvas = config.canvases[0];
+    const defaultRepo = fileURLToPath(new URL("../../../", import.meta.url));
+    for (const [index, input] of [undefined, {}, { repoPath: f.repo }].entries()) {
+        const ctx = { instanceId: `open-test-${index}`, input };
+        const opened = await canvas.open(ctx);
+        t.after(() => canvas.onClose(ctx));
+        assert.equal((await fetch(opened.url)).status, 200);
+        const status = await canvas.actions.find((action) => action.name === "get_status").handler(ctx);
+        assert.equal(status.repoPath, input?.repoPath ?? defaultRepo);
+    }
 });
 
 test("builds remote main, preserves dirty checkout, and tracks the installed source across fresh managers", async (t) => {

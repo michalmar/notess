@@ -55,7 +55,7 @@ Set `BUILD_ARCH=arm64` or `BUILD_ARCH=x86_64` to override the host architecture,
 
 ### App manager canvas
 
-The project extension in [`.github/extensions/notess-manager/`](.github/extensions/notess-manager/) adds a **Notess app manager** canvas in Copilot. Ask Copilot to open it for this repository. It shows the installed version/build, installed source commit, and latest `origin/main` commit, with two buttons:
+The project extension in [`.github/extensions/notess-manager/`](.github/extensions/notess-manager/) adds a **Notess app manager** canvas in Copilot. Ask Copilot to open it for this repository. Opening requires no input: it defaults to the repository containing the extension, with an optional absolute `repoPath` override. It shows the installed version/build, installed source commit, and latest `origin/main` commit, with two buttons:
 
 - **Build & install** is enabled when the app is missing, its source is untracked, or `main` has changed. Quit Notess first. It builds a clean remote snapshot with the existing build script and replaces `~/Applications/Notess.app` only after verifying the new bundle's signature and source metadata. It does not switch branches, pull into your checkout, include local edits, or change your notes.
 - **Open app** launches `~/Applications/Notess.app`; it stays disabled until an app is installed and while a build is running.
